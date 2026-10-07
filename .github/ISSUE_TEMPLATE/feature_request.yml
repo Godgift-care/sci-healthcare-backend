@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a change or addition.
+labels: [enhancement, backend]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who is affected and what they cannot do today. Start from the user, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would change. Note anything it affects in the other two repositories.
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ]
+        - [ ]
+  - type: checkboxes
+    id: wave
+    attributes:
+      label: Contributing
+      options:
+        - label: I would like to work on this myself

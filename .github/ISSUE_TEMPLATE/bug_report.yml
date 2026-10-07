@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work the way the docs say it should.
+labels: [bug, backend]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Security problems go through SECURITY.md, never a public issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: "Which endpoint or indexer path? (e.g. `GET /vouchers`, `voucher_settled` handler)"
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands, transaction hashes or voucher ids help most.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: "Node version, database (SQLite or Postgres), network"

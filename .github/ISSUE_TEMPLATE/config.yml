@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Godgift-care/sci-healthcare-backend/blob/main/SECURITY.md
+    about: Please do not open a public issue for vulnerabilities.
+  - name: Protocol documentation
+    url: https://godgift-care.github.io/sci-healthcare-contracts/
+    about: How vouchers, attestation, disputes and refunds work.
