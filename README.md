@@ -13,7 +13,7 @@
 
 # SCI Healthcare — Indexer &amp; API | [Documentation](https://godgift-care.github.io/sci-healthcare-contracts/)
 
-> **Live:** [App](https://sci-healthcare.vercel.app) · [API](https://sci-healthcare-api.onrender.com/stats) · [Docs](https://godgift-care.github.io/sci-healthcare-contracts/) · [Contracts on testnet](https://stellar.expert/explorer/testnet/contract/CBAOY2SQSMEIEQEITLZ3U3MER3K4ZBFQ5BTV5OCODAJINMXNOGLENC5I)
+> **Live:** [App](https://sci-healthcare.vercel.app) · [API](https://sci-healthcare-api.onrender.com/stats) · [Docs](https://godgift-care.github.io/sci-healthcare-contracts/) · [Contracts on testnet](https://stellar.expert/explorer/testnet/contract/CBPUQN6CNJCNGPKNEXB7UM4T7RINKQB7HQI5CXEOSQ5EFRHE4G4VKPSQ)
 >
 > The API runs on Render's free tier and sleeps after ~15 minutes idle; the first
 > request may take 30–60 seconds to wake it.
@@ -129,10 +129,10 @@ npm run dev
 | `DATABASE_URL` | Resolved **relative to `prisma/`** | `file:./dev.db` |
 | `SOROBAN_RPC_URL` | Soroban RPC endpoint | `https://soroban-testnet.stellar.org` |
 | `NETWORK_PASSPHRASE` | Network passphrase | `Test SDF Network ; September 2015` |
-| `REGISTRY_CONTRACT_ID` | Registry contract | `CCY4K4FO3J4PHM7VQTTS4F5N5U3G7PJJQR5V7TGLYHGZQH2BQ2MQY77L` |
-| `VOUCHER_CONTRACT_ID` | Voucher escrow | `CBAOY2SQSMEIEQEITLZ3U3MER3K4ZBFQ5BTV5OCODAJINMXNOGLENC5I` |
-| `RECEIPT_CONTRACT_ID` | Care receipts | `CC25Q56WGEKNP4IDYOZK7BJJYD7JQ73JNCBAZIAEY4WCIVSUORQTS7PT` |
-| `USDC_CONTRACT_ID` | Settlement token | `CCKJV474HALEXYJC6URWG2QMUDPH5LY2SKAYA2S4TFHJTXW7OU4OAERQ` |
+| `REGISTRY_CONTRACT_ID` | Registry contract | `CAMU635NRFEHATJ6MTY5SI43IAZ43KHPFXAQDQAST2AHKCHLSGWHVE4V` |
+| `VOUCHER_CONTRACT_ID` | Voucher escrow | `CBPUQN6CNJCNGPKNEXB7UM4T7RINKQB7HQI5CXEOSQ5EFRHE4G4VKPSQ` |
+| `RECEIPT_CONTRACT_ID` | Care receipts | `CBCJRI2BCZBMZNX77WWDC2NGSV4ZNAN5Q23XHYNBH6UTOQMPJHZGX5C7` |
+| `USDC_CONTRACT_ID` | Settlement token | `CCRLJ7FEIKTR3GBT3VQQPSIJGRBO2WPNMVFKJDP6AYGJQWECOR4QVE5M` |
 | `INDEXER_START_LEDGER` | Ledger to index from; `0` means start at the tip | `4465529` |
 | `INDEXER_POLL_MS` | Poll interval | `5000` |
 
