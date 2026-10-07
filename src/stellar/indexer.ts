@@ -14,6 +14,7 @@ import {
   providerStatusName,
   type DecodedEvent,
 } from './events.js';
+import { collectEvents } from './paging.js';
 
 /**
  * Polls Soroban RPC for contract events and projects them into the read
@@ -91,14 +92,13 @@ export class Indexer {
     }
     if (startLedger > health.latestLedger) return 0;
 
-    const res = await server.getEvents({
+    const { events, throughLedger } = await collectEvents(server, {
       startLedger,
-      filters: [{ type: 'contract', contractIds: [...INDEXED_CONTRACTS] }],
-      limit: 200,
+      contractIds: INDEXED_CONTRACTS,
     });
 
     let applied = 0;
-    for (const raw of res.events) {
+    for (const raw of events) {
       const decoded = decodeEvent(raw as never);
       if (!decoded) continue;
       try {
@@ -110,7 +110,7 @@ export class Indexer {
       }
     }
 
-    const advanceTo = Math.max(state.lastLedger, res.latestLedger);
+    const advanceTo = Math.max(state.lastLedger, throughLedger);
     await prisma.indexerState.update({
       where: { id: 1 },
       data: { lastLedger: advanceTo },
