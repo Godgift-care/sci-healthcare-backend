@@ -92,6 +92,7 @@ type Row = {
   claimedAt: Date | null;
   attestedAt: Date | null;
   disputeDeadline: Date | null;
+  disputeReason: number | null;
   settledNet: string | null;
   settledFee: string | null;
   providerAddress: string;
@@ -119,6 +120,7 @@ function serialise(v: Row, labels: Map<string, string>) {
     claimedAt: v.claimedAt,
     attestedAt: v.attestedAt,
     disputeDeadline: v.disputeDeadline,
+    disputeReason: v.disputeReason,
     settledNet: v.settledNet,
     settledFee: v.settledFee,
     // Convenience flags so the UI does not re-derive the state machine.

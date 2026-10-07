@@ -69,6 +69,17 @@ describe('decodeEvent', () => {
     expect(asNumber(decoded!.fields.service_code)).toBe(101);
   });
 
+  it('decodes the reason code a funder gives for a dispute', () => {
+    const decoded = decodeEvent(
+      raw(
+        [sym('voucher_disputed'), Address.fromString(FUNDER).toScVal()],
+        nativeToScVal({ voucher_id: 7n, reason_code: nativeToScVal(2, { type: 'u32' }) }),
+      ),
+    );
+    expect(decoded!.fields.funder).toBe(FUNDER);
+    expect(asNumber(decoded!.fields.reason_code)).toBe(2);
+  });
+
   it('decodes an event whose only payload is topics', () => {
     const decoded = decodeEvent(
       raw(

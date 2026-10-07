@@ -56,6 +56,9 @@ model Voucher {
   claimedAt       DateTime?
   attestedAt      DateTime?
   disputeDeadline DateTime?
+  /// reason_code from voucher_disputed; meanings are documented in
+  /// docs/protocol/lifecycle.md. The contract treats it as opaque.
+  disputeReason   Int?
   settledNet      String?
   settledFee      String?
   updatedAt       DateTime  @updatedAt

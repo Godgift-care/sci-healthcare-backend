@@ -150,7 +150,7 @@ export class Indexer {
         });
         break;
       case 'voucher_disputed':
-        await this.onVoucherStatus(d, 'Disputed', {});
+        await this.onVoucherStatus(d, 'Disputed', { disputeReason: asNumber(d.reason_code) });
         break;
       case 'voucher_settled':
         await this.onVoucherStatus(d, 'Settled', {
@@ -165,8 +165,8 @@ export class Indexer {
         await this.onReceiptMinted(d);
         break;
       default:
-        // Initialized, admin_changed, minter_changed and token events are
-        // not part of the read model.
+        // Initialized, admin_proposed, admin_changed, minter_changed and
+        // token events are not part of the read model.
         break;
     }
   }

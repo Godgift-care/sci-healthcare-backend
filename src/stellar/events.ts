@@ -27,6 +27,7 @@ export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   voucher_settled: ['provider'],
   voucher_refunded: ['funder'],
   dispute_resolved: ['admin'],
+  admin_proposed: ['admin'],
   receipt_minted: ['beneficiary_ref', 'provider'],
 };
 
