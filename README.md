@@ -3,27 +3,27 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/otobongdev/sci-healthcare-backend/actions/workflows/ci.yml">
-    <img src="https://github.com/otobongdev/sci-healthcare-backend/actions/workflows/ci.yml/badge.svg" alt="CI" />
+  <a href="https://github.com/Godgift-care/sci-healthcare-backend/actions/workflows/ci.yml">
+    <img src="https://github.com/Godgift-care/sci-healthcare-backend/actions/workflows/ci.yml/badge.svg" alt="CI" />
   </a>
   <img src="https://img.shields.io/badge/node-22-green" alt="node 22" />
   <img src="https://img.shields.io/badge/fastify-5.12-black" alt="fastify" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="Apache 2.0" />
 </p>
 
-# SCI Healthcare — Indexer &amp; API | [Documentation](https://otobongdev.github.io/sci-healthcare-contracts/)
+# SCI Healthcare — Indexer &amp; API | [Documentation](https://godgift-care.github.io/sci-healthcare-contracts/)
 
-> **Live:** [App](https://sci-healthcare.vercel.app) · [API](https://sci-healthcare-api.onrender.com/stats) · [Docs](https://otobongdev.github.io/sci-healthcare-contracts/) · [Contracts on testnet](https://stellar.expert/explorer/testnet/contract/CBAOY2SQSMEIEQEITLZ3U3MER3K4ZBFQ5BTV5OCODAJINMXNOGLENC5I)
+> **Live:** [App](https://sci-healthcare.vercel.app) · [API](https://sci-healthcare-api.onrender.com/stats) · [Docs](https://godgift-care.github.io/sci-healthcare-contracts/) · [Contracts on testnet](https://stellar.expert/explorer/testnet/contract/CBAOY2SQSMEIEQEITLZ3U3MER3K4ZBFQ5BTV5OCODAJINMXNOGLENC5I)
 >
 > The API runs on Render's free tier and sleeps after ~15 minutes idle; the first
 > request may take 30–60 seconds to wake it.
 
-Indexes Soroban contract events from the [SCI Healthcare care-voucher protocol](https://github.com/otobongdev/sci-healthcare-contracts) into a queryable read model, and serves it over a read-only HTTP API.
+Indexes Soroban contract events from the [SCI Healthcare care-voucher protocol](https://github.com/Godgift-care/sci-healthcare-contracts) into a queryable read model, and serves it over a read-only HTTP API.
 
 The ledger is the source of truth. This service exists because a ledger cannot answer "show me every voucher this clinic is waiting on" without scanning it. Everything here is a projection: delete the database, replay from the deploy ledger, and you get the same rows back.
 
 <p align="center">
-  <a href="https://render.com/deploy?repo=https://github.com/otobongdev/sci-healthcare-backend">
+  <a href="https://render.com/deploy?repo=https://github.com/Godgift-care/sci-healthcare-backend">
     <img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" />
   </a>
 </p>
@@ -32,7 +32,7 @@ One click provisions the web service and its Postgres instance in the same
 region, with every contract id already set. The only value you add by hand is
 `CORS_ORIGIN`, once the frontend URL exists.
 
-## Maintainers | [Telegram](https://t.me/YOUR_TELEGRAM_GROUP)
+## Maintainers
 
 <table align="center">
   <tr>
@@ -42,8 +42,6 @@ region, with every contract id already set. The only value you add by hand is
       <strong>Adeleke | Backend &amp; Indexer</strong>
       <br /><br />
       <a href="https://github.com/adelekevat">adelekevat</a>
-      <br />
-      <a href="https://t.me/YOUR_TELEGRAM_HANDLE">Telegram</a>
     </td>
   </tr>
 </table>
@@ -111,7 +109,7 @@ Amounts are `i128` on chain and are returned as **decimal strings**. Parsing one
 ## Quick start
 
 ```bash
-git clone https://github.com/otobongdev/sci-healthcare-backend
+git clone https://github.com/Godgift-care/sci-healthcare-backend
 cd sci-healthcare-backend
 npm install
 cp .env.example .env          # fill in the contract ids below
@@ -158,8 +156,8 @@ Security reports go through [SECURITY.md](SECURITY.md).
 
 ## Contributors
 
-<a href="https://github.com/otobongdev/sci-healthcare-backend/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=otobongdev/sci-healthcare-backend" />
+<a href="https://github.com/Godgift-care/sci-healthcare-backend/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Godgift-care/sci-healthcare-backend" />
 </a>
 
 ## License
