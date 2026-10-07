@@ -1,13 +1,6 @@
-import cors from '@fastify/cors';
-import rateLimit from '@fastify/rate-limit';
-import Fastify from 'fastify';
-
+import { buildApp } from './app.js';
 import { disconnect } from './db.js';
 import { env } from './env.js';
-import { healthRoutes } from './routes/health.js';
-import { providerRoutes } from './routes/providers.js';
-import { receiptRoutes } from './routes/receipts.js';
-import { voucherRoutes } from './routes/vouchers.js';
 import { Indexer } from './stellar/indexer.js';
 
 /**
@@ -19,25 +12,7 @@ import { Indexer } from './stellar/indexer.js';
  * it exists to make on-chain state queryable, which the ledger alone is not.
  */
 async function main(): Promise<void> {
-  const app = Fastify({
-    logger: { level: env.LOG_LEVEL },
-    trustProxy: true,
-  });
-
-  await app.register(cors, {
-    origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()),
-    methods: ['GET'],
-  });
-
-  await app.register(rateLimit, {
-    max: 120,
-    timeWindow: '1 minute',
-  });
-
-  await app.register(healthRoutes);
-  await app.register(providerRoutes);
-  await app.register(voucherRoutes);
-  await app.register(receiptRoutes);
+  const app = await buildApp();
 
   const indexer = new Indexer(app.log);
   await indexer.start();
