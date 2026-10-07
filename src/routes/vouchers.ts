@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
 import { isValidRef } from '../lib/beneficiary.js';
+import { isRefundable, isSettleable, refundableAt } from '../lib/lifecycle.js';
+import { serviceKey, serviceLabels } from '../lib/services.js';
 
 const STATUSES = [
   'Funded',
@@ -58,7 +60,8 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
       prisma.voucher.count({ where }),
     ]);
 
-    return { total, limit, offset, vouchers: rows.map(serialise) };
+    const labels = await serviceLabels(rows);
+    return { total, limit, offset, vouchers: rows.map((v) => serialise(v, labels)) };
   });
 
   app.get('/vouchers/:id', async (req, reply) => {
@@ -69,8 +72,11 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
     });
     if (!v) return reply.code(404).send({ error: 'voucher_not_found' });
 
-    const receipt = await prisma.receipt.findUnique({ where: { voucherId: id } });
-    return { ...serialise(v), receipt };
+    const [receipt, labels] = await Promise.all([
+      prisma.receipt.findUnique({ where: { voucherId: id } }),
+      serviceLabels([v]),
+    ]);
+    return { ...serialise(v, labels), receipt };
   });
 }
 
@@ -92,7 +98,8 @@ type Row = {
   provider: { name: string; country: string };
 };
 
-function serialise(v: Row) {
+function serialise(v: Row, labels: Map<string, string>) {
+  const refundable = refundableAt(v);
   return {
     id: v.id,
     funder: v.funder,
@@ -103,6 +110,7 @@ function serialise(v: Row) {
       country: v.provider.country,
     },
     serviceCode: v.serviceCode,
+    serviceLabel: labels.get(serviceKey(v.providerAddress, v.serviceCode)) ?? null,
     amount: v.amount,
     amountDisplay: fromBaseUnits(v.amount),
     status: v.status,
@@ -114,10 +122,8 @@ function serialise(v: Row) {
     settledNet: v.settledNet,
     settledFee: v.settledFee,
     // Convenience flags so the UI does not re-derive the state machine.
-    isSettleable:
-      v.status === 'Attested' &&
-      v.disputeDeadline !== null &&
-      v.disputeDeadline.getTime() <= Date.now(),
-    isRefundable: v.status === 'Funded' && v.expiresAt.getTime() <= Date.now(),
+    refundableAt: refundable,
+    isSettleable: isSettleable(v),
+    isRefundable: isRefundable(v),
   };
 }

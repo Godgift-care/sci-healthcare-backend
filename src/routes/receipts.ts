@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
 import { isValidRef } from '../lib/beneficiary.js';
+import { serviceKey, serviceLabels } from '../lib/services.js';
 
 const query = z.object({
   beneficiaryRef: z.string().refine(isValidRef, 'must be 64 hex characters'),
@@ -41,6 +42,7 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       }),
     ]);
 
+    const labels = await serviceLabels(rows);
     const totalSpend = spend
       .reduce((acc, r) => acc + BigInt(r.amount), 0n)
       .toString();
@@ -55,6 +57,7 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
         voucherId: r.voucherId,
         providerAddress: r.providerAddress,
         serviceCode: r.serviceCode,
+        serviceLabel: labels.get(serviceKey(r.providerAddress, r.serviceCode)) ?? null,
         amount: r.amount,
         amountDisplay: fromBaseUnits(r.amount),
         settledAt: r.settledAt,
