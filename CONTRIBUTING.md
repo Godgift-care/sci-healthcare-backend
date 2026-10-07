@@ -5,6 +5,9 @@ serves them over a read-only HTTP API.
 
 ## Setup
 
+Use Node 22 (`nvm use` reads `.nvmrc`). Its bundled npm 10 is what CI runs;
+a lockfile written by npm 11 drops entries npm 10 requires and fails `npm ci`.
+
 ```bash
 npm install
 cp .env.example .env        # fill in contract ids from the contracts repo
