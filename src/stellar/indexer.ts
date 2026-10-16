@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
 import { contractName, env, INDEXED_CONTRACTS } from '../env.js';
+import { enqueueWebhook } from '../lib/webhooks.js';
 import { server } from './client.js';
 import {
   asAddress,
@@ -269,28 +270,30 @@ export class Indexer {
         await this.onAdminChanged(e);
         break;
       case 'voucher_created':
-        await this.onVoucherCreated(d);
+        await this.onVoucherCreated(e);
         break;
       case 'voucher_claimed':
-        await this.onVoucherStatus(d, 'Claimed', { claimedAt: asTimestamp(d.claimed_at) });
+        await this.onVoucherStatus(e, 'Claimed', { claimedAt: asTimestamp(d.claimed_at) });
         break;
       case 'voucher_attested':
-        await this.onVoucherStatus(d, 'Attested', {
+        await this.onVoucherStatus(e, 'Attested', {
           attestedAt: asTimestamp(d.attested_at),
           disputeDeadline: asTimestamp(d.dispute_deadline),
         });
         break;
       case 'voucher_disputed':
-        await this.onVoucherStatus(d, 'Disputed', { disputeReason: asNumber(d.reason_code) });
+        await this.onVoucherStatus(e, 'Disputed', { disputeReason: asNumber(d.reason_code) });
         break;
       case 'voucher_settled':
-        await this.onVoucherStatus(d, 'Settled', {
+        await this.onVoucherStatus(e, 'Settled', {
           settledNet: asAmount(d.net),
           settledFee: asAmount(d.fee),
         });
         break;
       case 'voucher_refunded':
-        await this.onVoucherStatus(d, 'Refunded', {});
+        // The contract emits no timestamp on a refund, so the ledger close
+        // time is the timestamp: it is when the refund became true.
+        await this.onVoucherStatus(e, 'Refunded', { refundedAt: e.ledgerClosedAt });
         break;
       case 'receipt_minted':
         await this.onReceiptMinted(d);
@@ -429,50 +432,76 @@ export class Indexer {
     await prisma.service.updateMany({ where: { id }, data: { active: false } });
   }
 
-  private async onVoucherCreated(d: Record<string, unknown>): Promise<void> {
+  private async onVoucherCreated(e: DecodedEvent): Promise<void> {
+    const d = e.fields;
     const id = asId(d.voucher_id);
     const providerAddress = asAddress(d.provider);
 
-    // A voucher references a provider row; if the indexer started after the
-    // provider was registered, backfill a stub so the relation holds.
-    await prisma.provider.upsert({
-      where: { address: providerAddress },
-      create: {
-        address: providerAddress,
-        name: 'Unknown provider',
-        country: '??',
-        status: 'Active',
-        registeredAt: new Date(0),
-      },
-      update: {},
-    });
+    // The provider stub, the voucher and the webhook row commit together:
+    // a partially applied event must not exist, and nothing may be announced
+    // that did not land in the read model.
+    await prisma.$transaction(async (tx) => {
+      // A voucher references a provider row; if the indexer started after the
+      // provider was registered, backfill a stub so the relation holds.
+      await tx.provider.upsert({
+        where: { address: providerAddress },
+        create: {
+          address: providerAddress,
+          name: 'Unknown provider',
+          country: '??',
+          status: 'Active',
+          registeredAt: new Date(0),
+        },
+        update: {},
+      });
 
-    await prisma.voucher.upsert({
-      where: { id },
-      create: {
-        id,
-        funder: asAddress(d.funder),
-        beneficiaryRef: asHex(d.beneficiary_ref),
-        providerAddress,
-        serviceCode: asNumber(d.service_code),
-        amount: asAmount(d.amount),
+      await tx.voucher.upsert({
+        where: { id },
+        create: {
+          id,
+          funder: asAddress(d.funder),
+          beneficiaryRef: asHex(d.beneficiary_ref),
+          providerAddress,
+          serviceCode: asNumber(d.service_code),
+          amount: asAmount(d.amount),
+          status: 'Funded',
+          createdAt: asTimestamp(d.created_at),
+          expiresAt: asTimestamp(d.expires_at),
+        },
+        update: {},
+      });
+
+      await enqueueWebhook(tx, {
+        event: e.name,
+        voucherId: id,
         status: 'Funded',
-        createdAt: asTimestamp(d.created_at),
-        expiresAt: asTimestamp(d.expires_at),
-      },
-      update: {},
+        txHash: e.txHash,
+        ledger: e.ledger,
+      });
     });
   }
 
   private async onVoucherStatus(
-    d: Record<string, unknown>,
+    e: DecodedEvent,
     status: string,
     extra: Record<string, unknown>,
   ): Promise<void> {
+    const d = e.fields;
     const id = asId(d.voucher_id);
-    await prisma.voucher.updateMany({
-      where: { id },
-      data: { status, ...extra },
+    // Status and its webhook outbox row commit together, so an event is
+    // announced only if the projection stuck.
+    await prisma.$transaction(async (tx) => {
+      await tx.voucher.updateMany({
+        where: { id },
+        data: { status, ...extra },
+      });
+      await enqueueWebhook(tx, {
+        event: e.name,
+        voucherId: id,
+        status,
+        txHash: e.txHash,
+        ledger: e.ledger,
+      });
     });
   }
 

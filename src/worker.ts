@@ -5,6 +5,7 @@ import pino from 'pino';
 
 import { disconnect } from './db.js';
 import { env } from './env.js';
+import { WebhookDispatcher } from './lib/webhooks.js';
 import { Indexer } from './stellar/indexer.js';
 
 /**
@@ -23,8 +24,12 @@ export async function start(opts: WorkerOptions = {}): Promise<Indexer> {
   const log: FastifyBaseLogger = opts.logger ?? pino({ level: env.LOG_LEVEL });
   const indexer = new Indexer(log);
 
+  const webhooks = new WebhookDispatcher(log);
+  webhooks.start();
+
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, 'shutting down indexer');
+    await webhooks.stop();
     await indexer.stop();
     await disconnect();
     process.exit(0);
