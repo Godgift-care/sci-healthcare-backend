@@ -3,6 +3,7 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { env } from './env.js';
+import { attesterRoutes } from './routes/attesters.js';
 import { governanceRoutes } from './routes/governance.js';
 import { healthRoutes } from './routes/health.js';
 import { providerRoutes } from './routes/providers.js';
@@ -35,6 +36,7 @@ export async function buildApp(
 
   await app.register(healthRoutes);
   await app.register(providerRoutes);
+  await app.register(attesterRoutes);
   await app.register(voucherRoutes);
   await app.register(receiptRoutes);
   await app.register(governanceRoutes);

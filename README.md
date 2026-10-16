@@ -76,12 +76,19 @@ The cursor is guarded by a lease (stored on `IndexerState`). However many indexe
 | `GET /providers/:address` | One clinic and its service catalogue |
 | `GET /providers/:address/history` | Every status transition for a clinic, oldest first |
 | `GET /providers/:address/services/:code/history` | Every observed price for a service, oldest first |
+| `GET /attesters` | Attesters trusted to confirm care; `?all=true` includes removed ones |
+| `GET /attesters/:address` | One attester with its attestation count |
 | `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status` |
-| `GET /vouchers/:id` | One voucher, with its care receipt if settled |
+| `GET /vouchers/:id` | One voucher, with its care receipt if settled, attester and dispute outcome |
+| `GET /vouchers/:id/events` | Every contract event for a voucher, oldest first, with transaction hashes |
 | `GET /receipts?beneficiaryRef=` | A patient's settled care history |
 | `GET /governance` | Current and pending admin per contract, plus the handover history |
 
 `GET /vouchers` **requires at least one filter**. An unfiltered dump of every voucher is not a useful endpoint and invites scraping.
+
+`GET /attesters` lists only attesters who can attest today unless `?all=true` is passed, and reports how many vouchers each has confirmed. `/attesters/:address` is the same for one attester.
+
+`GET /vouchers/:id/events` is the receipt trail: each event the indexer processed for that voucher, in ledger order, with the transaction hash that proved it. Events are appended in the same transaction as the state they update and keyed by the RPC event id, so replaying a ledger never duplicates a row.
 
 `/receipts` requires an exact `beneficiaryRef`. Because that value is an HMAC under a key held by the patient, the endpoint cannot be walked to enumerate people.
 

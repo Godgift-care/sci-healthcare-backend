@@ -124,11 +124,40 @@ export function asNumber(input: unknown): number {
   throw new TypeError(`Cannot read number from ${typeof input}`);
 }
 
+/** Booleans as Soroban `bool` publishes them. */
+export function asBoolean(input: unknown): boolean {
+  if (typeof input === 'boolean') return input;
+  if (typeof input === 'bigint') return input !== 0n;
+  if (typeof input === 'number') return input !== 0;
+  if (typeof input === 'string') {
+    if (input === 'true') return true;
+    if (input === 'false') return false;
+  }
+  throw new TypeError(`Cannot read boolean from ${typeof input}: ${String(input)}`);
+}
+
 export function asHex(input: unknown): string {
   if (input instanceof Uint8Array) return Buffer.from(input).toString('hex');
   if (Buffer.isBuffer(input)) return input.toString('hex');
   if (typeof input === 'string') return input;
   throw new TypeError(`Cannot read bytes from ${typeof input}`);
+}
+
+/**
+ * Serialises decoded event fields to JSON for the append-only event log.
+ *
+ * The replacer is the point: `JSON.stringify` throws on BigInt and turns a
+ * `Uint8Array` into an object keyed by index. Amounts become decimal
+ * strings (never JS numbers, which lose i128 precision) and byte fields
+ * become hex, so the stored payload is exactly the values the API returns.
+ */
+export function serialiseEventData(fields: Record<string, unknown>): string {
+  return JSON.stringify(fields, (_key, value: unknown) => {
+    if (typeof value === 'bigint') return value.toString();
+    if (value instanceof Uint8Array) return Buffer.from(value).toString('hex');
+    if (value instanceof Date) return value.toISOString();
+    return value;
+  });
 }
 
 /**
