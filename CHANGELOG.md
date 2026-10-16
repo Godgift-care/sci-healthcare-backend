@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- **GET /providers/:address/stats**: A clinic's vouchers grouped by status, with the total settled value summed exactly (base-unit strings). 404 for an unknown provider.
+- **GET /stats/daily?days=30**: Funded, settled and refunded counts and value per UTC day (max 365). Days with no activity are returned as zeros, and amounts are summed with BigInt.
+- **Voucher.refundedAt** (nullable): set from the `voucher_refunded` event's ledger close time. `prisma db push` adds the column in place (no backfill needed).
+- **Signed webhooks**: optional `WEBHOOK_URLS` / `WEBHOOK_SECRET`. Voucher events are queued to a `WebhookDelivery` outbox in the same transaction as the projection and delivered from a separate loop, signed with `X-SCI-Signature` (HMAC-SHA256). Failed deliveries retry with exponential backoff and never block the indexer. `prisma db push` creates the new table in place.
+- **Dockerfile and docker-compose.yml**: multi-stage image (Node 22, non-root) plus a `docker compose up` stack with Postgres, a one-shot schema push and the API. README documents the Docker quick start.
 - **GET /receipts?provider=**: List receipts by clinic/provider. Beneficiary references omitted in this view.
 - **GET /receipts/:voucherId**: Fetch a single receipt by voucher ID for shareable receipt pages and verification. No beneficiary reference in response.
 - **GET /vouchers/due?within=72h**: Vouchers needing action soon (expiring, becoming refundable, or settleable) with funder or provider filter. Uses lifecycle logic from `src/lib/lifecycle.ts` so API and contracts agree.
