@@ -4,15 +4,19 @@ import { describe, expect, it } from 'vitest';
 import {
   asAddress,
   asAmount,
+  asBoolean,
   asHex,
+  asId,
   asNumber,
   decodeEvent,
   providerStatusName,
+  serialiseEventData,
   TOPIC_FIELDS,
 } from '../stellar/events.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
+const ADMIN = 'A'.repeat(56);
 const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
 
 function sym(s: string): xdr.ScVal {
@@ -90,6 +94,19 @@ describe('decodeEvent', () => {
     expect(decoded!.fields.attester).toBe(CLINIC);
   });
 
+  it('decodes how a dispute was resolved', () => {
+    const decoded = decodeEvent(
+      raw(
+        [sym('dispute_resolved'), Address.fromString(ADMIN).toScVal()],
+        nativeToScVal({ voucher_id: 7n, refunded_funder: true }),
+      ),
+    );
+    // `admin` is a topic; `voucher_id` and `refunded_funder` are data.
+    expect(decoded!.fields.admin).toBe(ADMIN);
+    expect(asId(decoded!.fields.voucher_id)).toBe('7');
+    expect(asBoolean(decoded!.fields.refunded_funder)).toBe(true);
+  });
+
   it('returns null when the first topic is not an event name', () => {
     expect(decodeEvent(raw([nativeToScVal(42)], nativeToScVal({})))).toBeNull();
   });
@@ -117,6 +134,9 @@ describe('TOPIC_FIELDS', () => {
       'voucher_disputed',
       'voucher_settled',
       'voucher_refunded',
+      'dispute_resolved',
+      'attester_added',
+      'attester_removed',
       'admin_proposed',
       'admin_changed',
       'receipt_minted',
@@ -144,5 +164,32 @@ describe('coercions', () => {
     expect(providerStatusName(1)).toBe('Active');
     expect(providerStatusName(2)).toBe('Suspended');
     expect(providerStatusName(99)).toBe('Unknown');
+  });
+
+  it('reads Soroban booleans', () => {
+    expect(asBoolean(true)).toBe(true);
+    expect(asBoolean(false)).toBe(false);
+    expect(asBoolean(1n)).toBe(true);
+    expect(asBoolean(0n)).toBe(false);
+    expect(asBoolean('false')).toBe(false);
+    expect(() => asBoolean(undefined)).toThrow();
+  });
+});
+
+describe('serialiseEventData', () => {
+  it('stores amounts as strings and bytes as hex, never as JS numbers', () => {
+    const json = serialiseEventData({
+      funder: FUNDER,
+      amount: 9007199254740993n,
+      beneficiary_ref: Buffer.from(REF, 'hex'),
+      ledger: 42,
+    });
+
+    expect(JSON.parse(json)).toEqual({
+      funder: FUNDER,
+      amount: '9007199254740993',
+      beneficiary_ref: REF,
+      ledger: 42,
+    });
   });
 });

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
@@ -6,12 +7,14 @@ import { server } from './client.js';
 import {
   asAddress,
   asAmount,
+  asBoolean,
   asHex,
   asId,
   asNumber,
   asTimestamp,
   decodeEvent,
   providerStatusName,
+  serialiseEventData,
   type DecodedEvent,
 } from './events.js';
 import { IndexerLease } from './lease.js';
@@ -23,13 +26,22 @@ import { collectEvents } from './paging.js';
  * backend has never seen, which is worth one warning per process: a silent
  * ignore would hide a contract upgrade that emits something new.
  */
-const IGNORED_EVENTS = new Set([
-  'initialized',
-  'attester_added',
-  'attester_removed',
-  'dispute_resolved',
-  'minter_changed',
-]);
+const IGNORED_EVENTS = new Set(['initialized', 'minter_changed']);
+
+/**
+ * The voucher an event is about, if any. Events without a `voucher_id`
+ * (providers, services, governance, attesters) log with a null voucher so
+ * the append-only history can still be stored for them.
+ */
+function voucherIdOf(fields: Record<string, unknown>): string | null {
+  const id = fields.voucher_id;
+  if (id === undefined || id === null) return null;
+  try {
+    return asId(id);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Polls Soroban RPC for contract events and projects them into the read
@@ -242,58 +254,101 @@ export class Indexer {
   }
 
   /**
-   * Projects one decoded event into the read model.
+   * Projects one decoded event into the read model, and appends it to the
+   * event log in the same transaction.
+   *
+   * Both writes commit together, so the log can never claim an event whose
+   * projection was rolled back (or vice versa). The log insert is an upsert
+   * on the RPC event id, which keeps replay idempotent.
    *
    * Public so tests can drive handlers directly, with a decoded event, and
    * without an RPC.
    */
   async applyEvent(e: DecodedEvent): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      await this.recordEvent(tx, e);
+      await this.project(tx, e);
+    });
+  }
+
+  /** Appends the event to the append-only log. Idempotent on the event id. */
+  private async recordEvent(tx: Prisma.TransactionClient, e: DecodedEvent): Promise<void> {
+    await tx.contractEvent.upsert({
+      where: { id: e.id },
+      create: {
+        id: e.id,
+        contractId: e.contractId,
+        contract: contractName(e.contractId),
+        name: e.name,
+        ledger: e.ledger,
+        txHash: e.txHash,
+        closedAt: e.ledgerClosedAt,
+        voucherId: voucherIdOf(e.fields),
+        data: serialiseEventData(e.fields),
+      },
+      update: {},
+    });
+  }
+
+  private async project(tx: Prisma.TransactionClient, e: DecodedEvent): Promise<void> {
     const d = e.fields;
     switch (e.name) {
       case 'provider_registered':
-        await this.onProviderRegistered(d);
+        await this.onProviderRegistered(tx, d);
         break;
       case 'provider_status_changed':
-        await this.onProviderStatus(e);
+        await this.onProviderStatus(tx, e);
         break;
       case 'service_upserted':
-        await this.onServiceUpserted(e);
+        await this.onServiceUpserted(tx, e);
         break;
       case 'service_removed':
-        await this.onServiceRemoved(d);
+        await this.onServiceRemoved(tx, d);
+        break;
+      case 'attester_added':
+        await this.onAttesterAdded(tx, e);
+        break;
+      case 'attester_removed':
+        await this.onAttesterRemoved(tx, e);
         break;
       case 'admin_proposed':
-        await this.onAdminProposed(e);
+        await this.onAdminProposed(tx, e);
         break;
       case 'admin_changed':
-        await this.onAdminChanged(e);
+        await this.onAdminChanged(tx, e);
         break;
       case 'voucher_created':
-        await this.onVoucherCreated(d);
+        await this.onVoucherCreated(tx, d);
         break;
       case 'voucher_claimed':
-        await this.onVoucherStatus(d, 'Claimed', { claimedAt: asTimestamp(d.claimed_at) });
+        await this.onVoucherStatus(tx, d, 'Claimed', { claimedAt: asTimestamp(d.claimed_at) });
         break;
       case 'voucher_attested':
-        await this.onVoucherStatus(d, 'Attested', {
+        await this.onVoucherStatus(tx, d, 'Attested', {
           attestedAt: asTimestamp(d.attested_at),
+          attestedBy: asAddress(d.attester),
           disputeDeadline: asTimestamp(d.dispute_deadline),
         });
         break;
       case 'voucher_disputed':
-        await this.onVoucherStatus(d, 'Disputed', { disputeReason: asNumber(d.reason_code) });
+        await this.onVoucherStatus(tx, d, 'Disputed', {
+          disputeReason: asNumber(d.reason_code),
+        });
+        break;
+      case 'dispute_resolved':
+        await this.onDisputeResolved(tx, e);
         break;
       case 'voucher_settled':
-        await this.onVoucherStatus(d, 'Settled', {
+        await this.onVoucherStatus(tx, d, 'Settled', {
           settledNet: asAmount(d.net),
           settledFee: asAmount(d.fee),
         });
         break;
       case 'voucher_refunded':
-        await this.onVoucherStatus(d, 'Refunded', {});
+        await this.onVoucherStatus(tx, d, 'Refunded', {});
         break;
       case 'receipt_minted':
-        await this.onReceiptMinted(d);
+        await this.onReceiptMinted(tx, d);
         break;
       default:
         // Known-but-unprojected events stay silent; anything else is a name
@@ -318,9 +373,12 @@ export class Indexer {
     );
   }
 
-  private async onProviderRegistered(d: Record<string, unknown>): Promise<void> {
+  private async onProviderRegistered(
+    tx: Prisma.TransactionClient,
+    d: Record<string, unknown>,
+  ): Promise<void> {
     const address = asAddress(d.provider);
-    await prisma.provider.upsert({
+    await tx.provider.upsert({
       where: { address },
       create: {
         address,
@@ -333,28 +391,70 @@ export class Indexer {
     });
   }
 
-  private async onProviderStatus(e: DecodedEvent): Promise<void> {
+  private async onProviderStatus(
+    tx: Prisma.TransactionClient,
+    e: DecodedEvent,
+  ): Promise<void> {
     const address = asAddress(e.fields.provider);
     const status = providerStatusName(e.fields.status);
-    // The status update and its history row commit together, so a crash
-    // cannot leave the provider and its history disagreeing.
-    await prisma.$transaction([
-      prisma.provider.updateMany({ where: { address }, data: { status } }),
-      prisma.providerStatusChange.upsert({
-        where: { id: e.id },
-        create: {
-          id: e.id,
-          providerAddress: address,
-          status,
-          ledger: e.ledger,
-          changedAt: e.ledgerClosedAt,
-        },
-        update: {},
-      }),
-    ]);
+    // The status update and its history row share the caller's transaction,
+    // so a crash cannot leave the provider and its history disagreeing.
+    await tx.provider.updateMany({ where: { address }, data: { status } });
+    await tx.providerStatusChange.upsert({
+      where: { id: e.id },
+      create: {
+        id: e.id,
+        providerAddress: address,
+        status,
+        ledger: e.ledger,
+        changedAt: e.ledgerClosedAt,
+      },
+      update: {},
+    });
   }
 
-  private async onServiceUpserted(e: DecodedEvent): Promise<void> {
+  /**
+   * An attester was added to the registry.
+   *
+   * Re-adding an attester that was previously removed reactivates the row
+   * and clears `removedAt`, matching the contract, where an address is
+   * either in the set or not.
+   */
+  private async onAttesterAdded(
+    tx: Prisma.TransactionClient,
+    e: DecodedEvent,
+  ): Promise<void> {
+    const address = asAddress(e.fields.attester);
+    await tx.attester.upsert({
+      where: { address },
+      create: { address, active: true, addedAt: e.ledgerClosedAt },
+      update: { active: true, removedAt: null },
+    });
+  }
+
+  private async onAttesterRemoved(
+    tx: Prisma.TransactionClient,
+    e: DecodedEvent,
+  ): Promise<void> {
+    const address = asAddress(e.fields.attester);
+    // Upsert rather than update: a removal can be the first event this
+    // indexer sees for an attester added before its start ledger.
+    await tx.attester.upsert({
+      where: { address },
+      create: {
+        address,
+        active: false,
+        addedAt: e.ledgerClosedAt,
+        removedAt: e.ledgerClosedAt,
+      },
+      update: { active: false, removedAt: e.ledgerClosedAt },
+    });
+  }
+
+  private async onServiceUpserted(
+    tx: Prisma.TransactionClient,
+    e: DecodedEvent,
+  ): Promise<void> {
     const d = e.fields;
     const providerAddress = asAddress(d.provider);
     const code = asNumber(d.code);
@@ -362,36 +462,37 @@ export class Indexer {
     const price = asAmount(d.price);
     const label = String(d.label);
 
-    await prisma.$transaction(async (tx) => {
-      const existing = await tx.service.findUnique({
-        where: { id },
-        select: { price: true },
-      });
-      await tx.service.upsert({
-        where: { id },
-        create: { id, code, label, price, active: true, providerAddress },
-        update: { label, price, active: true },
-      });
-      // Only a price change is history; a relabelled service is not.
-      if (!existing || existing.price !== price) {
-        await tx.servicePriceChange.upsert({
-          where: { id: e.id },
-          create: {
-            id: e.id,
-            providerAddress,
-            code,
-            price,
-            ledger: e.ledger,
-            changedAt: e.ledgerClosedAt,
-          },
-          update: {},
-        });
-      }
+    const existing = await tx.service.findUnique({
+      where: { id },
+      select: { price: true },
     });
+    await tx.service.upsert({
+      where: { id },
+      create: { id, code, label, price, active: true, providerAddress },
+      update: { label, price, active: true },
+    });
+    // Only a price change is history; a relabelled service is not.
+    if (!existing || existing.price !== price) {
+      await tx.servicePriceChange.upsert({
+        where: { id: e.id },
+        create: {
+          id: e.id,
+          providerAddress,
+          code,
+          price,
+          ledger: e.ledger,
+          changedAt: e.ledgerClosedAt,
+        },
+        update: {},
+      });
+    }
   }
 
-  private async onAdminProposed(e: DecodedEvent): Promise<void> {
-    await prisma.governanceEvent.upsert({
+  private async onAdminProposed(
+    tx: Prisma.TransactionClient,
+    e: DecodedEvent,
+  ): Promise<void> {
+    await tx.governanceEvent.upsert({
       where: { id: e.id },
       create: {
         id: e.id,
@@ -407,8 +508,11 @@ export class Indexer {
     });
   }
 
-  private async onAdminChanged(e: DecodedEvent): Promise<void> {
-    await prisma.governanceEvent.upsert({
+  private async onAdminChanged(
+    tx: Prisma.TransactionClient,
+    e: DecodedEvent,
+  ): Promise<void> {
+    await tx.governanceEvent.upsert({
       where: { id: e.id },
       create: {
         id: e.id,
@@ -424,18 +528,24 @@ export class Indexer {
     });
   }
 
-  private async onServiceRemoved(d: Record<string, unknown>): Promise<void> {
+  private async onServiceRemoved(
+    tx: Prisma.TransactionClient,
+    d: Record<string, unknown>,
+  ): Promise<void> {
     const id = `${asAddress(d.provider)}:${asNumber(d.code)}`;
-    await prisma.service.updateMany({ where: { id }, data: { active: false } });
+    await tx.service.updateMany({ where: { id }, data: { active: false } });
   }
 
-  private async onVoucherCreated(d: Record<string, unknown>): Promise<void> {
+  private async onVoucherCreated(
+    tx: Prisma.TransactionClient,
+    d: Record<string, unknown>,
+  ): Promise<void> {
     const id = asId(d.voucher_id);
     const providerAddress = asAddress(d.provider);
 
     // A voucher references a provider row; if the indexer started after the
     // provider was registered, backfill a stub so the relation holds.
-    await prisma.provider.upsert({
+    await tx.provider.upsert({
       where: { address: providerAddress },
       create: {
         address: providerAddress,
@@ -447,7 +557,7 @@ export class Indexer {
       update: {},
     });
 
-    await prisma.voucher.upsert({
+    await tx.voucher.upsert({
       where: { id },
       create: {
         id,
@@ -465,20 +575,48 @@ export class Indexer {
   }
 
   private async onVoucherStatus(
+    tx: Prisma.TransactionClient,
     d: Record<string, unknown>,
     status: string,
     extra: Record<string, unknown>,
   ): Promise<void> {
     const id = asId(d.voucher_id);
-    await prisma.voucher.updateMany({
+    await tx.voucher.updateMany({
       where: { id },
       data: { status, ...extra },
     });
   }
 
-  private async onReceiptMinted(d: Record<string, unknown>): Promise<void> {
+  /**
+   * How a dispute ended: who resolved it, when, and in whose favour.
+   *
+   * The payout that follows (`voucher_settled` or `voucher_refunded`) is a
+   * separate event in the same transaction and may be processed before or
+   * after this one. This handler touches only the dispute fields and the
+   * status handler touches only `status`, so either order converges on the
+   * same row; neither reads the other's result.
+   */
+  private async onDisputeResolved(
+    tx: Prisma.TransactionClient,
+    e: DecodedEvent,
+  ): Promise<void> {
+    const id = asId(e.fields.voucher_id);
+    await tx.voucher.updateMany({
+      where: { id },
+      data: {
+        disputeResolvedAt: e.ledgerClosedAt,
+        disputeResolvedBy: asAddress(e.fields.admin),
+        disputeOutcome: asBoolean(e.fields.refunded_funder) ? 'Funder' : 'Provider',
+      },
+    });
+  }
+
+  private async onReceiptMinted(
+    tx: Prisma.TransactionClient,
+    d: Record<string, unknown>,
+  ): Promise<void> {
     const voucherId = asId(d.voucher_id);
-    await prisma.receipt.upsert({
+    await tx.receipt.upsert({
       where: { voucherId },
       create: {
         voucherId,

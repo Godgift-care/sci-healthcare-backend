@@ -10,12 +10,20 @@
 - **`READY_MAX_LAG_LEDGERS`** (default `120`): lag in ledgers at which `/ready` reports degraded. The response echoes it as `checks.maxLagLedgers`.
 - **Split API and indexer entry points**: `npm run start:api` and `npm run start:indexer`; combined `npm start` stays the default. Commented two-service example in `render.yaml`.
 - **Indexer lease**: `IndexerState.leaseOwner` / `leaseExpiresAt` make the cursor single-writer. Standby instances log and retry instead of racing the cursor.
+- **Attesters**: `Attester` model (`active`, `addedAt`, `removedAt`) and `Voucher.attestedBy`. The indexer now projects `attester_added` / `attester_removed` and records the attester from the `voucher_attested` topic instead of discarding it.
+- **GET /attesters**: Active attesters by default, `?all=true` to include removed ones, each with its attestation count. **GET /attesters/:address** for one attester with its count.
+- **Dispute resolution**: `Voucher.disputeResolvedAt` / `disputeResolvedBy` / `disputeOutcome` (`Funder` | `Provider`), projected from `dispute_resolved` and returned by `GET /vouchers` and `GET /vouchers/:id`.
+- **GET /vouchers/:id/events**: the voucher's contract events in ledger order, each with its transaction hash, backed by a new append-only `ContractEvent` log.
+- **Postgres CI matrix**: the suite now runs on Postgres as well as SQLite. `test/global-setup.ts` honours a provided Postgres `DATABASE_URL`, resetting by dropping and recreating the schema.
 
 ### Changed
 - **GET /receipts**: Now requires exactly one of `beneficiaryRef` or `provider` query parameters.
 - **GET /vouchers**: Status filter now accepts comma-separated values (e.g., `Claimed,Attested`) instead of a single value.
 - **Indexer logs**: skipped events now include the transaction hash and ledger; an unknown event name is warned once per process instead of silently ignored.
 - **`IndexerState` schema**: two nullable columns added; `prisma db push` adds them in place (no backfill needed).
+- **Indexer transactions**: each event's projection and its `ContractEvent` log insert now commit in one database transaction, and the per-handler transactions were folded into it.
+- **Known events**: `attester_added`, `attester_removed` and `dispute_resolved` are now projected rather than ignored.
+- **`Voucher` schema**: three nullable dispute columns and a nullable `attestedBy` added; `prisma db push` adds them in place (no backfill needed).
 
 ## 0.2.0 — 2026-10-09
 
