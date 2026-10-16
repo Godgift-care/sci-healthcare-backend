@@ -17,6 +17,7 @@
 - **Indexer lease**: `IndexerState.leaseOwner` / `leaseExpiresAt` make the cursor single-writer. Standby instances log and retry instead of racing the cursor.
 
 ### Changed
+- **Error responses**: every route now returns the one `{ error, message, details? }` envelope via the app-level error and not-found handlers. Unhandled failures are `internal_error`, with the cause left in the log rather than the response.
 - **GET /receipts**: Now requires exactly one of `beneficiaryRef` or `provider` query parameters.
 - **GET /vouchers**: Status filter now accepts comma-separated values (e.g., `Claimed,Attested`) instead of a single value.
 - **Indexer logs**: skipped events now include the transaction hash and ledger; an unknown event name is warned once per process instead of silently ignored.

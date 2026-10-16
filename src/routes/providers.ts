@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
+import { isPostgres } from '../lib/database.js';
+import { ApiError } from '../lib/errors.js';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
@@ -23,17 +25,17 @@ const VOUCHER_STATUSES = [
 ] as const;
 
 export async function providerRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/providers', async (req, reply) => {
+  app.get('/providers', async (req) => {
     const parsed = listQuery.safeParse(req.query);
     if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid_query', issues: parsed.error.issues });
+      throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
     }
     const { status, country, q, limit, offset } = parsed.data;
 
     const where = {
       ...(status ? { status } : {}),
       ...(country ? { country } : {}),
-      ...(q ? { name: { contains: q } } : {}),
+      ...(q ? { name: nameContains(q) } : {}),
     };
 
     const [rows, total] = await Promise.all([
@@ -67,13 +69,13 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.get('/providers/:address', async (req, reply) => {
+  app.get('/providers/:address', async (req) => {
     const { address } = req.params as { address: string };
     const p = await prisma.provider.findUnique({
       where: { address },
       include: { services: true },
     });
-    if (!p) return reply.code(404).send({ error: 'provider_not_found' });
+    if (!p) throw new ApiError(404, 'provider_not_found', 'Provider not found');
 
     return {
       address: p.address,
@@ -152,13 +154,13 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
    * A clinic suspended twice a year reads very differently from one never
    * suspended, and the current status alone cannot tell them apart.
    */
-  app.get('/providers/:address/history', async (req, reply) => {
+  app.get('/providers/:address/history', async (req) => {
     const { address } = req.params as { address: string };
     const provider = await prisma.provider.findUnique({
       where: { address },
       select: { address: true },
     });
-    if (!provider) return reply.code(404).send({ error: 'provider_not_found' });
+    if (!provider) throw new ApiError(404, 'provider_not_found', 'Provider not found');
 
     const changes = await prisma.providerStatusChange.findMany({
       where: { providerAddress: address },
@@ -176,18 +178,18 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** Every observed price for one service, oldest first. */
-  app.get('/providers/:address/services/:code/history', async (req, reply) => {
+  app.get('/providers/:address/services/:code/history', async (req) => {
     const { address, code } = req.params as { address: string; code: string };
     const serviceCode = Number(code);
     if (!Number.isInteger(serviceCode) || serviceCode < 0) {
-      return reply.code(400).send({ error: 'invalid_code' });
+      throw new ApiError(400, 'invalid_code', 'code must be a non-negative integer');
     }
 
     const provider = await prisma.provider.findUnique({
       where: { address },
       select: { address: true },
     });
-    if (!provider) return reply.code(404).send({ error: 'provider_not_found' });
+    if (!provider) throw new ApiError(404, 'provider_not_found', 'Provider not found');
 
     const changes = await prisma.servicePriceChange.findMany({
       where: { providerAddress: address, code: serviceCode },
@@ -203,6 +205,20 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
         ledger: c.ledger,
         changedAt: c.changedAt,
       })),
+    };
+  });
+
+  app.get('/countries', async () => {
+    const grouped = await prisma.provider.groupBy({
+      by: ['country'],
+      where: { status: 'Active' },
+      _count: { _all: true },
+    });
+
+    return {
+      countries: grouped
+        .map((g) => ({ code: g.country, clinicCount: g._count._all }))
+        .sort((a, b) => a.code.localeCompare(b.code)),
     };
   });
 }
