@@ -131,6 +131,14 @@ reference column**.
 
 `/receipts` requires an exact `beneficiaryRef`. Because that value is an HMAC under a key held by the patient, the endpoint cannot be walked to enumerate people.
 
+Every receipt — the patient view, the clinic view and `GET /receipts/:voucherId`
+— carries the clinic that issued it in a `provider` object (`address`, `name`,
+`country`), the same shape `GET /vouchers` uses, so a receipt page no longer has
+to resolve the address separately. A receipt whose clinic is not in the registry
+reports `name: null` and `country: null` instead of being dropped from its own
+history: the settled care still happened. Clinic names and countries are public
+on-chain registry data; no receipt response gains a beneficiary reference.
+
 ### Response behaviour
 
 List routes (`/vouchers`, `/vouchers/due`, `/providers`, `/receipts`) are limited to 30 requests
