@@ -6,29 +6,65 @@ import { z } from 'zod';
  * contract id and fails silently at request time is far harder to debug
  * than one that will not start at all.
  */
-const schema = z.object({
-  PORT: z.coerce.number().int().positive().default(8080),
-  HOST: z.string().default('0.0.0.0'),
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
-    .default('info'),
-  CORS_ORIGIN: z.string().default('http://localhost:3000'),
-  READY_MAX_LAG_LEDGERS: z.coerce.number().int().nonnegative().default(120),
+function isValidHttpUrl(val: string): boolean {
+  try {
+    const url = new URL(val);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
-  DATABASE_URL: z.string().min(1),
+export const schema = z
+  .object({
+    NODE_ENV: z.string().default('development'),
+    PORT: z.coerce.number().int().positive().default(8080),
+    HOST: z.string().default('0.0.0.0'),
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
+      .default('info'),
+    CORS_ORIGIN: z.string().default('http://localhost:3000'),
+    READY_MAX_LAG_LEDGERS: z.coerce.number().int().nonnegative().default(120),
 
-  STELLAR_NETWORK: z.enum(['testnet', 'public', 'futurenet']).default('testnet'),
-  SOROBAN_RPC_URL: z.string().url(),
-  NETWORK_PASSPHRASE: z.string().min(1),
+    DATABASE_URL: z.string().min(1),
 
-  REGISTRY_CONTRACT_ID: z.string().length(56),
-  VOUCHER_CONTRACT_ID: z.string().length(56),
-  RECEIPT_CONTRACT_ID: z.string().length(56),
-  USDC_CONTRACT_ID: z.string().length(56).optional(),
+    STELLAR_NETWORK: z.enum(['testnet', 'public', 'futurenet']).default('testnet'),
+    SOROBAN_RPC_URL: z.string().url(),
+    NETWORK_PASSPHRASE: z.string().min(1),
 
-  INDEXER_START_LEDGER: z.coerce.number().int().nonnegative().default(0),
-  INDEXER_POLL_MS: z.coerce.number().int().positive().default(5000),
-});
+    REGISTRY_CONTRACT_ID: z.string().length(56),
+    VOUCHER_CONTRACT_ID: z.string().length(56),
+    RECEIPT_CONTRACT_ID: z.string().length(56),
+    USDC_CONTRACT_ID: z.string().length(56).optional(),
+
+    INDEXER_START_LEDGER: z.coerce.number().int().nonnegative().default(0),
+    INDEXER_POLL_MS: z.coerce.number().int().positive().default(5000),
+  })
+  .refine(
+    (cfg) => {
+      const origins = cfg.CORS_ORIGIN.split(',').map((s) => s.trim());
+      if (cfg.NODE_ENV === 'production' && origins.some((o) => o === '*')) {
+        return false;
+      }
+      return origins.every((o) => {
+        if (o === '*' && cfg.NODE_ENV !== 'production') return true;
+        return isValidHttpUrl(o);
+      });
+    },
+    (cfg) => {
+      const origins = cfg.CORS_ORIGIN.split(',').map((s) => s.trim());
+      if (cfg.NODE_ENV === 'production' && origins.some((o) => o === '*')) {
+        return {
+          message: 'Wildcard CORS origin "*" is not allowed in production',
+          path: ['CORS_ORIGIN'],
+        };
+      }
+      return {
+        message: 'CORS_ORIGIN must contain valid http(s) URLs',
+        path: ['CORS_ORIGIN'],
+      };
+    },
+  );
 
 /**
  * Expected network passphrases for each STELLAR_NETWORK value.

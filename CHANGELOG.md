@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+- **Refuse wildcard CORS origin in production**: `CORS_ORIGIN` now rejects `*` when `NODE_ENV=production` and validates origins as http(s) URLs.
+- **Query parameter length caps**: all string query and path parameters in route schemas now enforce `.max()` limits to prevent denial-of-service via unbounded query strings.
+
 ### Changed
 - **Versioned migrations**: production now applies reviewed migrations from `prisma/migrations/` with `prisma migrate deploy` instead of `db push --accept-data-loss`. `20260101000000_init` is the Postgres baseline of the previous schema and `20260102000000_failed_events` adds `FailedEvent`. A CI `migrations` job applies them to a fresh Postgres and fails if the schema and migrations drift. **Existing production databases must run `npx prisma migrate resolve --applied 20260101000000_init` once** (see README "Deploying").
 - **Batched indexer writes**: all events from one poll cycle are applied in a single transaction together with the cursor update, with a savepoint per event so a failing event rolls back only itself. A crash mid-cycle leaves the cursor unchanged.
