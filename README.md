@@ -189,6 +189,10 @@ npm run client:generate
 
 See [`packages/client/README.md`](packages/client/README.md) for installation and usage examples.
 
+### Examples
+
+- **Telegram Bot for Clinics**: [`examples/telegram-bot/`](examples/telegram-bot/README.md) demonstrates how clinic microservices verify `X-SCI-Signature` HMAC-SHA256 signatures on webhook notifications and post real-time voucher alerts without exposing patient/beneficiary data.
+
 ### Endpoints and Examples
 
 #### 1. Operations & System
