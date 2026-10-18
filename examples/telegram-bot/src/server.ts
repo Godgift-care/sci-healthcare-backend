@@ -6,11 +6,11 @@ import { verifySignature } from './verify.js';
 
 export interface WebhookServerOptions {
   webhookSecret: string;
-  botToken?: string;
-  chatId?: string;
-  logger?: (msg: string) => void;
-  fetchImpl?: typeof fetch;
-  onMessagePosted?: (message: string) => void;
+  botToken?: string | undefined;
+  chatId?: string | undefined;
+  logger?: ((msg: string) => void) | undefined;
+  fetchImpl?: typeof fetch | undefined;
+  onMessagePosted?: ((message: string) => void) | undefined;
 }
 
 export function createWebhookServer(options: WebhookServerOptions): Server {

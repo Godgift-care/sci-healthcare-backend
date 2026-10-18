@@ -22,7 +22,7 @@ describe('examples/telegram-bot', () => {
       botToken: 'mock-token',
       chatId: '987654321',
       logger: () => {},
-      onMessagePosted: (msg) => {
+      onMessagePosted: (msg: string) => {
         postedMessages.push(msg);
       },
     });
@@ -38,7 +38,7 @@ describe('examples/telegram-bot', () => {
 
   afterAll(async () => {
     await new Promise<void>((resolve, reject) => {
-      server.close((err) => (err ? reject(err) : resolve()));
+      server.close((err?: Error | null) => (err ? reject(err) : resolve()));
     });
   });
 
