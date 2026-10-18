@@ -15,73 +15,73 @@ function isValidHttpUrl(val: string): boolean {
   }
 }
 
-export const schema = z
-  .object({
-    NODE_ENV: z.string().default('development'),
-    PORT: z.coerce.number().int().positive().default(8080),
-    HOST: z.string().default('0.0.0.0'),
-    LOG_LEVEL: z
-      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
-      .default('info'),
-    CORS_ORIGIN: z.string().default('http://localhost:3000'),
-    READY_MAX_LAG_LEDGERS: z.coerce.number().int().nonnegative().default(120),
+export const schema = z.object({
+  NODE_ENV: z.string().default('development'),
+  PORT: z.coerce.number().int().positive().default(8080),
+  HOST: z.string().default('0.0.0.0'),
+  LOG_LEVEL: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
+    .default('info'),
+  CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  READY_MAX_LAG_LEDGERS: z.coerce.number().int().nonnegative().default(120),
 
-    STELLAR_NETWORK: z.enum(['testnet', 'public', 'futurenet']).default('testnet'),
-    // One of these two is required. `SOROBAN_RPC_URLS` is the comma-separated
-    // form that allows a standby endpoint; `SOROBAN_RPC_URL` is the original
-    // single-endpoint variable and is still honoured.
-    SOROBAN_RPC_URL: z.string().url().optional(),
-    SOROBAN_RPC_URLS: z.string().optional(),
-    /**
-     * Consecutive failures against one endpoint before the pool rotates to the
-     * next. One blip is not an outage, so the default waits for a small streak.
-     */
-    SOROBAN_RPC_MAX_FAILURES: z.coerce.number().int().positive().default(3),
-    NETWORK_PASSPHRASE: z.string().min(1),
+  DATABASE_URL: z.string().min(1),
 
-    REGISTRY_CONTRACT_ID: z.string().length(56),
-    VOUCHER_CONTRACT_ID: z.string().length(56),
-    RECEIPT_CONTRACT_ID: z.string().length(56),
-    USDC_CONTRACT_ID: z.string().length(56).optional(),
-    /** Testnet demo faucet. Drips are counted only when this is set. */
-    FAUCET_CONTRACT_ID: z.string().length(56).optional(),
+  STELLAR_NETWORK: z.enum(['testnet', 'public', 'futurenet']).default('testnet'),
+  // One of these two is required. `SOROBAN_RPC_URLS` is the comma-separated
+  // form that allows a standby endpoint; `SOROBAN_RPC_URL` is the original
+  // single-endpoint variable and is still honoured.
+  SOROBAN_RPC_URL: z.string().url().optional(),
+  SOROBAN_RPC_URLS: z.string().optional(),
+  /**
+   * Consecutive failures against one endpoint before the pool rotates to the
+   * next. One blip is not an outage, so the default waits for a small streak.
+   */
+  SOROBAN_RPC_MAX_FAILURES: z.coerce.number().int().positive().default(3),
+  NETWORK_PASSPHRASE: z.string().min(1),
 
-    /**
-     * Optional JSON array of previous contract deployments for redeployment support.
-     * Each entry has {type, contractId, fromLedger, toLedger?}.
-     * When present, the indexer subscribes to ALL listed contracts.
-     */
-    DEPLOYMENTS: z.string().optional(),
+  REGISTRY_CONTRACT_ID: z.string().length(56),
+  VOUCHER_CONTRACT_ID: z.string().length(56),
+  RECEIPT_CONTRACT_ID: z.string().length(56),
+  USDC_CONTRACT_ID: z.string().length(56).optional(),
+  /** Testnet demo faucet. Drips are counted only when this is set. */
+  FAUCET_CONTRACT_ID: z.string().length(56).optional(),
 
-    INDEXER_START_LEDGER: z.coerce.number().int().nonnegative().default(0),
-    INDEXER_POLL_MS: z.coerce.number().int().positive().default(5000),
-    /** Ceiling for the indexer's exponential backoff after RPC failures. */
-    INDEXER_BACKOFF_MAX_MS: z.coerce.number().int().positive().default(60_000),
-    /**
-     * How long shutdown waits for the indexer cycle in flight before giving
-     * up. Render sends SIGTERM on every deploy, so the process must finish the
-     * transaction and save the cursor, but a wedged cycle must not hang the
-     * deploy forever.
-     */
-    SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  /**
+   * Optional JSON array of previous contract deployments for redeployment support.
+   * Each entry has {type, contractId, fromLedger, toLedger?}.
+   * When present, the indexer subscribes to ALL listed contracts.
+   */
+  DEPLOYMENTS: z.string().optional(),
 
-    /**
-     * Idle interval between heartbeat frames on `GET /stream`. A comment line
-     * every so often is what stops a proxy or mobile carrier from closing a
-     * connection that is alive but quiet, and it is how the server notices a
-     * client that has vanished. The floor keeps a misconfigured value from
-     * turning every open stream into a self-inflicted flood.
-     */
-    SSE_HEARTBEAT_MS: z.coerce.number().int().min(250).default(15_000),
-    /**
-     * Concurrent `GET /stream` connections this instance will hold. Each one is
-     * a socket that is never released, so the cap is what keeps a page that
-     * reconnects on every focus from using up the instance; past it the route
-     * answers 503 and the client retries later.
-     */
-    SSE_MAX_CONNECTIONS: z.coerce.number().int().positive().default(64),
-  })
-  .refine(
+  INDEXER_START_LEDGER: z.coerce.number().int().nonnegative().default(0),
+  INDEXER_POLL_MS: z.coerce.number().int().positive().default(5000),
+  /** Ceiling for the indexer's exponential backoff after RPC failures. */
+  INDEXER_BACKOFF_MAX_MS: z.coerce.number().int().positive().default(60_000),
+  /**
+   * How long shutdown waits for the indexer cycle in flight before giving
+   * up. Render sends SIGTERM on every deploy, so the process must finish the
+   * transaction and save the cursor, but a wedged cycle must not hang the
+   * deploy forever.
+   */
+  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+
+  /**
+   * Idle interval between heartbeat frames on `GET /stream`. A comment line
+   * every so often is what stops a proxy or mobile carrier from closing a
+   * connection that is alive but quiet, and it is how the server notices a
+   * client that has vanished. The floor keeps a misconfigured value from
+   * turning every open stream into a self-inflicted flood.
+   */
+  SSE_HEARTBEAT_MS: z.coerce.number().int().min(250).default(15_000),
+  /**
+   * Concurrent `GET /stream` connections this instance will hold. Each one is
+   * a socket that is never released, so the cap is what keeps a page that
+   * reconnects on every focus from using up the instance; past it the route
+   * answers 503 and the client retries later.
+   */
+  SSE_MAX_CONNECTIONS: z.coerce.number().int().positive().default(64),
+}).refine(
     (cfg) => {
       const origins = cfg.CORS_ORIGIN.split(',').map((s) => s.trim());
       if (cfg.NODE_ENV === 'production' && origins.some((o) => o === '*')) {
