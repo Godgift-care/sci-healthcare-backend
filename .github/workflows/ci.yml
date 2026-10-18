@@ -85,7 +85,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-        - run: npm ci
+      - run: npm ci
       - run: ./scripts/use-postgres.sh
       # A fresh database must migrate cleanly...
       - run: npx prisma migrate deploy
