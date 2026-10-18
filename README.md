@@ -179,6 +179,16 @@ is a different tag. `/health`, `/ready`, `/metrics` and `/openapi.json` are
 `Cache-Control: no-store`, as is every error response. Nothing is cached
 server-side, so any instance can validate a tag produced by another.
 
+### TypeScript Client
+
+A strongly typed TypeScript client workspace package `@sci-healthcare/client` is generated from the OpenAPI specification:
+
+```bash
+npm run client:generate
+```
+
+See [`packages/client/README.md`](packages/client/README.md) for installation and usage examples.
+
 ### Endpoints and Examples
 
 #### 1. Operations & System
