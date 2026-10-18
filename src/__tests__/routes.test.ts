@@ -349,10 +349,78 @@ describe('GET /health and /stats', () => {
       vouchers: 5,
       settledVouchers: 1,
       settledValue: '30000000',
+      // #52: the single settled voucher in `seed()` paid a 300000 fee.
+      feesCollected: '300000',
       receipts: 2,
       faucetDrips: 0,
       faucetWallets: 0,
     });
+  });
+
+  // #52: `settledFee` is stored per voucher but was never summed. The figure
+  // is the protocol's lifetime earnings, so it must be exact — these ids are
+  // chosen so a Number accumulation rounds them and fails the assertion.
+  it('sums settledFee into an exact feesCollected total, skipping settled vouchers without a fee', async () => {
+    const now = Date.now();
+    await prisma.voucher.createMany({
+      data: [
+        {
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          id: 'fee-1',
+          serviceCode: 101,
+          amount: '9007199254740993',
+          status: 'Settled',
+          createdAt: new Date(now - 4 * DAY),
+          expiresAt: new Date(now + DAY),
+          settledFee: '9007199254740993',
+        },
+        {
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          id: 'fee-2',
+          serviceCode: 101,
+          amount: '9007199254740995',
+          status: 'Settled',
+          createdAt: new Date(now - 3 * DAY),
+          expiresAt: new Date(now + DAY),
+          settledFee: '9007199254740995',
+        },
+        // Settled before the fee column existed: contributes nothing, but
+        // must not make the sum NaN or drop the other fees.
+        {
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          id: 'fee-3',
+          serviceCode: 101,
+          amount: '30000000',
+          status: 'Settled',
+          createdAt: new Date(now - 2 * DAY),
+          expiresAt: new Date(now + DAY),
+          settledFee: null,
+        },
+      ],
+    });
+
+    const { status, body } = await get('/stats');
+    expect(status).toBe(200);
+    // 300000 (seeded voucher 1) + the two above MAX_SAFE_INTEGER fees.
+    expect(body.feesCollected).toBe('18014398509781988');
+    expect(typeof body.feesCollected).toBe('string');
+  });
+
+  it('reports feesCollected as "0" when nothing has settled', async () => {
+    await prisma.voucher.updateMany({
+      where: { status: 'Settled' },
+      data: { status: 'Funded' },
+    });
+
+    const { body } = await get('/stats');
+    expect(body.settledVouchers).toBe(0);
+    expect(body.feesCollected).toBe('0');
   });
 
   it('counts faucet drips and the distinct wallets behind them', async () => {
