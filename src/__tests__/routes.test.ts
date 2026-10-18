@@ -1157,6 +1157,175 @@ describe('GET /receipts', () => {
   });
 });
 
+// #53: one call that answers "how much care has this reference had, where
+// and when", so the care history page does not fetch and sum every receipt
+// on the client.
+describe('GET /receipts/summary', () => {
+  it('returns count, total, first and last visit matching the receipts', async () => {
+    // The expectations are derived from GET /receipts itself, the source of
+    // truth the issue names ("Summary values match the receipts"), not from
+    // re-running the aggregation in the test.
+    const { body: list } = await get(`/receipts?beneficiaryRef=${REF}`);
+    expect(list.receipts).toHaveLength(2);
+
+    const { status, body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    expect(status).toBe(200);
+    expect(body.count).toBe(list.total);
+    expect(body.total).toBe(list.totalSpend);
+    expect(body.totalDisplay).toBe(list.totalSpendDisplay);
+    // The list is sorted settledAt desc, so first/last are its ends.
+    expect(body.lastVisit).toBe(list.receipts[0].settledAt);
+    expect(body.firstVisit).toBe(list.receipts[list.receipts.length - 1].settledAt);
+  });
+
+  it('names the clinics visited', async () => {
+    const { body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    expect(body.clinics).toEqual([
+      {
+        address: CLINIC,
+        name: 'Ikeja General Clinic',
+        country: 'NG',
+        visits: 2,
+        spend: '40000000',
+        spendDisplay: '4.0000000',
+      },
+    ]);
+  });
+
+  it('sums totals with BigInt, exactly, past Number.MAX_SAFE_INTEGER', async () => {
+    await prisma.receipt.createMany({
+      data: [
+        {
+          voucherId: 'sum-big-1',
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '9007199254740993',
+          settledAt: new Date(Date.now() - 2 * DAY),
+        },
+        {
+          voucherId: 'sum-big-2',
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          // The odd pair rounds under Number accumulation.
+          amount: '9007199254740995',
+          settledAt: new Date(Date.now() - DAY),
+        },
+      ],
+    });
+
+    const { body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    // 30000000 + 10000000 (seeded) + the two above.
+    expect(body.total).toBe('18014398549481988');
+  });
+
+  it('aggregates across several clinics and reports unknown clinics as unknown', async () => {
+    const now = Date.now();
+    await prisma.receipt.createMany({
+      data: [
+        // A second clinic, and the earliest visit overall.
+        {
+          voucherId: 'sum-2nd',
+          beneficiaryRef: REF,
+          providerAddress: SECOND_CLINIC,
+          serviceCode: 404,
+          amount: '20000000',
+          settledAt: new Date(now - 90 * DAY),
+        },
+        // A clinic the indexer never saw registered (#51 precedent: unknown,
+        // not invented).
+        {
+          voucherId: 'sum-unknown',
+          beneficiaryRef: REF,
+          providerAddress: UNREGISTERED_CLINIC,
+          serviceCode: 101,
+          amount: '5000000',
+          settledAt: new Date(now - 4 * DAY),
+        },
+      ],
+    });
+
+    const { body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    expect(body.count).toBe(4);
+    expect(body.firstVisit).toBe(new Date(now - 90 * DAY).toISOString());
+    // The newest visit is a seeded receipt, whose timestamp comes from the
+    // seed's own clock — read it back from GET /receipts rather than
+    // recomputing it here.
+    const { body: list } = await get(`/receipts?beneficiaryRef=${REF}`);
+    expect(body.lastVisit).toBe(list.receipts[0].settledAt);
+    expect(body.clinics).toHaveLength(3);
+    // Deterministic order by address, so two calls render identically.
+    const addresses = body.clinics.map((c: { address: string }) => c.address);
+    expect(addresses).toEqual([...addresses].sort());
+    expect(body.clinics.find((c: { address: string }) => c.address === SECOND_CLINIC)).toEqual({
+      address: SECOND_CLINIC,
+      name: 'Mwanza Mission Hospital',
+      country: 'TZ',
+      visits: 1,
+      spend: '20000000',
+      spendDisplay: '2.0000000',
+    });
+    expect(
+      body.clinics.find((c: { address: string }) => c.address === UNREGISTERED_CLINIC),
+    ).toMatchObject({ name: null, country: null, visits: 1, spend: '5000000' });
+    // Per-clinic spend must add up to the grand total.
+    const spendSum = (body.clinics as { spend: string }[])
+      .reduce((acc: bigint, c) => acc + BigInt(c.spend), 0n)
+      .toString();
+    expect(spendSum).toBe(body.total);
+  });
+
+  it('summarises a reference with no care as zero, not as missing', async () => {
+    const { status, body } = await get(`/receipts/summary?beneficiaryRef=${OTHER_REF}`);
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      count: 0,
+      total: '0',
+      totalDisplay: '0.0000000',
+      firstVisit: null,
+      lastVisit: null,
+      clinics: [],
+    });
+  });
+
+  it('requires a valid beneficiaryRef', async () => {
+    const missing = await get('/receipts/summary');
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toBe('invalid_query');
+
+    const malformed = await get('/receipts/summary?beneficiaryRef=not-a-ref');
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error).toBe('invalid_query');
+
+    // The clinic view is deliberately not part of this endpoint: a clinic
+    // querying by provider would summarise many patients into one number.
+    const byProvider = await get(`/receipts/summary?provider=${CLINIC}`);
+    expect(byProvider.status).toBe(400);
+  });
+
+  it('never echoes the beneficiary reference back', async () => {
+    const { status, body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    expect(status).toBe(200);
+    expect(body).not.toHaveProperty('beneficiaryRef');
+    expect(JSON.stringify(body)).not.toContain(REF);
+  });
+
+  it('is served under the /v1 alias with cache headers like the other read routes', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/receipts/summary?beneficiaryRef=${REF}`,
+      headers: { 'x-forwarded-for': nextTestClientIp() },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().count).toBe(2);
+    expect(res.headers['cache-control']).toBe(
+      'public, max-age=5, stale-while-revalidate=30',
+    );
+    expect(res.headers['etag']).toMatch(/^W\/"\d+-[A-Za-z0-9_-]+"$/);
+  });
+});
+
 describe('GET /receipts/:voucherId', () => {
   it('returns a single receipt by voucherId without beneficiaryRef', async () => {
     const { body } = await get('/receipts/1');
