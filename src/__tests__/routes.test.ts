@@ -1,15 +1,20 @@
 import type { FastifyInstance } from 'fastify';
+import { gunzipSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../app.js';
 import { prisma } from '../db.js';
 import { CONTRACTS, env } from '../env.js';
+import { encodeCursor } from '../lib/cursor.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
+import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { server } from '../stellar/client.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const SECOND_CLINIC = 'GCMDQZBBTZBR3ZDPCEFSDNNWVQFA44VHOJHR2JZTL7CHJHZ3N2LQDW3B';
 const PENDING_CLINIC = 'GBWBYKGC5OCRELVP5WHAKEMBSZMNUY3HOKVSYBQGLFNWWQHNH2SD53FZ';
+/** An address that appears on a receipt but never registered (`#51`). */
+const UNREGISTERED_CLINIC = `G${'U'.repeat(55)}`;
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
 const ADMIN = 'A'.repeat(56);
 const NEW_ADMIN = 'B'.repeat(56);
@@ -21,14 +26,28 @@ const REGISTRY = CONTRACTS.find((c) => c.contract === 'registry')!.contractId;
 const VOUCHER = CONTRACTS.find((c) => c.contract === 'voucher')!.contractId;
 
 let app: FastifyInstance;
+let testClientId = 0;
+
+function nextTestClientIp(): string {
+  const id = ++testClientId;
+  return `10.${(id >>> 16) & 255}.${(id >>> 8) & 255}.${id & 255}`;
+}
 
 async function get(url: string) {
-  const res = await app.inject({ method: 'GET', url });
+  const res = await app.inject({
+    method: 'GET',
+    url,
+    headers: { 'x-forwarded-for': nextTestClientIp() },
+  });
   return { status: res.statusCode, body: res.json() };
 }
 
 async function getCsv(url: string) {
-  const res = await app.inject({ method: 'GET', url });
+  const res = await app.inject({
+    method: 'GET',
+    url,
+    headers: { 'x-forwarded-for': nextTestClientIp() },
+  });
   return { status: res.statusCode, body: res.body, headers: res.headers, json: () => res.json() };
 }
 
@@ -278,7 +297,7 @@ async function seed() {
 
 beforeAll(async () => {
   app = await buildApp({ logger: false });
-});
+}, 30_000);
 
 afterAll(async () => {
   await app.close();
@@ -296,6 +315,26 @@ beforeEach(async () => {
   await seed();
 });
 
+describe('OpenAPI spec', () => {
+  it('serves a valid spec at /openapi.json', async () => {
+    const res = await app.inject({ method: 'GET', url: '/openapi.json' });
+    expect(res.statusCode).toBe(200);
+    const spec = res.json();
+    expect(spec.openapi).toMatch(/^3\./);
+    expect(spec.info.title).toBe('SCI Healthcare API');
+    expect(spec.paths['/vouchers']).toBeDefined();
+    expect(spec.paths['/providers']).toBeDefined();
+    expect(spec.paths['/receipts']).toBeDefined();
+    expect(spec.paths['/governance']).toBeDefined();
+  });
+
+  it('serves Swagger UI at /docs', async () => {
+    const res = await app.inject({ method: 'GET', url: '/docs' });
+    // swagger-ui redirects to /docs/ or returns HTML
+    expect([200, 302]).toContain(res.statusCode);
+  });
+});
+
 describe('GET /health and /stats', () => {
   it('reports liveness', async () => {
     expect(await get('/health')).toEqual({ status: 200, body: { status: 'ok' } });
@@ -310,8 +349,164 @@ describe('GET /health and /stats', () => {
       vouchers: 5,
       settledVouchers: 1,
       settledValue: '30000000',
+      // #52: the single settled voucher in `seed()` paid a 300000 fee.
+      feesCollected: '300000',
       receipts: 2,
+      faucetDrips: 0,
+      faucetWallets: 0,
     });
+  });
+
+  // #52: `settledFee` is stored per voucher but was never summed. The figure
+  // is the protocol's lifetime earnings, so it must be exact — these ids are
+  // chosen so a Number accumulation rounds them and fails the assertion.
+  it('sums settledFee into an exact feesCollected total, skipping settled vouchers without a fee', async () => {
+    const now = Date.now();
+    await prisma.voucher.createMany({
+      data: [
+        {
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          id: 'fee-1',
+          serviceCode: 101,
+          amount: '9007199254740993',
+          status: 'Settled',
+          createdAt: new Date(now - 4 * DAY),
+          expiresAt: new Date(now + DAY),
+          settledFee: '9007199254740993',
+        },
+        {
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          id: 'fee-2',
+          serviceCode: 101,
+          amount: '9007199254740995',
+          status: 'Settled',
+          createdAt: new Date(now - 3 * DAY),
+          expiresAt: new Date(now + DAY),
+          settledFee: '9007199254740995',
+        },
+        // Settled before the fee column existed: contributes nothing, but
+        // must not make the sum NaN or drop the other fees.
+        {
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          id: 'fee-3',
+          serviceCode: 101,
+          amount: '30000000',
+          status: 'Settled',
+          createdAt: new Date(now - 2 * DAY),
+          expiresAt: new Date(now + DAY),
+          settledFee: null,
+        },
+      ],
+    });
+
+    const { status, body } = await get('/stats');
+    expect(status).toBe(200);
+    // 300000 (seeded voucher 1) + the two above MAX_SAFE_INTEGER fees.
+    expect(body.feesCollected).toBe('18014398509781988');
+    expect(typeof body.feesCollected).toBe('string');
+  });
+
+  it('reports feesCollected as "0" when nothing has settled', async () => {
+    await prisma.voucher.updateMany({
+      where: { status: 'Settled' },
+      data: { status: 'Funded' },
+    });
+
+    const { body } = await get('/stats');
+    expect(body.settledVouchers).toBe(0);
+    expect(body.feesCollected).toBe('0');
+  });
+
+  it('counts faucet drips and the distinct wallets behind them', async () => {
+    await prisma.faucetDrip.createMany({
+      data: [
+        { id: 'drip-1', wallet: FUNDER, amount: '100000000', ledger: 10, drippedAt: new Date() },
+        // Same wallet again: more drips, still one person trying the demo.
+        { id: 'drip-2', wallet: FUNDER, amount: '100000000', ledger: 11, drippedAt: new Date() },
+        { id: 'drip-3', wallet: CLINIC, amount: '100000000', ledger: 12, drippedAt: new Date() },
+      ],
+    });
+
+    try {
+      const { body } = await get('/stats');
+      expect(body.faucetDrips).toBe(3);
+      expect(body.faucetWallets).toBe(2);
+    } finally {
+      await prisma.faucetDrip.deleteMany();
+    }
+  });
+});
+
+describe('GET /version', () => {
+  it('returns network and contract metadata', async () => {
+    const { status, body } = await get('/version');
+    expect(status).toBe(200);
+    // Read from package.json, not hard-coded here, so a release bump is one
+    // edit and this test still proves the route reports it.
+    expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(['testnet', 'public', 'futurenet']).toContain(body.network);
+    expect(body.contracts.registry).toMatch(/^[A-Z]{2}[A-Z0-9]{54}$/);
+    expect(body.contracts.voucher).toMatch(/^[A-Z]{2}[A-Z0-9]{54}$/);
+    expect(body.contracts.receipt).toMatch(/^[A-Z]{2}[A-Z0-9]{54}$/);
+  });
+
+  it('reports the build commit, indexer start ledger and process start time', async () => {
+    const { status, body } = await get('/version');
+    expect(status).toBe(200);
+    expect(body.commit === null || typeof body.commit === 'string').toBe(true);
+    expect(body.indexerStartLedger).toBe(env.INDEXER_START_LEDGER);
+    expect(Number.isNaN(Date.parse(body.startedAt))).toBe(false);
+    expect(new Date(body.startedAt).getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('reports RENDER_GIT_COMMIT when the platform provides one', async () => {
+    const previous = process.env.RENDER_GIT_COMMIT;
+    process.env.RENDER_GIT_COMMIT = 'a1b2c3d4e5f6';
+    try {
+      const { body } = await get('/version');
+      expect(body.commit).toBe('a1b2c3d4e5f6');
+    } finally {
+      if (previous === undefined) delete process.env.RENDER_GIT_COMMIT;
+      else process.env.RENDER_GIT_COMMIT = previous;
+    }
+  });
+
+  it('exposes deployment metadata only, never credentials', async () => {
+    const { body } = await get('/version');
+    const keys = Object.keys(body).sort();
+    expect(keys).toEqual([
+      'commit',
+      'contracts',
+      'indexerStartLedger',
+      'network',
+      'rpcUrl',
+      'rpcUrls',
+      'startedAt',
+      'version',
+    ]);
+    expect(JSON.stringify(body)).not.toContain(env.DATABASE_URL);
+    expect(body).not.toHaveProperty('databaseUrl');
+  });
+
+  it('redacts credentials in RPC URL', async () => {
+    const { body } = await get('/version');
+    // If the URL contains @, it should be redacted
+    if (body.rpcUrl.includes('@')) {
+      expect(body.rpcUrl).toMatch(/:\/\/\*\*\*@/);
+    }
+  });
+
+  it('lists every configured RPC endpoint, with the active one first reported', async () => {
+    const { body } = await get('/version');
+    expect(Array.isArray(body.rpcUrls)).toBe(true);
+    expect(body.rpcUrls).toContain(body.rpcUrl);
+    expect(body.rpcUrls).toEqual(env.RPC_URLS.map((u: string) => u));
   });
 });
 
@@ -341,7 +536,35 @@ describe('GET /ready', () => {
       indexer: 'ok',
       lagLedgers: 120,
       maxLagLedgers: env.READY_MAX_LAG_LEDGERS,
+      rpcUrl: env.SOROBAN_RPC_URL,
+      reconcile: 'ok',
+      reconcileMismatches: 0,
     });
+  });
+
+  it('reports reconciliation drift without taking the instance out of rotation', async () => {
+    await seedCursor(1000);
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 1000 } as never);
+    await prisma.reconcileMismatch.create({
+      data: {
+        voucherId: '1',
+        kind: 'field_mismatch',
+        fields: JSON.stringify([{ field: 'status', db: 'Funded', chain: 'Settled' }]),
+        firstSeen: new Date(),
+        lastSeen: new Date(),
+      },
+    });
+
+    try {
+      const { status, body } = await get('/ready');
+      // Drift is a data-quality alarm, not a reason to stop serving.
+      expect(status).toBe(200);
+      expect(body.status).toBe('ready');
+      expect(body.checks.reconcile).toBe('drift');
+      expect(body.checks.reconcileMismatches).toBe(1);
+    } finally {
+      await prisma.reconcileMismatch.deleteMany();
+    }
   });
 
   it('is degraded one ledger past the threshold', async () => {
@@ -357,9 +580,35 @@ describe('GET /ready', () => {
       maxLagLedgers: env.READY_MAX_LAG_LEDGERS,
     });
   });
+
+  it('returns 503 with gap details when the indexer has a retention gap', async () => {
+    await prisma.indexerState.upsert({
+      where: { id: 1 },
+      create: { id: 1, lastLedger: 50, gap: true, gapOldestLedger: 200, gapCursorLedger: 50 },
+      update: { lastLedger: 50, gap: true, gapOldestLedger: 200, gapCursorLedger: 50, leaseOwner: null, leaseExpiresAt: null },
+    });
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 1000 } as never);
+
+    const { status, body } = await get('/ready');
+    expect(status).toBe(503);
+    expect(body.status).toBe('degraded');
+    expect(body.checks.indexer).toBe('gap');
+    expect(body.checks.gap).toMatchObject({
+      detected: true,
+      cursorLedger: 50,
+      oldestAvailable: 200,
+    });
+    expect(body.checks.gap.message).toContain('RUNBOOK');
+  });
 });
 
 describe('GET /providers', () => {
+  it('searches clinics by part of their name', async () => {
+    const { status, body } = await get('/providers?q=Ikeja');
+    expect(status).toBe(200);
+    expect(body.providers.map((p: { name: string }) => p.name)).toEqual(['Ikeja General Clinic']);
+  });
+
   it('filters by status and lists only active services', async () => {
     const { body } = await get('/providers?status=Active');
     expect(body.total).toBe(2);
@@ -580,6 +829,46 @@ describe('GET /vouchers', () => {
   it('carries the dispute reason', async () => {
     const { body } = await get('/vouchers?status=Disputed');
     expect(body.vouchers[0]).toMatchObject({ id: '5', disputeReason: 2 });
+  });
+
+  it('filters by creation window, alone and combined with a funder', async () => {
+    const from = encodeURIComponent(new Date(Date.now() - 6 * DAY).toISOString());
+    const to = encodeURIComponent(new Date(Date.now() - 20 * DAY).toISOString());
+
+    const recent = await get(`/vouchers?createdFrom=${from}`);
+    expect(recent.body.total).toBe(2);
+    expect(recent.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['5', '4']);
+
+    const older = await get(`/vouchers?funder=${FUNDER}&createdTo=${to}`);
+    expect(older.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['3', '2']);
+  });
+
+  it('compares amounts numerically, not as strings', async () => {
+    // 10,000,000 sorts before 9,000,000 as a string but not numerically.
+    const { body } = await get('/vouchers?minAmount=9000000');
+    expect(body.total).toBe(5);
+    expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual(['5', '4', '1', '3', '2']);
+
+    const capped = await get(`/vouchers?funder=${FUNDER}&maxAmount=30000000`);
+    expect(capped.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['5', '4', '1', '2']);
+  });
+
+  it('combines an amount band with a status', async () => {
+    const { body } = await get(
+      `/vouchers?provider=${CLINIC}&status=Attested&minAmount=20000000&maxAmount=40000000`,
+    );
+    expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual(['4']);
+  });
+
+  it('rejects malformed dates and amounts', async () => {
+    expect((await get('/vouchers?createdFrom=yesterday')).status).toBe(400);
+    expect((await get('/vouchers?minAmount=-1')).status).toBe(400);
+    expect((await get('/vouchers?minAmount=abc')).status).toBe(400);
+    expect(
+      (await get('/vouchers?createdFrom=2026-10-10T00:00:00Z&createdTo=2026-10-01T00:00:00Z'))
+        .status,
+    ).toBe(400);
+    expect((await get('/vouchers?minAmount=20000000&maxAmount=10000000')).status).toBe(400);
   });
 });
 
@@ -812,6 +1101,253 @@ describe('GET /receipts', () => {
     expect(s2).toBe(400);
     expect(b2.error).toBe('invalid_query');
   });
+
+  // #51 — an address is what the chain records; the clinic name is what a
+  // patient recognises when they look at a receipt.
+  it('names the clinic that issued each receipt', async () => {
+    const { body } = await get(`/receipts?beneficiaryRef=${REF}`);
+    expect(body.receipts).toHaveLength(2);
+    for (const receipt of body.receipts as { provider: unknown }[]) {
+      expect(receipt.provider).toEqual({
+        address: CLINIC,
+        name: 'Ikeja General Clinic',
+        country: 'NG',
+      });
+    }
+    // Kept for clients already reading it; the object is additive.
+    expect(body.receipts[0].providerAddress).toBe(CLINIC);
+  });
+
+  it('names the clinic in the provider view too', async () => {
+    const { body } = await get(`/receipts?provider=${SECOND_CLINIC}`);
+    expect(body.receipts).toHaveLength(0);
+
+    await prisma.receipt.create({
+      data: {
+        voucherId: '12',
+        beneficiaryRef: OTHER_REF,
+        providerAddress: SECOND_CLINIC,
+        serviceCode: 404,
+        amount: '20000000',
+        settledAt: new Date(Date.now() - DAY),
+      },
+    });
+    const refetched = await get(`/receipts?provider=${SECOND_CLINIC}`);
+    expect(refetched.body.receipts[0].provider).toEqual({
+      address: SECOND_CLINIC,
+      name: 'Mwanza Mission Hospital',
+      country: 'TZ',
+    });
+    // The clinic's own list must still not reveal who the care was for.
+    expect(refetched.body.receipts[0]).not.toHaveProperty('beneficiaryRef');
+  });
+
+  it('pages a cursor with the clinic named', async () => {
+    const { body: page1 } = await get(`/receipts?beneficiaryRef=${REF}&limit=1`);
+    expect(page1.receipts[0].provider.name).toBe('Ikeja General Clinic');
+    const cursor = encodeCursor(
+      new Date(page1.receipts[0].settledAt),
+      page1.receipts[0].voucherId,
+    );
+    const { body: page2 } = await get(`/receipts?beneficiaryRef=${REF}&limit=1&cursor=${cursor}`);
+    expect(page2.receipts[0].provider).toEqual({
+      address: CLINIC,
+      name: 'Ikeja General Clinic',
+      country: 'NG',
+    });
+  });
+
+  it('reports an unknown clinic instead of failing the page', async () => {
+    // A receipt whose provider row the indexer never wrote: the address came
+    // off the settlement event, the registration did not. Nothing here may
+    // invent a name for a clinic the read model has not seen.
+    await prisma.receipt.create({
+      data: {
+        voucherId: '13',
+        beneficiaryRef: REF,
+        providerAddress: UNREGISTERED_CLINIC,
+        serviceCode: 101,
+        amount: '10000000',
+        settledAt: new Date(Date.now() - DAY),
+      },
+    });
+
+    const { status, body } = await get(`/receipts?beneficiaryRef=${REF}`);
+    expect(status).toBe(200);
+    const orphan = (body.receipts as { voucherId: string }[]).find((r) => r.voucherId === '13');
+    expect(orphan).toMatchObject({
+      provider: { address: UNREGISTERED_CLINIC, name: null, country: null },
+    });
+  });
+});
+
+// #53: one call that answers "how much care has this reference had, where
+// and when", so the care history page does not fetch and sum every receipt
+// on the client.
+describe('GET /receipts/summary', () => {
+  it('returns count, total, first and last visit matching the receipts', async () => {
+    // The expectations are derived from GET /receipts itself, the source of
+    // truth the issue names ("Summary values match the receipts"), not from
+    // re-running the aggregation in the test.
+    const { body: list } = await get(`/receipts?beneficiaryRef=${REF}`);
+    expect(list.receipts).toHaveLength(2);
+
+    const { status, body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    expect(status).toBe(200);
+    expect(body.count).toBe(list.total);
+    expect(body.total).toBe(list.totalSpend);
+    expect(body.totalDisplay).toBe(list.totalSpendDisplay);
+    // The list is sorted settledAt desc, so first/last are its ends.
+    expect(body.lastVisit).toBe(list.receipts[0].settledAt);
+    expect(body.firstVisit).toBe(list.receipts[list.receipts.length - 1].settledAt);
+  });
+
+  it('names the clinics visited', async () => {
+    const { body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    expect(body.clinics).toEqual([
+      {
+        address: CLINIC,
+        name: 'Ikeja General Clinic',
+        country: 'NG',
+        visits: 2,
+        spend: '40000000',
+        spendDisplay: '4.0000000',
+      },
+    ]);
+  });
+
+  it('sums totals with BigInt, exactly, past Number.MAX_SAFE_INTEGER', async () => {
+    await prisma.receipt.createMany({
+      data: [
+        {
+          voucherId: 'sum-big-1',
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '9007199254740993',
+          settledAt: new Date(Date.now() - 2 * DAY),
+        },
+        {
+          voucherId: 'sum-big-2',
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          // The odd pair rounds under Number accumulation.
+          amount: '9007199254740995',
+          settledAt: new Date(Date.now() - DAY),
+        },
+      ],
+    });
+
+    const { body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    // 30000000 + 10000000 (seeded) + the two above.
+    expect(body.total).toBe('18014398549481988');
+  });
+
+  it('aggregates across several clinics and reports unknown clinics as unknown', async () => {
+    const now = Date.now();
+    await prisma.receipt.createMany({
+      data: [
+        // A second clinic, and the earliest visit overall.
+        {
+          voucherId: 'sum-2nd',
+          beneficiaryRef: REF,
+          providerAddress: SECOND_CLINIC,
+          serviceCode: 404,
+          amount: '20000000',
+          settledAt: new Date(now - 90 * DAY),
+        },
+        // A clinic the indexer never saw registered (#51 precedent: unknown,
+        // not invented).
+        {
+          voucherId: 'sum-unknown',
+          beneficiaryRef: REF,
+          providerAddress: UNREGISTERED_CLINIC,
+          serviceCode: 101,
+          amount: '5000000',
+          settledAt: new Date(now - 4 * DAY),
+        },
+      ],
+    });
+
+    const { body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    expect(body.count).toBe(4);
+    expect(body.firstVisit).toBe(new Date(now - 90 * DAY).toISOString());
+    // The newest visit is a seeded receipt, whose timestamp comes from the
+    // seed's own clock — read it back from GET /receipts rather than
+    // recomputing it here.
+    const { body: list } = await get(`/receipts?beneficiaryRef=${REF}`);
+    expect(body.lastVisit).toBe(list.receipts[0].settledAt);
+    expect(body.clinics).toHaveLength(3);
+    // Deterministic order by address, so two calls render identically.
+    const addresses = body.clinics.map((c: { address: string }) => c.address);
+    expect(addresses).toEqual([...addresses].sort());
+    expect(body.clinics.find((c: { address: string }) => c.address === SECOND_CLINIC)).toEqual({
+      address: SECOND_CLINIC,
+      name: 'Mwanza Mission Hospital',
+      country: 'TZ',
+      visits: 1,
+      spend: '20000000',
+      spendDisplay: '2.0000000',
+    });
+    expect(
+      body.clinics.find((c: { address: string }) => c.address === UNREGISTERED_CLINIC),
+    ).toMatchObject({ name: null, country: null, visits: 1, spend: '5000000' });
+    // Per-clinic spend must add up to the grand total.
+    const spendSum = (body.clinics as { spend: string }[])
+      .reduce((acc: bigint, c) => acc + BigInt(c.spend), 0n)
+      .toString();
+    expect(spendSum).toBe(body.total);
+  });
+
+  it('summarises a reference with no care as zero, not as missing', async () => {
+    const { status, body } = await get(`/receipts/summary?beneficiaryRef=${OTHER_REF}`);
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      count: 0,
+      total: '0',
+      totalDisplay: '0.0000000',
+      firstVisit: null,
+      lastVisit: null,
+      clinics: [],
+    });
+  });
+
+  it('requires a valid beneficiaryRef', async () => {
+    const missing = await get('/receipts/summary');
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toBe('invalid_query');
+
+    const malformed = await get('/receipts/summary?beneficiaryRef=not-a-ref');
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error).toBe('invalid_query');
+
+    // The clinic view is deliberately not part of this endpoint: a clinic
+    // querying by provider would summarise many patients into one number.
+    const byProvider = await get(`/receipts/summary?provider=${CLINIC}`);
+    expect(byProvider.status).toBe(400);
+  });
+
+  it('never echoes the beneficiary reference back', async () => {
+    const { status, body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
+    expect(status).toBe(200);
+    expect(body).not.toHaveProperty('beneficiaryRef');
+    expect(JSON.stringify(body)).not.toContain(REF);
+  });
+
+  it('is served under the /v1 alias with cache headers like the other read routes', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/receipts/summary?beneficiaryRef=${REF}`,
+      headers: { 'x-forwarded-for': nextTestClientIp() },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().count).toBe(2);
+    expect(res.headers['cache-control']).toBe(
+      'public, max-age=5, stale-while-revalidate=30',
+    );
+    expect(res.headers['etag']).toMatch(/^W\/"\d+-[A-Za-z0-9_-]+"$/);
+  });
 });
 
 describe('GET /receipts/:voucherId', () => {
@@ -822,6 +1358,31 @@ describe('GET /receipts/:voucherId', () => {
     expect(body.amountDisplay).toBe('3.0000000');
     expect(body.serviceLabel).toBe('Outpatient consult');
     expect(body).not.toHaveProperty('beneficiaryRef');
+  });
+
+  it('names the clinic on a shareable receipt', async () => {
+    const { body } = await get('/receipts/1');
+    expect(body.provider).toEqual({
+      address: CLINIC,
+      name: 'Ikeja General Clinic',
+      country: 'NG',
+    });
+    expect(body.providerAddress).toBe(CLINIC);
+  });
+
+  it('names an unknown clinic as unknown', async () => {
+    await prisma.receipt.create({
+      data: {
+        voucherId: '14',
+        beneficiaryRef: REF,
+        providerAddress: UNREGISTERED_CLINIC,
+        serviceCode: 101,
+        amount: '10000000',
+        settledAt: new Date(Date.now() - DAY),
+      },
+    });
+    const { body } = await get('/receipts/14');
+    expect(body.provider).toEqual({ address: UNREGISTERED_CLINIC, name: null, country: null });
   });
 
   it('404s for an unknown voucher', async () => {
@@ -959,6 +1520,71 @@ describe('GET /governance', () => {
   });
 });
 
+describe('cursor pagination', () => {
+  it('pages through vouchers with cursor', async () => {
+    const { body: page1 } = await get(`/vouchers?funder=${FUNDER}&limit=2`);
+    expect(page1.vouchers).toHaveLength(2);
+
+    const cursor = encodeCursor(
+      new Date(page1.vouchers[1].createdAt),
+      page1.vouchers[1].id,
+    );
+    const { body: page2 } = await get(`/vouchers?funder=${FUNDER}&limit=2&cursor=${cursor}`);
+    expect(page2.vouchers.length).toBeGreaterThan(0);
+
+    const page1Ids = page1.vouchers.map((v: { id: string }) => v.id);
+    const page2Ids = page2.vouchers.map((v: { id: string }) => v.id);
+    expect(page1Ids.filter((id: string) => page2Ids.includes(id))).toEqual([]);
+  });
+
+  it('returns null nextCursor on the last page', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&limit=100`);
+    expect(body.nextCursor).toBeUndefined();
+  });
+
+  it('rejects an invalid cursor', async () => {
+    const { status, body } = await get(`/vouchers?funder=${FUNDER}&cursor=not-valid!!`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_cursor');
+  });
+
+  it('pages through providers with cursor', async () => {
+    const seen: string[] = [];
+    let cursor: string | null | undefined;
+
+    // Page through all providers one at a time
+    do {
+      const url = cursor ? `/providers?limit=1&cursor=${cursor}` : '/providers?limit=1';
+      const { body } = await get(url);
+      expect(body.providers).toHaveLength(1);
+      seen.push(body.providers[0].address);
+      cursor = body.nextCursor;
+    } while (cursor);
+
+    // Should have visited every provider exactly once
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it('pages through receipts with cursor', async () => {
+    const { body: page1 } = await get(`/receipts?beneficiaryRef=${REF}&limit=1`);
+    expect(page1.receipts).toHaveLength(1);
+
+    const cursor = encodeCursor(
+      new Date(page1.receipts[0].settledAt),
+      page1.receipts[0].voucherId,
+    );
+    const { body: page2 } = await get(`/receipts?beneficiaryRef=${REF}&limit=1&cursor=${cursor}`);
+    expect(page2.receipts).toHaveLength(1);
+    expect(page2.receipts[0].voucherId).not.toBe(page1.receipts[0].voucherId);
+  });
+
+  it('sends Deprecation header when offset is used', async () => {
+    const res = await app.inject({ method: 'GET', url: `/vouchers?funder=${FUNDER}&offset=1` });
+    expect(res.headers['deprecation']).toBe('true');
+  });
+});
+
 describe('GET /providers/:address/history', () => {
   it('returns status transitions oldest first', async () => {
     const { status, body } = await get(`/providers/${CLINIC}/history`);
@@ -993,5 +1619,221 @@ describe('GET /providers/:address/services/:code/history', () => {
     const { status, body } = await get(`/providers/${CLINIC}/services/abc/history`);
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_code');
+  });
+});
+
+describe('response hardening', () => {
+  it('sends the standard security headers, without a CSP', async () => {
+    const res = await app.inject({ method: 'GET', url: '/health' });
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('SAMEORIGIN');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    expect(res.headers['strict-transport-security']).toContain('max-age=');
+    expect(res.headers['content-security-policy']).toBeUndefined();
+  });
+
+  it('gzip-compresses responses above the threshold when asked', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/vouchers?funder=${FUNDER}`,
+      headers: {
+        'accept-encoding': 'gzip',
+        'x-forwarded-for': nextTestClientIp(),
+      },
+    });
+    expect(res.headers['content-encoding']).toBe('gzip');
+    const body = JSON.parse(gunzipSync(res.rawPayload).toString('utf8'));
+    expect(body.total).toBe(5);
+  });
+
+  it('leaves responses below the threshold uncompressed', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { 'accept-encoding': 'gzip' },
+    });
+    expect(res.headers['content-encoding']).toBeUndefined();
+  });
+
+  it('rate limits list routes but leaves health free', async () => {
+    const isolated = await buildApp({ logger: false });
+    try {
+      for (let i = 0; i < LIST_ROUTE_RATE_LIMIT.max; i++) {
+        const res = await isolated.inject({
+          method: 'GET',
+          url: `/vouchers?funder=${FUNDER}`,
+        });
+        expect(res.statusCode).toBe(200);
+      }
+
+      const blocked = await isolated.inject({
+        method: 'GET',
+        url: `/vouchers?funder=${FUNDER}`,
+      });
+      expect(blocked.statusCode).toBe(429);
+
+      const health = await isolated.inject({ method: 'GET', url: '/health' });
+      expect(health.statusCode).toBe(200);
+    } finally {
+      await isolated.close();
+    }
+  });
+});
+
+describe('HTTP caching', () => {
+  /** A request from a fresh client so the list-route rate limit never bites. */
+  async function cached(url: string, headers: Record<string, string> = {}) {
+    return app.inject({
+      method: 'GET',
+      url,
+      headers: { 'x-forwarded-for': nextTestClientIp(), ...headers },
+    });
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  beforeEach(async () => {
+    await prisma.indexerState.upsert({
+      where: { id: 1 },
+      create: { id: 1, lastLedger: 500 },
+      update: {
+        lastLedger: 500,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        gap: false,
+        gapOldestLedger: null,
+        gapCursorLedger: null,
+      },
+    });
+  });
+
+  it('marks list and detail responses reusable and tags them with an ETag', async () => {
+    for (const url of ['/providers', `/providers/${CLINIC}`, `/vouchers?funder=${FUNDER}`]) {
+      const res = await cached(url);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['cache-control']).toBe(
+        'public, max-age=5, stale-while-revalidate=30',
+      );
+      expect(res.headers['etag']).toMatch(/^W\/"500-[A-Za-z0-9_-]+"$/);
+    }
+  });
+
+  it('answers 304 to a matching If-None-Match', async () => {
+    const first = await cached('/providers');
+    expect(first.statusCode).toBe(200);
+    const etag = first.headers['etag'] as string;
+
+    const second = await cached('/providers', { 'if-none-match': etag });
+    expect(second.statusCode).toBe(304);
+    expect(second.body).toBe('');
+    expect(second.headers['etag']).toBe(etag);
+  });
+
+  it('accepts a weak or list-valued If-None-Match', async () => {
+    const first = await cached('/providers');
+    const etag = first.headers['etag'] as string;
+
+    expect((await cached('/providers', { 'if-none-match': '*' })).statusCode).toBe(304);
+    expect(
+      (await cached('/providers', { 'if-none-match': `"other", ${etag}` })).statusCode,
+    ).toBe(304);
+    // Weak comparison: the strong form of the same tag also validates.
+    expect(
+      (await cached('/providers', { 'if-none-match': etag.replace(/^W\//, '') })).statusCode,
+    ).toBe(304);
+  });
+
+  it('invalidates the tag when a new ledger is indexed', async () => {
+    const first = await cached('/providers');
+    const etag = first.headers['etag'] as string;
+
+    await prisma.indexerState.update({ where: { id: 1 }, data: { lastLedger: 501 } });
+
+    const revalidated = await cached('/providers', { 'if-none-match': etag });
+    expect(revalidated.statusCode).toBe(200);
+    expect(revalidated.headers['etag']).not.toBe(etag);
+  });
+
+  it('treats each path and query as its own resource', async () => {
+    const list = await cached('/providers');
+    const listEtag = list.headers['etag'] as string;
+
+    const filtered = await cached('/providers?status=Active', { 'if-none-match': listEtag });
+    expect(filtered.statusCode).toBe(200);
+    expect(filtered.headers['etag']).not.toBe(listEtag);
+
+    const detail = await cached(`/providers/${CLINIC}`, { 'if-none-match': listEtag });
+    expect(detail.statusCode).toBe(200);
+
+    // The /v1 alias serves the same body but is a different URL, so a tag
+    // from one path must not validate the other.
+    const versioned = await cached('/v1/providers', { 'if-none-match': listEtag });
+    expect(versioned.statusCode).toBe(200);
+  });
+
+  it('never caches health or readiness, on either path', async () => {
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 500 } as never);
+
+    for (const url of ['/health', '/v1/health', '/ready', '/v1/ready']) {
+      const res = await cached(url);
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.headers['etag']).toBeUndefined();
+    }
+  });
+
+  it('never caches an error response', async () => {
+    const res = await cached(`/providers/${FUNDER}`);
+    expect(res.statusCode).toBe(404);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers['etag']).toBeUndefined();
+  });
+
+  it('does not serve 304 without a matching validator', async () => {
+    const res = await cached('/providers', { 'if-none-match': 'W/"123-not-ours"' });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('query parameter length limits', () => {
+  it('rejects an over-long q parameter in /providers', async () => {
+    const longQ = 'a'.repeat(65);
+    const { status, body } = await get(`/providers?q=${longQ}`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('rejects an over-long cursor parameter in /providers', async () => {
+    const longCursor = 'c'.repeat(257);
+    const { status, body } = await get(`/providers?cursor=${longCursor}`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('rejects an over-long minAmount in /vouchers', async () => {
+    const longAmount = '1'.repeat(65);
+    const { status, body } = await get(`/vouchers?funder=${FUNDER}&minAmount=${longAmount}`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('rejects an over-long status parameter in /vouchers', async () => {
+    const longStatus = 'Funded,' + 'a'.repeat(260);
+    const { status, body } = await get(`/vouchers?funder=${FUNDER}&status=${longStatus}`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('rejects an over-long within parameter in /vouchers/due', async () => {
+    const longWithin = '1'.repeat(20) + 'h';
+    const { status, body } = await get(`/vouchers/due?funder=${FUNDER}&within=${longWithin}`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('rejects an over-long beneficiaryRef in /receipts', async () => {
+    const longRef = 'a'.repeat(65);
+    const { status, body } = await get(`/receipts?beneficiaryRef=${longRef}`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
   });
 });

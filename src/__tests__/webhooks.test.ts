@@ -304,3 +304,64 @@ describe('webhook outbox and the indexer transaction', () => {
     expect(row.status).toBe('Refunded');
   });
 });
+
+describe('WebhookDispatcher lifecycle', () => {
+  it('runs a delivery cycle on its interval and stops cleanly', async () => {
+    vi.useFakeTimers();
+    try {
+      const dispatcher = new WebhookDispatcher(fakeLog(), {
+        urls: ['https://clinic.example/hooks'],
+        secret: SECRET,
+        intervalMs: 1_000,
+      });
+      const deliver = vi.spyOn(dispatcher, 'deliverPending').mockResolvedValue(0);
+
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deliver).toHaveBeenCalledTimes(2);
+
+      await dispatcher.stop();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(deliver).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps cycling after a failed delivery cycle', async () => {
+    vi.useFakeTimers();
+    try {
+      const dispatcher = new WebhookDispatcher(fakeLog(), {
+        urls: ['https://clinic.example/hooks'],
+        secret: SECRET,
+        intervalMs: 1_000,
+      });
+      const deliver = vi
+        .spyOn(dispatcher, 'deliverPending')
+        .mockRejectedValueOnce(new Error('database unavailable'))
+        .mockResolvedValue(0);
+
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(deliver).toHaveBeenCalledTimes(2);
+      await dispatcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule anything when no endpoint is configured', async () => {
+    vi.useFakeTimers();
+    try {
+      const dispatcher = new WebhookDispatcher(fakeLog(), { urls: [], secret: SECRET, intervalMs: 1_000 });
+      const deliver = vi.spyOn(dispatcher, 'deliverPending').mockResolvedValue(0);
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(deliver).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
