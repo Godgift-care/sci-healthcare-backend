@@ -11,10 +11,12 @@ on:
     workflows: [CI]
     types: [completed]
   pull_request_target:
-    types: [labeled, unlabeled, ready_for_review, reopened]
+    # opened/synchronize: approve the CI run GitHub holds for first-time
+    # contributors. edited: re-check as soon as a contributor links an issue.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
   schedule:
-    # Catches approvals and anything an event missed.
-    - cron: '17,47 * * * *'
+    # Backstop only: GitHub drops many scheduled runs under load.
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -31,7 +33,8 @@ concurrency:
 
 jobs:
   auto-merge:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request'
+    # Every run sweeps all open pull requests, so CI finishing anywhere
+    # (including on main) is a reason to look again.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -50,6 +53,11 @@ jobs:
             .github/**
           REQUEST_PAGES_BUILD: 'false'
         with:
+          # AUTOMERGE_TOKEN (optional) is a token allowed to write workflow
+          # files. Without it, GitHub refuses to let the built-in token merge
+          # a branch created before a workflow change on main, and its merges
+          # do not trigger other workflows.
+          github-token: ${{ secrets.AUTOMERGE_TOKEN || github.token }}
           script: |
             const run = require('./.github/scripts/automerge.cjs');
             await run({ github, context, core });

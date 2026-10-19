@@ -79,7 +79,9 @@ jobs:
       - if: matrix.engine == 'postgres'
         run: ./scripts/use-postgres.sh
       - run: npx prisma generate
-      - run: npm test
+      # Coverage report with the thresholds configured in vitest.config.ts:
+      # the job prints the summary table and fails below them (issue #65).
+      - run: npm run test:coverage
 
   build:
     name: build
@@ -93,6 +95,55 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npm run build
+
+  migrations:
+    name: migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: ./scripts/use-postgres.sh
+      # A fresh database must migrate cleanly...
+      - run: npx prisma migrate deploy
+      # ...and end up exactly where the schema says. Exit code 2 means the
+      # schema changed without a migration.
+      - run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+
+  # Fails the pull request on high and critical advisories in production
+  # dependencies. Threshold: `--audit-level=high` — moderate findings are
+  # printed in the job log but do not fail it. `--omit=dev` keeps the gate on
+  # what actually ships; npm audit reads package-lock.json, so it checks
+  # exactly the dependency set this CI builds.
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
 
   bot:
     name: auto-merge bot tests

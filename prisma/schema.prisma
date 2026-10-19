@@ -15,6 +15,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Tracks all contract deployments, including historical redeployments.
+/// Each row represents one contract instance deployed at a specific ledger.
+model Deployment {
+  id         Int    @id @default(autoincrement())
+  type       String // registry | voucher | receipt
+  contractId String @unique
+  fromLedger Int
+  toLedger   Int?   // null means still active
+  createdAt  DateTime @default(now())
+
+  providers Provider[]
+  vouchers Voucher[]
+  receipts Receipt[]
+
+  @@index([type])
+}
+
 model Provider {
   address      String   @id
   name         String
@@ -22,6 +39,10 @@ model Provider {
   status       String   // Pending | Active | Suspended
   registeredAt DateTime
   updatedAt    DateTime @updatedAt
+
+  /// Which deployment this provider was registered under.
+  deployment Deployment? @relation(fields: [deploymentId], references: [id])
+  deploymentId Int?
 
   services Service[]
   vouchers Voucher[]
@@ -46,6 +67,19 @@ model Service {
 
 model Voucher {
   id              String    @id // on-chain u64 as string
+  /// Numeric mirror of `id`, and the only correct way to order vouchers by
+  /// id: `id` is a string, so `ORDER BY id` is lexicographic and puts
+  /// voucher 10 before voucher 9 (issue #61).
+  ///
+  /// Written from `id` by the `voucher_created` handler (see
+  /// `voucherSeq()` in `src/lib/voucher_seq.ts`) and backfilled for rows that
+  /// predate it by migration `20260106000000_voucher_seq`. Nullable because
+  /// a voucher id is a u64 in principle and locally-authored fixtures use
+  /// label ids (`bulk-0001`); those rows have no numeric id to mirror and
+  /// sort after every real one. `BigInt` rather than `Int` because the local
+  /// seed id space alone starts at 9e12, past the range of a 32-bit int.
+  /// Never exposed by an API response.
+  seq             BigInt?
   funder          String
   beneficiaryRef  String    // opaque 32-byte hex. Not reversible to an identity.
   serviceCode     Int
@@ -74,10 +108,32 @@ model Voucher {
   provider        Provider @relation(fields: [providerAddress], references: [address])
   providerAddress String
 
-  @@index([funder])
-  @@index([providerAddress])
-  @@index([beneficiaryRef])
-  @@index([status])
+  /// Which deployment this voucher was created under.
+  deployment Deployment? @relation(fields: [deploymentId], references: [id])
+  deploymentId Int?
+
+  // Composite indexes for the list routes (issue #58). Each mirrors a real
+  // filter + sort path in src/routes/vouchers.ts; the single-column indexes
+  // they replace (funder, providerAddress, beneficiaryRef, status) were
+  // strict prefixes of these and were dropped. Postgres scans a two-column
+  // index backwards, so one index serves `order=asc|desc` for both the
+  // filtered count and the keyset page `(sortCol, id)` orders.
+  //
+  // GET /vouchers?funder=...        ORDER BY createdAt (default sort)
+  @@index([funder, createdAt])
+  // GET /vouchers?funder=...&sort=expiresAt and GET /vouchers/due?funder=...
+  // (status is filtered after the index range; keeping expiresAt last
+  // preserves the sort the route asks for).
+  @@index([funder, expiresAt])
+  // GET /vouchers?provider=...     ORDER BY createdAt
+  @@index([providerAddress, createdAt])
+  // GET /vouchers?provider=...&sort=expiresAt and GET /vouchers/due?provider=...
+  @@index([providerAddress, expiresAt])
+  // GET /vouchers?beneficiaryRef=... ORDER BY createdAt
+  @@index([beneficiaryRef, createdAt])
+  // GET /vouchers?status=... (single or comma-separated) and the
+  // `status: 'Settled'` scan behind GET /stats, each sorted by createdAt.
+  @@index([status, createdAt])
   @@index([expiresAt])
   @@index([attestedBy])
 }
@@ -106,8 +162,17 @@ model Receipt {
   amount          String
   settledAt       DateTime
 
-  @@index([beneficiaryRef])
-  @@index([providerAddress])
+  /// Which deployment this receipt was settled under.
+  deployment Deployment? @relation(fields: [deploymentId], references: [id])
+  deploymentId Int?
+
+  // GET /receipts lists one patient's or one clinic's history sorted by
+  // settledAt desc (tie-broken by the voucherId primary key), and the same
+  // predicate drives the count and the totalSpend aggregation on that
+  // route. These replace the single-column beneficiaryRef / providerAddress
+  // indexes they strictly prefix (issue #58).
+  @@index([beneficiaryRef, settledAt])
+  @@index([providerAddress, settledAt])
 }
 
 /// Every admin proposal and handover observed on each contract.
@@ -179,6 +244,26 @@ model ContractEvent {
   data       String
 
   @@index([voucherId, ledger])
+}
+
+/// An event the indexer could not project.
+///
+/// The cursor moves past a failing event so one bad payload cannot wedge the
+/// pipeline, which means the read model is missing that event. This table is
+/// what makes the omission durable and visible: `/ready` reports degraded
+/// while it is non-empty, and `npm run indexer:retry-failed` replays it.
+model FailedEvent {
+  id        String   @id // on-chain event id
+  name      String
+  ledger    Int
+  /// JSON of the raw RPC event with topics and value as base64 XDR, enough
+  /// to re-decode it after a decoder fix.
+  raw       String
+  error     String
+  attempts  Int      @default(1)
+  firstSeen DateTime
+  lastSeen  DateTime
+
   @@index([ledger])
 }
 
@@ -197,4 +282,48 @@ model IndexerState {
   leaseOwner     String?
   /// After this instant the lease is free for another instance to take.
   leaseExpiresAt DateTime?
+  /// True when the cursor fell outside the RPC retention window.
+  gap            Boolean   @default(false)
+  /// Oldest ledger the RPC had when the gap was detected.
+  gapOldestLedger Int?
+  /// Cursor ledger at the time the gap was detected.
+  gapCursorLedger Int?
+}
+
+/// One drip from the testnet demo faucet.
+///
+/// Keyed by the on-chain event id rather than counted into a single row, so
+/// a replay is idempotent like every other handler. Keeping the wallet is
+/// what lets `/stats` separate "how many drips" from "how many people".
+/// Only populated when `FAUCET_CONTRACT_ID` is configured.
+model FaucetDrip {
+  id        String   @id // on-chain event id
+  wallet    String
+  amount    String // i128 as decimal string
+  ledger    Int
+  drippedAt DateTime
+
+  @@index([wallet])
+  @@index([ledger])
+}
+
+/// A voucher whose stored row disagrees with the contract.
+///
+/// The read model is a cache of the chain, and a missed or mis-decoded event
+/// leaves it quietly wrong. `npm run indexer:reconcile` compares stored
+/// vouchers against `get_voucher` and writes what it found here; the row is
+/// deleted as soon as a later run (or `--fix`) sees them agree, so a
+/// non-empty table always means open drift.
+model ReconcileMismatch {
+  voucherId String   @id
+  /// field_mismatch | missing_on_chain
+  kind      String
+  /// JSON array of `{ field, db, chain }`, one entry per differing field.
+  fields    String
+  /// How many consecutive runs have seen this mismatch.
+  runs      Int      @default(1)
+  firstSeen DateTime
+  lastSeen  DateTime
+
+  @@index([kind])
 }

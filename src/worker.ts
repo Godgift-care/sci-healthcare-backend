@@ -6,6 +6,7 @@ import pino from 'pino';
 import { disconnect } from './db.js';
 import { env } from './env.js';
 import { Indexer } from './stellar/indexer.js';
+import { startTracingIfConfigured } from './tracing.js';
 
 /**
  * The indexer on its own, with no HTTP server in the process.
@@ -20,14 +21,26 @@ export type WorkerOptions = {
 };
 
 export async function start(opts: WorkerOptions = {}): Promise<Indexer> {
+  // No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set (#54).
+  startTracingIfConfigured();
+
   const log: FastifyBaseLogger = opts.logger ?? pino({ level: env.LOG_LEVEL });
   const indexer = new Indexer(log);
 
   const shutdown = async (signal: string): Promise<void> => {
-    log.info({ signal }, 'shutting down indexer');
-    await indexer.stop();
-    await disconnect();
-    process.exit(0);
+    log.info(
+      { signal, timeoutMs: env.SHUTDOWN_TIMEOUT_MS },
+      'shutting down indexer: finishing the current cycle',
+    );
+    try {
+      await indexer.stop();
+      await disconnect();
+      log.info({ signal }, 'indexer shutdown complete');
+      process.exit(0);
+    } catch (err) {
+      log.error({ err, signal }, 'indexer shutdown failed; exiting');
+      process.exit(1);
+    }
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
   process.once('SIGINT', () => void shutdown('SIGINT'));

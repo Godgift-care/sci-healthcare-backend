@@ -30,6 +30,8 @@ export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   admin_proposed: ['admin'],
   admin_changed: [],
   receipt_minted: ['beneficiary_ref', 'provider'],
+  // Testnet faucet; only reaches the indexer when FAUCET_CONTRACT_ID is set.
+  dripped: ['to'],
 };
 
 export type DecodedEvent = {
@@ -152,9 +154,12 @@ export function asHex(input: unknown): string {
  * become hex, so the stored payload is exactly the values the API returns.
  */
 export function serialiseEventData(fields: Record<string, unknown>): string {
-  return JSON.stringify(fields, (_key, value: unknown) => {
-    if (typeof value === 'bigint') return value.toString();
-    if (value instanceof Uint8Array) return Buffer.from(value).toString('hex');
+  return JSON.stringify(fields, function (this: Record<string, unknown>, key, value: unknown) {
+    // JSON.stringify calls Buffer#toJSON before the replacer sees the value,
+    // so read the original from the holder to catch bytes.
+    const original = key === '' ? value : this[key];
+    if (typeof original === 'bigint') return original.toString();
+    if (original instanceof Uint8Array) return Buffer.from(original).toString('hex');
     if (value instanceof Date) return value.toISOString();
     return value;
   });
@@ -183,4 +188,25 @@ export function providerStatusName(input: unknown): string {
   if (typeof input === 'string') return input;
   const index = asNumber(input);
   return PROVIDER_STATUS[index] ?? 'Unknown';
+}
+
+/**
+ * `VoucherStatus` discriminants, in contract declaration order.
+ *
+ * Only `get_voucher` reads this: the lifecycle events each carry their own
+ * status, so the indexer never has to decode the enum from an event.
+ */
+export const VOUCHER_STATUS = [
+  'Funded',
+  'Claimed',
+  'Attested',
+  'Settled',
+  'Disputed',
+  'Refunded',
+] as const;
+
+export function voucherStatusName(input: unknown): string {
+  if (typeof input === 'string') return input;
+  const index = asNumber(input);
+  return VOUCHER_STATUS[index] ?? 'Unknown';
 }

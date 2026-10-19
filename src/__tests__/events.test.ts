@@ -12,11 +12,12 @@ import {
   providerStatusName,
   serialiseEventData,
   TOPIC_FIELDS,
+  voucherStatusName,
 } from '../stellar/events.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
-const ADMIN = 'A'.repeat(56);
+const ADMIN = 'GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P';
 const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
 
 function sym(s: string): xdr.ScVal {
@@ -107,6 +108,20 @@ describe('decodeEvent', () => {
     expect(asBoolean(decoded!.fields.refunded_funder)).toBe(true);
   });
 
+  it('decodes a faucet drip, whose wallet is a topic and amount is data', () => {
+    const decoded = decodeEvent(
+      raw(
+        [sym('dripped'), Address.fromString(FUNDER).toScVal()],
+        // `#[contractevent]` publishes non-topic fields as a map, even when
+        // there is only one of them.
+        nativeToScVal({ amount: 100000000n }),
+      ),
+    );
+    expect(decoded!.name).toBe('dripped');
+    expect(decoded!.fields.to).toBe(FUNDER);
+    expect(asAmount(decoded!.fields.amount)).toBe('100000000');
+  });
+
   it('returns null when the first topic is not an event name', () => {
     expect(decodeEvent(raw([nativeToScVal(42)], nativeToScVal({})))).toBeNull();
   });
@@ -140,9 +155,29 @@ describe('TOPIC_FIELDS', () => {
       'admin_proposed',
       'admin_changed',
       'receipt_minted',
+      'dripped',
     ]) {
       expect(TOPIC_FIELDS[name], `${name} has no topic mapping`).toBeDefined();
     }
+  });
+});
+
+describe('voucherStatusName', () => {
+  it('maps every VoucherStatus discriminant to the name the API uses', () => {
+    expect([0, 1, 2, 3, 4, 5].map(voucherStatusName)).toEqual([
+      'Funded',
+      'Claimed',
+      'Attested',
+      'Settled',
+      'Disputed',
+      'Refunded',
+    ]);
+  });
+
+  it('passes a name straight through and flags anything unrecognised', () => {
+    expect(voucherStatusName('Settled')).toBe('Settled');
+    // A contract that gained a status this backend does not know about.
+    expect(voucherStatusName(99)).toBe('Unknown');
   });
 });
 
