@@ -32,6 +32,7 @@
     "indexer:backfill:dev": "tsx src/scripts/backfill.ts",
     "indexer:retry-failed:dev": "tsx src/scripts/retry-failed.ts",
     "indexer:reconcile:dev": "tsx src/scripts/reconcile.ts",
+    "fixtures:capture": "tsx src/scripts/capture-testnet-fixtures.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy",
