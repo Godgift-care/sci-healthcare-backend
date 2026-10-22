@@ -63,6 +63,15 @@
         }
       }
     },
+    "/v1/stats/daily": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/providers": {
       "get": {
         "responses": {
@@ -73,6 +82,25 @@
       }
     },
     "/v1/providers/{address}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/providers/{address}/stats": {
       "get": {
         "parameters": [
           {
@@ -220,6 +248,25 @@
         }
       }
     },
+    "/v1/vouchers/{id}/events": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/receipts": {
       "get": {
         "responses": {
@@ -264,6 +311,34 @@
           "governance"
         ],
         "description": "Who controls each contract, and how that changed.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/attesters": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/attesters/{address}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
         "responses": {
           "200": {
             "description": "Default Response"
@@ -339,6 +414,15 @@
         }
       }
     },
+    "/stats/daily": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/providers": {
       "get": {
         "responses": {
@@ -349,6 +433,25 @@
       }
     },
     "/providers/{address}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/providers/{address}/stats": {
       "get": {
         "parameters": [
           {
@@ -496,6 +599,25 @@
         }
       }
     },
+    "/vouchers/{id}/events": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/receipts": {
       "get": {
         "responses": {
@@ -540,6 +662,34 @@
           "governance"
         ],
         "description": "Who controls each contract, and how that changed.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/attesters": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/attesters/{address}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
         "responses": {
           "200": {
             "description": "Default Response"
