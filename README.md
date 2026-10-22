@@ -119,8 +119,8 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /providers/:address/services/:code/history` | Every observed price for a service, oldest first |
 | `GET /attesters` | Attesters trusted to confirm care; `?all=true` includes removed ones |
 | `GET /attesters/:address` | One attester with its attestation count |
-| `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status` |
-| `GET /vouchers/:id` | One voucher, with its care receipt if settled, attester and dispute outcome |
+| `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status`; `?include=receipt,provider` embeds related records |
+| `GET /vouchers/:id` | One voucher, with its care receipt if settled, attester and dispute outcome; `?include=receipt,provider` embeds the canonical forms |
 | `GET /vouchers/:id/events` | Every contract event for a voucher, oldest first, with transaction hashes |
 | `GET /receipts?beneficiaryRef=` | A patient's settled care history |
 | `GET /countries` | Countries with at least one active clinic and their clinic counts |
@@ -136,6 +136,20 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /stream` | Live voucher state transitions as the indexer commits them (server-sent events) |
 
 `GET /vouchers` **requires at least one filter**. An unfiltered dump of every voucher is not a useful endpoint and invites scraping. It accepts `sort=createdAt|expiresAt|amount` and `order=asc|desc` (defaults: `createdAt`, `desc`). Amounts are compared with `BigInt`, so `amount` sorting is numeric rather than lexicographic.
+
+`GET /vouchers` and `GET /vouchers/:id` also accept `?include=receipt,provider`,
+so a mobile page renders a voucher's receipt and clinic without one request per
+row. `receipt` is the same object `GET /receipts/:voucherId` returns (`null` for
+a voucher that has not settled); on `GET /vouchers/:id`, which already carries
+the stored receipt row, asking for it returns this canonical shape instead.
+`provider` is the same object `GET /providers/:address` returns — `status`,
+`registeredAt`, the cached `metadata` and the whole service catalogue — in place
+of the `address`/`name`/`country` summary the routes serve by default. Both are
+fetched for the entire page in a fixed number of queries (one `Receipt` and one
+`Provider` batch, each with its own batched lookups), never one per row. An
+unrequested or empty `include` changes nothing, an unknown name is a
+`400 invalid_query`, and `?fields=` still projects the top-level keys, so
+`?fields=id,receipt&include=receipt` is a valid request.
 
 `GET /vouchers.csv` takes the same `funder`, `provider`, `beneficiaryRef` and
 `status` filters (and also requires at least one). Rows are read in batches

@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../app.js';
-import { prisma } from '../db.js';
+import { prisma, queryStats } from '../db.js';
 import { CONTRACTS, env } from '../env.js';
 import { encodeCursor } from '../lib/cursor.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
@@ -1455,6 +1455,106 @@ describe('GET /vouchers/:id', () => {
     const { body } = await get('/vouchers/5');
     expect(body).toMatchObject({ disputeOutcome: 'Provider', disputeResolvedBy: ADMIN });
     expect(body.disputeResolvedAt).not.toBeNull();
+  });
+});
+
+describe('?include=receipt,provider (#167)', () => {
+  it('embeds the receipt GET /receipts/:voucherId serves, null before settlement', async () => {
+    const { status, body } = await get(`/vouchers?funder=${FUNDER}&include=receipt`);
+    expect(status).toBe(200);
+
+    // The acceptance criterion: the embedded object is the separate
+    // endpoint's response, not a second hand-built shape.
+    const settled = body.vouchers.find((v: { id: string }) => v.id === '1');
+    const separate = await get('/receipts/1');
+    expect(settled.receipt).toEqual(separate.body);
+
+    const unsettled = body.vouchers.find((v: { id: string }) => v.id === '2');
+    expect(unsettled.receipt).toBeNull();
+  });
+
+  it('embeds the provider GET /providers/:address serves', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&include=provider&limit=1`);
+    const voucher = body.vouchers[0];
+    const separate = await get(`/providers/${voucher.provider.address}`);
+    expect(voucher.provider).toEqual(separate.body);
+  });
+
+  it('embeds both together', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&include=receipt,provider`);
+    const voucher = body.vouchers.find((v: { id: string }) => v.id === '1');
+    expect(voucher.receipt).toEqual((await get('/receipts/1')).body);
+    expect(voucher.provider).toEqual((await get(`/providers/${CLINIC}`)).body);
+  });
+
+  it('leaves the default response unchanged when nothing is included', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&limit=1`);
+    expect(body.vouchers[0]).not.toHaveProperty('receipt');
+    expect(Object.keys(body.vouchers[0].provider).sort()).toEqual(['address', 'country', 'name']);
+  });
+
+  it('treats an empty include as no embedding, like an empty fields', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&limit=1&include=`);
+    expect(body.vouchers[0]).not.toHaveProperty('receipt');
+  });
+
+  it('rejects an unknown include on the list route', async () => {
+    const { status, body } = await get(`/vouchers?funder=${FUNDER}&include=receipt,nope`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('applies to GET /vouchers/:id, matching both separate endpoints', async () => {
+    const { body } = await get('/vouchers/1?include=receipt,provider');
+    expect(body.receipt).toEqual((await get('/receipts/1')).body);
+    expect(body.provider).toEqual((await get(`/providers/${CLINIC}`)).body);
+  });
+
+  it('keeps the stored receipt row on GET /vouchers/:id without include', async () => {
+    const { body } = await get('/vouchers/1');
+    expect(body.receipt).toMatchObject({ voucherId: '1', beneficiaryRef: REF });
+  });
+
+  it('rejects an unknown include on the detail route', async () => {
+    const { status } = await get('/vouchers/1?include=nope');
+    expect(status).toBe(400);
+  });
+
+  it('projects include alongside ?fields=', async () => {
+    const { body } = await get(
+      `/vouchers?funder=${FUNDER}&limit=1&include=receipt&fields=id,receipt`,
+    );
+    expect(Object.keys(body.vouchers[0]).sort()).toEqual(['id', 'receipt']);
+  });
+
+  it('embeds a page in a fixed number of queries, not one per row', async () => {
+    // `queryStats` counts the Prisma operations the request asks for
+    // (`src/db.ts`, test-only). An N+1 implementation would show one receipt
+    // lookup per voucher, so a five-row page would make five.
+    // Give every seeded voucher a receipt so both pages take the same code
+    // path; then the only difference between them is the row count.
+    await prisma.receipt.createMany({
+      data: ['2', '3', '4', '5'].map((voucherId) => ({
+        voucherId,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '1000000',
+        settledAt: new Date(),
+      })),
+    });
+
+    const beforeOne = queryStats.queries;
+    const single = await get(`/vouchers?funder=${FUNDER}&limit=1&include=receipt,provider`);
+    expect(single.body.vouchers).toHaveLength(1);
+    expect(single.body.vouchers[0].receipt).not.toBeNull();
+    const forOneRow = queryStats.queries - beforeOne;
+    expect(forOneRow).toBeGreaterThan(0);
+
+    const beforePage = queryStats.queries;
+    const page = await get(`/vouchers?funder=${FUNDER}&limit=5&include=receipt,provider`);
+    expect(page.body.vouchers).toHaveLength(5);
+    expect(queryStats.queries - beforePage).toBe(forOneRow);
   });
 });
 

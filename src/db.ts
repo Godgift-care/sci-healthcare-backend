@@ -19,6 +19,18 @@ function withAmountKey<T>(data: T): T {
   return data;
 }
 
+/**
+ * Counts top-level Prisma operations in tests, so a route test can assert that
+ * a page costs a fixed number of queries instead of one per row (#167).
+ *
+ * The increment is skipped outside `NODE_ENV=test`, so production pays
+ * nothing for it; nested `include`s are resolved by one logical operation, so
+ * this counts what the routes ask for — which is what an N+1 bug inflates.
+ */
+export const queryStats = { queries: 0 };
+
+const countQueries = env.NODE_ENV === 'test';
+
 // A query-only extension changes no model types, so the client is exported as
 // a plain PrismaClient: its transaction clients stay assignable to
 // Prisma.TransactionClient, and they run the same hooks at runtime.
@@ -26,6 +38,12 @@ export const prisma = new PrismaClient({
   log: env.LOG_LEVEL === 'debug' ? ['query', 'warn', 'error'] : ['warn', 'error'],
 }).$extends({
   query: {
+    $allModels: {
+      $allOperations: ({ query, args }) => {
+        if (countQueries) queryStats.queries += 1;
+        return query(args);
+      },
+    },
     voucher: {
       create: ({ args, query }) => query({ ...args, data: withAmountKey(args.data) }),
       createMany: ({ args, query }) => query({ ...args, data: withAmountKey(args.data) }),

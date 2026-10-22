@@ -10,6 +10,7 @@ import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { providerMetadataOf } from '../lib/provider-metadata.js';
+import { serialiseProviderDetail } from '../lib/providers.js';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
@@ -187,21 +188,10 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     });
     if (!p) throw new ApiError(404, 'provider_not_found', 'Provider not found');
 
-    return {
-      address: p.address,
-      name: p.name,
-      country: p.country,
-      status: p.status,
-      registeredAt: p.registeredAt,
-      metadata: providerMetadataOf(p),
-      services: p.services.map((s) => ({
-        code: s.code,
-        label: s.label,
-        price: s.price,
-        priceDisplay: fromBaseUnits(s.price),
-        active: s.active,
-      })),
-    };
+    // The same record `?include=provider` embeds on the voucher routes
+    // (#167), so a clinic fetched on its own and one embedded in a voucher
+    // page are identical.
+    return serialiseProviderDetail(p);
   });
 
   /**
