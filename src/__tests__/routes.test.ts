@@ -12,7 +12,7 @@ import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { server } from '../stellar/client.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
-const SECOND_CLINIC = 'GCMDQZBBTZBR3ZDPCEFSDNNWVQFA44VHOJHR2JZTL7CHJHZ3N2LQDW3B';
+const SECOND_CLINIC = 'GDRHSGBLCHN4DNXQMIHWR3XJH4JM4ZNEIZGURNG42KSQVYULDW3PQH3I';
 const PENDING_CLINIC = 'GBWBYKGC5OCRELVP5WHAKEMBSZMNUY3HOKVSYBQGLFNWWQHNH2SD53FZ';
 /** An address that appears on a receipt but never registered (`#51`). */
 const UNREGISTERED_CLINIC = `G${'U'.repeat(55)}`;
@@ -1260,6 +1260,64 @@ describe('GET /vouchers sort', () => {
     expect(body.total).toBe(5);
   });
 
+  it('sorts and bands amounts across the whole i128 range (#96)', async () => {
+    const now = Date.now();
+    const huge = '170141183460469231731687303715884105727';
+    await prisma.voucher.create({
+      data: {
+        id: 'huge',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: huge,
+        status: 'Funded',
+        createdAt: new Date(now - DAY),
+        expiresAt: new Date(now + 10 * DAY),
+      },
+    });
+    // Every write through the shared client fills the sortable key.
+    const row = await prisma.voucher.findUnique({ where: { id: 'huge' } });
+    expect(row?.amountKey).toBe(huge);
+
+    const desc = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=desc&limit=2`);
+    expect(desc.body.total).toBe(6);
+    expect(desc.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['huge', '3']);
+
+    const top = await get(`/vouchers?funder=${FUNDER}&minAmount=${huge}`);
+    expect(top.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['huge']);
+
+    // Leading zeros are the same number.
+    const padded = await get(`/vouchers?funder=${FUNDER}&minAmount=00050000000`);
+    expect(padded.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['huge', '3']);
+
+    // A bound wider than any i128 compares as a number would.
+    const wide = '1' + '0'.repeat(40);
+    expect((await get(`/vouchers?funder=${FUNDER}&minAmount=${wide}`)).body.total).toBe(0);
+    expect((await get(`/vouchers?funder=${FUNDER}&maxAmount=${wide}`)).body.total).toBe(6);
+  });
+
+  it('orders by the stored amount key, in the database (#96)', async () => {
+    // Plant a key out of step with its amount. Only a database sort on
+    // `amountKey` puts voucher 2 (the cheapest) first; an in-memory sort on
+    // `amount` would not.
+    await prisma.voucher.updateMany({ where: { id: '2' }, data: { amountKey: '9'.repeat(39) } });
+    const { body } = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=desc&limit=1`);
+    expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual(['2']);
+    expect(body.total).toBe(5);
+  });
+
+  it('keeps an amount band on the cursor walk', async () => {
+    const { body: page1 } = await get(`/vouchers?funder=${FUNDER}&minAmount=30000000&limit=2`);
+    expect(page1.vouchers.map((v: { id: string }) => v.id)).toEqual(['5', '4']);
+    const cursor = encodeCursor(new Date(page1.vouchers[1].createdAt), page1.vouchers[1].id);
+    const { body: page2 } = await get(
+      `/vouchers?funder=${FUNDER}&minAmount=30000000&limit=2&cursor=${cursor}`,
+    );
+    expect(page2.vouchers.map((v: { id: string }) => v.id)).toEqual(['1', '3']);
+    expect(page2.nextCursor).toBeNull();
+  });
+
   it('rejects an unknown sort or order', async () => {
     expect((await get(`/vouchers?funder=${FUNDER}&sort=price`)).status).toBe(400);
     expect((await get(`/vouchers?funder=${FUNDER}&order=up`)).status).toBe(400);
@@ -1306,7 +1364,7 @@ describe('GET /vouchers.csv', () => {
   });
 
   it('escapes commas, quotes and line breaks in cells', async () => {
-    const tricky = 'G'.repeat(56);
+    const tricky = 'GD456OLJUTPFVB7GK5TQJ7MQZ3LRGAEL74VIH6BLVE4TATDASHO3SSUO';
     await prisma.provider.create({
       data: {
         address: tricky,
@@ -1473,6 +1531,113 @@ describe('GET /attesters/:address', () => {
 
   it('404s an unknown attester', async () => {
     const { status, body } = await get(`/attesters/${FUNDER}`);
+    expect(status).toBe(404);
+    expect(body.error).toBe('attester_not_found');
+  });
+});
+
+describe('GET /attesters/:address/stats', () => {
+  it('counts attestations, later disputes and the median wait from claim (#169)', async () => {
+    const claimed = new Date(Date.now() - 10 * DAY);
+    const after = (hours: number) => new Date(claimed.getTime() + hours * 3_600_000);
+    const fixture = {
+      funder: FUNDER,
+      beneficiaryRef: REF,
+      providerAddress: CLINIC,
+      serviceCode: 101,
+      amount: '10000000',
+      createdAt: new Date(claimed.getTime() - DAY),
+      expiresAt: new Date(Date.now() + 20 * DAY),
+      claimedAt: claimed,
+      attestedBy: ATTESTER,
+    };
+    await prisma.voucher.createMany({
+      data: [
+        // Disputed, then resolved for the provider and settled: still counts.
+        {
+          ...fixture,
+          id: 'a1',
+          status: 'Settled',
+          attestedAt: after(1),
+          disputeReason: 3,
+          disputeOutcome: 'Provider',
+        },
+        // Disputed and open.
+        { ...fixture, id: 'a2', status: 'Disputed', attestedAt: after(3), disputeReason: 1 },
+        // Settled without a dispute.
+        { ...fixture, id: 'a3', status: 'Settled', attestedAt: after(8) },
+        // Another attester's dispute does not count here.
+        {
+          ...fixture,
+          id: 'a4',
+          status: 'Disputed',
+          attestedAt: after(2),
+          attestedBy: FORMER_ATTESTER,
+          disputeReason: 1,
+        },
+      ],
+    });
+
+    const { status, body } = await get(`/attesters/${ATTESTER}/stats`);
+    expect(status).toBe(200);
+    // Voucher 4 from the shared seed has no claimedAt, so it counts as an
+    // attestation but not towards the median: waits are 1h, 3h and 8h.
+    expect(body).toEqual({
+      address: ATTESTER,
+      active: true,
+      attestations: 4,
+      disputedAfterAttestation: 2,
+      medianSecondsFromClaim: 3 * 3600,
+    });
+
+    const former = await get(`/attesters/${FORMER_ATTESTER}/stats`);
+    expect(former.body).toMatchObject({
+      active: false,
+      attestations: 1,
+      disputedAfterAttestation: 1,
+      medianSecondsFromClaim: 2 * 3600,
+    });
+  });
+
+  it('reports a null median before any timed attestation', async () => {
+    const { body } = await get(`/attesters/${FORMER_ATTESTER}/stats`);
+    expect(body).toEqual({
+      address: FORMER_ATTESTER,
+      active: false,
+      attestations: 0,
+      disputedAfterAttestation: 0,
+      medianSecondsFromClaim: null,
+    });
+  });
+
+  it('averages the two middle waits for an even count', async () => {
+    const claimed = new Date(Date.now() - 5 * DAY);
+    await prisma.voucher.update({
+      where: { id: '4' },
+      data: { claimedAt: claimed, attestedAt: new Date(claimed.getTime() + 2 * 3_600_000) },
+    });
+    await prisma.voucher.create({
+      data: {
+        id: 'a5',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '10000000',
+        status: 'Attested',
+        createdAt: new Date(claimed.getTime() - DAY),
+        expiresAt: new Date(Date.now() + 20 * DAY),
+        claimedAt: claimed,
+        attestedAt: new Date(claimed.getTime() + 5 * 3_600_000),
+        attestedBy: ATTESTER,
+      },
+    });
+    const { body } = await get(`/attesters/${ATTESTER}/stats`);
+    expect(body.medianSecondsFromClaim).toBe(3.5 * 3600);
+  });
+
+  it('404s an unknown attester', async () => {
+    const { status, body } = await get(`/attesters/${FUNDER}/stats`);
     expect(status).toBe(404);
     expect(body.error).toBe('attester_not_found');
   });
@@ -2225,6 +2390,31 @@ describe('HTTP caching', () => {
   it('does not serve 304 without a matching validator', async () => {
     const res = await cached('/providers', { 'if-none-match': 'W/"123-not-ours"' });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('Stellar address validation (#171)', () => {
+  // FUNDER with its last character changed: still 56 base32 characters,
+  // but the strkey checksum no longer matches.
+  const corrupted = FUNDER.slice(0, -1) + (FUNDER.endsWith('A') ? 'B' : 'A');
+
+  it('rejects an address with a bad checksum on every filter that takes one', async () => {
+    for (const url of [
+      `/vouchers?funder=${corrupted}`,
+      `/vouchers?provider=${corrupted}`,
+      `/vouchers/due?funder=${corrupted}&within=72h`,
+      `/receipts?provider=${corrupted}`,
+    ]) {
+      const { status, body } = await get(url);
+      expect(status, url).toBe(400);
+      expect(body.error, url).toBe('invalid_query');
+      expect(JSON.stringify(body.details), url).toContain('must be a valid Stellar account address');
+    }
+    expect((await getCsv(`/vouchers.csv?funder=${corrupted}`)).status).toBe(400);
+  });
+
+  it('still accepts a valid address', async () => {
+    expect((await get(`/vouchers?funder=${FUNDER}`)).status).toBe(200);
   });
 });
 

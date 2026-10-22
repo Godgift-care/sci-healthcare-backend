@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { buildApp } from '../app.js';
 import { prisma } from '../db.js';
 import { env } from '../env.js';
-import { voucherSeq } from '../lib/voucher_seq.js';
+import { voucherSeq } from '../lib/voucher-seq.js';
 import { encodeCursor } from '../lib/cursor.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { Indexer } from '../stellar/indexer.js';

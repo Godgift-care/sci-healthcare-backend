@@ -8,7 +8,7 @@ import {
   getAllDeployments,
   INDEXED_CONTRACTS,
 } from '../env.js';
-import { voucherSeq } from '../lib/voucher_seq.js';
+import { voucherSeq } from '../lib/voucher-seq.js';
 import { enqueueWebhook } from '../lib/webhooks.js';
 import {
   metadataUriOf,

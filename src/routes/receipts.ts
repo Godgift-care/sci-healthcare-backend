@@ -9,6 +9,7 @@ import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { providerSummaries, type ProviderSummary } from '../lib/providers.js';
 import { serviceKey, serviceLabels } from '../lib/services.js';
+import { accountAddress } from '../lib/stellar-address.js';
 
 const listQuery = z
   .object({
@@ -17,7 +18,7 @@ const listQuery = z
       .max(64)
       .refine(isValidRef, 'must be 64 hex characters')
       .optional(),
-    provider: z.string().length(56).optional(),
+    provider: accountAddress.optional(),
     cursor: cursorParam,
     limit: limitParam,
     offset: z.coerce.number().int().min(0).default(0),
