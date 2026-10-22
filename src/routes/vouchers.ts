@@ -13,7 +13,9 @@ import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/curs
 import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { isRefundable, isSettleable, refundableAt } from '../lib/lifecycle.js';
+import { providerDetails } from '../lib/providers.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { receiptsByVoucherId } from '../lib/receipts.js';
 import { serviceKey, serviceLabels } from '../lib/services.js';
 import { accountAddress } from '../lib/stellar-address.js';
 
@@ -52,7 +54,29 @@ const VOUCHER_FIELDS = [
   'refundableAt',
   'isSettleable',
   'isRefundable',
+  // Only present with `?include=receipt` (#167).
+  'receipt',
 ] as const;
+
+/** Related records a voucher response can embed (#167). */
+type Include = 'receipt' | 'provider';
+
+const INCLUDABLE = ['receipt', 'provider'] as const;
+
+/**
+ * `?include=receipt,provider` — the related-record counterpart of `?fields=`.
+ *
+ * An empty value means "embed nothing", exactly as `?fields=` means "project
+ * nothing" — an unpassed or empty parameter leaves the response as it was
+ * before this feature. An unknown name is a 400, so a typo can never look
+ * like a successful empty embed.
+ */
+const includeParam = z
+  .string()
+  .max(64)
+  .transform((raw) => raw.split(',').map((name) => name.trim()).filter((name) => name !== ''))
+  .pipe(z.array(z.enum(INCLUDABLE)))
+  .optional();
 
 /** Amounts are i128 base units carried as decimal strings. */
 const BASE_UNITS = /^\d+$/;
@@ -90,6 +114,7 @@ const listQuery = z.object({
   limit: limitParam,
   offset: z.coerce.number().int().min(0).default(0),
   fields: z.string().max(512).optional(),
+  include: includeParam,
 })
   .refine(
     (q) => !q.createdFrom || !q.createdTo || Date.parse(q.createdFrom) <= Date.parse(q.createdTo),
@@ -154,6 +179,10 @@ function idOrder(order: 'asc' | 'desc'): Prisma.VoucherOrderByWithRelationInput[
   return [{ seq: { sort: order, nulls: 'last' } }, { id: order }];
 }
 
+const detailQuery = z.object({
+  include: includeParam,
+});
+
 const dueQuery = z.object({
   funder: accountAddress.optional(),
   provider: accountAddress.optional(),
@@ -166,7 +195,21 @@ const dueQuery = z.object({
 export async function voucherRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/vouchers',
-    { config: { rateLimit: LIST_ROUTE_RATE_LIMIT } },
+    {
+      // Documented without a querystring schema: the filters are validated
+      // by `listQuery` in the handler, where a cross-field refinement
+      // (minAmount <= maxAmount) cannot be expressed as JSON Schema anyway.
+      schema: {
+        summary: 'List vouchers, optionally embedding their receipt and clinic',
+        description:
+          'Accepts ?include=receipt,provider. `receipt` embeds the same object ' +
+          'GET /receipts/{voucherId} serves (null before settlement); ' +
+          '`provider` embeds the full clinic record GET /providers/{address} ' +
+          'serves in place of the address/name/country summary. Both are read ' +
+          'for the whole page in a fixed number of queries, never one per row.',
+      },
+      config: { rateLimit: LIST_ROUTE_RATE_LIMIT },
+    },
     async (req) => {
       const parsed = listQuery.safeParse(req.query);
       if (!parsed.success) {
@@ -187,8 +230,10 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
         limit,
         offset,
         fields,
+        include,
       } = parsed.data;
 
+      const includes = new Set<Include>(include ?? []);
       const fieldSet = parseFields(fields, VOUCHER_FIELDS, 'GET /vouchers');
       const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
         fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
@@ -282,16 +327,14 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
         });
         const hasNext = rows.length > limit;
         const page = hasNext ? rows.slice(0, limit) : rows;
-        const labels = await serviceLabels(page);
         const last = page[page.length - 1];
         const nextCursor = hasNext && last ? encodeCursor(last.createdAt, last.id) : null;
-        return { limit, nextCursor, vouchers: project(page.map((v) => serialise(v, labels))) };
+        return { limit, nextCursor, vouchers: project(await serialisePage(page, includes)) };
       }
 
       const { rows, total } = await pageByWhere(where, sort, order, limit, offset);
 
-      const labels = await serviceLabels(rows);
-      return { total, limit, offset, vouchers: project(rows.map((v) => serialise(v, labels))) };
+      return { total, limit, offset, vouchers: project(await serialisePage(rows, includes)) };
     },
   );
 
@@ -379,20 +422,47 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/vouchers/:id', async (req) => {
-    const { id } = req.params as { id: string };
-    const v = await prisma.voucher.findUnique({
-      where: { id },
-      include: { provider: true },
-    });
-    if (!v) throw new ApiError(404, 'voucher_not_found', 'Voucher not found');
+  app.get(
+    '/vouchers/:id',
+    {
+      schema: {
+        summary: 'One voucher, with its care receipt',
+        description:
+          'Accepts ?include=provider to embed the full clinic record ' +
+          'GET /providers/{address} serves, and ?include=receipt to return the ' +
+          'receipt in the canonical shape GET /receipts/{voucherId} serves ' +
+          'instead of the stored row. Both are single batched lookups.',
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const parsed = detailQuery.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
+      }
+      const includes = new Set<Include>(parsed.data.include ?? []);
 
-    const [receipt, labels] = await Promise.all([
-      prisma.receipt.findUnique({ where: { voucherId: id } }),
-      serviceLabels([v]),
-    ]);
-    return { ...serialise(v, labels), receipt };
-  });
+      const v = await prisma.voucher.findUnique({
+        where: { id },
+        include: { provider: true },
+      });
+      if (!v) throw new ApiError(404, 'voucher_not_found', 'Voucher not found');
+
+      const [labels, providers, receipt] = await Promise.all([
+        serviceLabels([v]),
+        includes.has('provider') ? providerDetails([v]) : null,
+        includes.has('receipt')
+          ? receiptsByVoucherId([id]).then((receipts) => receipts.get(id) ?? null)
+          : prisma.receipt.findUnique({ where: { voucherId: id } }),
+      ]);
+
+      const summary = serialise(v, labels);
+      const base = providers
+        ? { ...summary, provider: providers.get(v.providerAddress) ?? summary.provider }
+        : summary;
+      return { ...base, receipt };
+    },
+  );
 
   /**
    * Every contract event for one voucher, oldest first, each with the
@@ -554,6 +624,27 @@ function parseWithin(within: string, now: number): number {
     default:
       return now;
   }
+}
+
+/** Serialises one page, resolving any requested related records in batches. */
+async function serialisePage(rows: Row[], includes: ReadonlySet<Include>) {
+  const labels = await serviceLabels(rows);
+  // One `Receipt` batch and one `Provider` batch for the whole page (each
+  // with its own single batched label/lookup query): the number of round
+  // trips does not grow with the page size (#167). A requested record that
+  // does not exist stays null rather than disappearing from the page.
+  const [receipts, providers] = await Promise.all([
+    includes.has('receipt') ? receiptsByVoucherId(rows.map((v) => v.id)) : null,
+    includes.has('provider') ? providerDetails(rows) : null,
+  ]);
+
+  return rows.map((v) => {
+    const summary = serialise(v, labels);
+    const base = providers
+      ? { ...summary, provider: providers.get(v.providerAddress) ?? summary.provider }
+      : summary;
+    return receipts ? { ...base, receipt: receipts.get(v.id) ?? null } : base;
+  });
 }
 
 type Row = {
