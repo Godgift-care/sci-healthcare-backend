@@ -26,6 +26,8 @@ export const schema = z.object({
   READY_MAX_LAG_LEDGERS: z.coerce.number().int().nonnegative().default(120),
 
   DATABASE_URL: z.string().min(1),
+  DATABASE_POOL_SIZE: z.coerce.number().int().positive().optional(),
+  DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
 
   STELLAR_NETWORK: z.enum(['testnet', 'public', 'futurenet']).default('testnet'),
   // One of these two is required. `SOROBAN_RPC_URLS` is the comma-separated

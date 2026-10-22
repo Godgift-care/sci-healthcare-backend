@@ -46,6 +46,18 @@ export const eventsSkipped = new Counter({
   registers: [registry],
 });
 
+export const indexerEventLatency = new Histogram({
+  name: 'indexer_event_latency_seconds',
+  help: 'Seconds between ledger close and the event being projected in the read model',
+  buckets: [0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+  registers: [registry],
+});
+
+export function recordEventLatency(ledgerClosedAt: Date, now: number = Date.now()): void {
+  const seconds = Math.max(0, (now - ledgerClosedAt.getTime()) / 1000);
+  indexerEventLatency.observe(seconds);
+}
+
 export const httpRequests = new Counter({
   name: 'http_requests_total',
   help: 'HTTP requests handled',

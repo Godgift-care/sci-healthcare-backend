@@ -16,10 +16,16 @@ import {
   type VoucherSignal,
 } from '../lib/event-bus.js';
 import {
+  recordDailyStatFunded,
+  recordDailyStatRefunded,
+  recordDailyStatSettled,
+} from '../lib/daily-stats.js';
+import {
   eventsApplied,
   eventsSkipped,
   indexerLagLedgers,
   markIndexerSuccess,
+  recordEventLatency,
 } from '../lib/metrics.js';
 import { server } from './client.js';
 import {
@@ -602,6 +608,7 @@ export class Indexer {
                 const signal = await this.project(decoded, tx);
                 await tx.$executeRawUnsafe('RELEASE SAVEPOINT event');
                 applied += 1;
+                recordEventLatency(decoded.ledgerClosedAt);
                 if (signal) pending.push(signal);
                 appliedByName.set(decoded.name, (appliedByName.get(decoded.name) ?? 0) + 1);
               } catch (err) {
@@ -660,6 +667,7 @@ export class Indexer {
   async applyEvent(e: DecodedEvent): Promise<void> {
     // Handlers write several rows; one transaction keeps an event atomic.
     const pending = await prisma.$transaction((tx) => this.project(e, tx));
+    recordEventLatency(e.ledgerClosedAt);
     if (pending) await this.publishCommitted([pending]);
   }
 
@@ -1040,6 +1048,14 @@ export class Indexer {
 
     const deploymentId = await this.lookupDeploymentId(e.contractId, db);
 
+    const existing = await db.voucher.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) {
+      await recordDailyStatFunded(db, asTimestamp(d.created_at), asAmount(d.amount));
+    }
+
     await db.voucher.upsert({
       where: { id },
       create: {
@@ -1076,6 +1092,16 @@ export class Indexer {
     extra: Record<string, unknown>,
   ): Promise<void> {
     const id = asId(d.voucher_id);
+    if (status === 'Refunded') {
+      const existing = await db.voucher.findUnique({
+        where: { id },
+        select: { refundedAt: true, amount: true },
+      });
+      if (existing && !existing.refundedAt) {
+        const refundedAt = (extra.refundedAt as Date) ?? new Date();
+        await recordDailyStatRefunded(db, refundedAt, existing.amount);
+      }
+    }
     await db.voucher.updateMany({
       where: { id },
       data: { status, ...extra },
@@ -1108,6 +1134,14 @@ export class Indexer {
     const d = e.fields;
     const voucherId = asId(d.voucher_id);
     const deploymentId = await this.lookupDeploymentId(e.contractId, db);
+
+    const existing = await db.receipt.findUnique({
+      where: { voucherId },
+      select: { voucherId: true },
+    });
+    if (!existing) {
+      await recordDailyStatSettled(db, asTimestamp(d.settled_at), asAmount(d.amount));
+    }
 
     await db.receipt.upsert({
       where: { voucherId },

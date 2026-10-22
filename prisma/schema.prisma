@@ -366,3 +366,20 @@ model WebhookDelivery {
 
   @@index([deliveredAt, abandonedAt, nextAttemptAt])
 }
+
+/// Pre-aggregated daily voucher activity stats for GET /stats/daily.
+///
+/// Maintained by the indexer in the same transaction as each voucher event,
+/// and re-buildable from vouchers and receipts via `npm run stats:backfill`.
+/// Keyed by UTC day (YYYY-MM-DD).
+model DailyStat {
+  date           String   @id // YYYY-MM-DD
+  fundedCount    Int      @default(0)
+  fundedAmount   String   @default("0")
+  settledCount   Int      @default(0)
+  settledAmount  String   @default("0")
+  refundedCount  Int      @default(0)
+  refundedAmount String   @default("0")
+  updatedAt      DateTime @updatedAt
+}
+
