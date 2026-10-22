@@ -1,0 +1,59 @@
+{
+  "_provenance": {
+    "capturedAt": "2026-10-22T15:45:54.315Z",
+    "networkPassphrase": "Test SDF Network ; September 2015",
+    "source": "soroban-rpc.getEvents",
+    "txHash": "67e453c98682eb7345242265c435c59e520986d2d9b33a0358e50f400c107083",
+    "ledger": 5332023
+  },
+  "event": {
+    "type": "contract",
+    "ledger": 5332023,
+    "ledgerClosedAt": "2026-10-22T15:41:42Z",
+    "id": "0022900864406564864-0000000001",
+    "operationIndex": 0,
+    "transactionIndex": 11,
+    "txHash": "67e453c98682eb7345242265c435c59e520986d2d9b33a0358e50f400c107083",
+    "topic": [
+      "AAAADwAAAAdkcmlwcGVkAA==",
+      "AAAAEgAAAAAAAAAAouVCerQuj4pzBOPft6nMTwKIBBxmH9/K7r4hgWnO9+c="
+    ],
+    "value": "AAAAEQAAAAEAAAABAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAAAAdzWUA",
+    "contractId": {
+      "_id": {
+        "0": 131,
+        "1": 174,
+        "2": 216,
+        "3": 223,
+        "4": 28,
+        "5": 52,
+        "6": 41,
+        "7": 54,
+        "8": 239,
+        "9": 155,
+        "10": 143,
+        "11": 151,
+        "12": 105,
+        "13": 227,
+        "14": 206,
+        "15": 245,
+        "16": 194,
+        "17": 193,
+        "18": 249,
+        "19": 89,
+        "20": 246,
+        "21": 185,
+        "22": 52,
+        "23": 66,
+        "24": 93,
+        "25": 176,
+        "26": 205,
+        "27": 148,
+        "28": 135,
+        "29": 238,
+        "30": 140,
+        "31": 75
+      }
+    }
+  }
+}

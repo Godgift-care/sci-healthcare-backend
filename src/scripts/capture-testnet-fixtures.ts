@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { scValToNative, xdr } from '@stellar/stellar-sdk';
 import type { rpc } from "@stellar/stellar-sdk";
@@ -37,7 +37,7 @@ import { TOPIC_FIELDS } from '../stellar/events.js';
  *                      (default: the RPC's whole retention window)
  */
 
-type Fixture = {
+export type Fixture = {
   _provenance: {
     capturedAt: string;
     networkPassphrase: string;
@@ -49,20 +49,27 @@ type Fixture = {
   event: Record<string, unknown>;
 };
 
-function parseArgs(argv: string[]): { outDir: string; window: number; maxLedgers: number | null } {
+export function parseArgs(argv: string[]): {
+  outDir: string;
+  window: number;
+  maxLedgers: number | null;
+  contracts: string[] | null;
+} {
   let outDir = path.resolve(fileURLToPath(import.meta.url), '../../__tests__/fixtures');
   let window = 500;
   let maxLedgers: number | null = null;
+  const contracts: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--out' && argv[i + 1]) outDir = path.resolve(argv[(i += 1)]!);
     else if (arg === '--window' && argv[i + 1]) window = Number(argv[++i]);
     else if (arg === '--max-ledgers' && argv[i + 1]) maxLedgers = Number(argv[++i]);
+    else if (arg === '--contract' && argv[i + 1]) contracts.push(argv[++i]!);
   }
   if (!Number.isInteger(window) || window < 1 || window > 500) {
     throw new Error('--window must be between 1 and 500 ledgers');
   }
-  return { outDir, window, maxLedgers };
+  return { outDir, window, maxLedgers, contracts: contracts.length > 0 ? contracts : null };
 }
 
 /**
@@ -71,12 +78,12 @@ function parseArgs(argv: string[]): { outDir: string; window: number; maxLedgers
  * always *store* base64 so a fixture is the raw bytes regardless of SDK
  * version (the decoder's `toScVal` reads either).
  */
-function scValBase64(input: unknown): string {
+export function scValBase64(input: unknown): string {
   return typeof input === 'string' ? input : (input as xdr.ScVal).toXDR('base64');
 }
 
 /** The event name in an RPC event's first topic entry (a symbol ScVal). */
-function eventNameOf(raw: { topic: unknown[] }): string | null {
+export function eventNameOf(raw: { topic: unknown[] }): string | null {
   try {
     const name = scValToNative(xdr.ScVal.fromXDR(scValBase64(raw.topic[0]), 'base64'));
     return typeof name === 'string' ? name : null;
@@ -87,9 +94,12 @@ function eventNameOf(raw: { topic: unknown[] }): string | null {
 
 const WANTED = new Set(Object.keys(TOPIC_FIELDS));
 
-function buildFixture(raw: Record<string, unknown>): Fixture {
+export function buildFixture(raw: Record<string, unknown>): Fixture {
   const event: Record<string, unknown> = {
     ...raw,
+    // `contractId` arrives as an SDK StrKey object; stringify it to the
+    // strkey so the fixture stays plain JSON and decodes identically.
+    contractId: String(raw.contractId),
     topic: (raw.topic as unknown[]).map(scValBase64),
     value: scValBase64(raw.value),
   };
@@ -106,8 +116,13 @@ function buildFixture(raw: Record<string, unknown>): Fixture {
 }
 
 /** Pages one ledger window's contract events, filling `found` as it goes. */
-async function scanWindow(lo: number, hi: number, found: Map<string, Fixture>): Promise<void> {
-  const filters = [{ type: 'contract' as const, contractIds: [...INDEXED_CONTRACTS] }];
+export async function scanWindow(
+  lo: number,
+  hi: number,
+  contracts: readonly string[],
+  found: Map<string, Fixture>,
+): Promise<void> {
+  const filters = [{ type: 'contract' as const, contractIds: [...contracts] }];
   let res = await getEventsWindow(lo, hi, filters);
   for (;;) {
     for (const raw of res.events) {
@@ -126,7 +141,7 @@ async function scanWindow(lo: number, hi: number, found: Map<string, Fixture>): 
  * a full-history scan runs, so a window that was valid minutes ago can
  * fail with "startLedger must be within the ledger range" by request time.
  */
-async function getEventsWindow(
+export async function getEventsWindow(
   lo: number,
   hi: number,
   filters: GetEventsParams["filters"],
@@ -148,6 +163,7 @@ async function scanHistory(
   latest: number,
   maxLedgers: number | null,
   window: number,
+  contracts: readonly string[],
   found: Map<string, Fixture>,
 ): Promise<void> {
   const floor = maxLedgers === null ? oldest : Math.max(oldest, latest - maxLedgers + 1);
@@ -155,29 +171,36 @@ async function scanHistory(
   // capture, and dense recent history usually completes the set quickly.
   for (let hi = latest; hi >= floor && found.size < WANTED.size; hi -= window) {
     const lo = Math.max(floor, hi - window + 1);
-    await scanWindow(lo, hi, found);
+    await scanWindow(lo, hi, contracts, found);
     process.stdout.write(
       `scanned ledgers ${lo}..${hi} — ${found.size}/${WANTED.size} types captured\n`,
     );
   }
 }
 
-function writeFixtures(outDir: string, found: Map<string, Fixture>): void {
+export function writeFixtures(outDir: string, found: Map<string, Fixture>): void {
   mkdirSync(outDir, { recursive: true });
   for (const [name, fixture] of found) {
     writeFileSync(path.join(outDir, `${name}.json`), `${JSON.stringify(fixture, null, 2)}\n`);
   }
 }
 
-async function main(): Promise<void> {
-  const { outDir, window, maxLedgers } = parseArgs(process.argv.slice(2));
+export async function main(): Promise<void> {
+  const { outDir, window, maxLedgers, contracts } = parseArgs(process.argv.slice(2));
   const health = await server.getHealth();
   process.stdout.write(
     `RPC ${env.SOROBAN_RPC_URL} healthy: ledgers ${health.oldestLedger}..${health.latestLedger} retained\n`,
   );
 
   const found = new Map<string, Fixture>();
-  await scanHistory(health.oldestLedger, health.latestLedger, maxLedgers, window, found);
+  await scanHistory(
+    health.oldestLedger,
+    health.latestLedger,
+    maxLedgers,
+    window,
+    contracts ?? INDEXED_CONTRACTS,
+    found,
+  );
   writeFixtures(outDir, found);
 
   process.stdout.write(
@@ -197,4 +220,12 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+// Only execute on direct invocation (`npm run fixtures:capture`), never on
+// import — the unit tests read the helpers below without touching the RPC.
+const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : '';
+if (import.meta.url === entry) {
+  main().catch((err) => {
+    process.stderr.write(`FATAL: ${String(err instanceof Error ? err.message : err)}\n`);
+    process.exitCode = 1;
+  });
+}
