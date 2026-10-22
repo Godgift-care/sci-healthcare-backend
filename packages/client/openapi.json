@@ -388,6 +388,25 @@
         }
       }
     },
+    "/v1/receipts/{voucherId}/proof": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "voucherId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/receipts/{voucherId}": {
       "get": {
         "parameters": [
@@ -835,6 +854,25 @@
     },
     "/receipts/summary": {
       "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/receipts/{voucherId}/proof": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "voucherId",
+            "required": true
+          }
+        ],
         "responses": {
           "200": {
             "description": "Default Response"

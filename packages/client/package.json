@@ -4,6 +4,9 @@
   "description": "Typed TypeScript client for the SCI Healthcare indexer and API",
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "sci": "./dist/cli.js"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
