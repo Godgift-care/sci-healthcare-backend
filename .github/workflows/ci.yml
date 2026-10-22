@@ -83,6 +83,53 @@ jobs:
       # the job prints the summary table and fails below them (issue #65).
       - run: npm run test:coverage
 
+  node-24-compatibility:
+    name: Node 24 compatibility (${{ matrix.engine }})
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: sqlite
+            database-url: ''
+          - engine: postgres
+            database-url: 'postgresql://sci:sci@localhost:5432/sci_healthcare_test'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sci
+          POSTGRES_PASSWORD: sci
+          POSTGRES_DB: sci_healthcare_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: ${{ matrix.database-url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - if: matrix.engine == 'postgres'
+        run: ./scripts/use-postgres.sh
+      - run: npx prisma generate
+      - id: compatibility-test
+        run: npm run test:coverage
+      - if: always()
+        env:
+          TEST_OUTCOME: ${{ steps.compatibility-test.outcome }}
+        run: |
+          echo "### Node 24 compatibility (${{ matrix.engine }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "Coverage suite outcome: **${TEST_OUTCOME}**" >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: build
     runs-on: ubuntu-latest
