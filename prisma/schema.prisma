@@ -40,6 +40,21 @@ model Provider {
   registeredAt DateTime
   updatedAt    DateTime @updatedAt
 
+  /// Off-chain metadata pointer announced on chain (contracts #10): hours,
+  /// a phone number and a location live at this URI, not in the ledger.
+  /// Stored only when it fits `METADATA_URI_MAX_LENGTH`; null when the
+  /// clinic never published one or cleared it.
+  metadataUri String?
+  /// The document at `metadataUri`, validated against the schema in
+  /// `src/lib/provider-metadata.ts` and stored as JSON. Null until a fetch
+  /// succeeds; a failed refresh keeps the previous document rather than
+  /// blanking the directory.
+  metadata String?
+  /// When the URI was last fetched — successfully or rejected — and the
+  /// basis of the daily refresh. Stamped on rejection too, so a dead URI
+  /// is retried once a day rather than on every cycle.
+  metadataFetchedAt DateTime?
+
   /// Which deployment this provider was registered under.
   deployment Deployment? @relation(fields: [deploymentId], references: [id])
   deploymentId Int?

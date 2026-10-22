@@ -1,5 +1,7 @@
 import type { FastifyError } from 'fastify';
 
+import { errorMessage, filtersFrom, negotiateLanguage } from './i18n.js';
+
 /**
  * The one error shape every route uses: `{ error, message, details? }`.
  *
@@ -29,18 +31,32 @@ export type ErrorEnvelope = {
 };
 
 /**
- * Maps any thrown value to a status code and the common envelope.
+ * Maps any thrown value to a status code and the common envelope, with the
+ * message in the request's language (#157).
+ *
+ * `acceptLanguage` is the raw `Accept-Language` header; it is negotiated
+ * here so every error path — a thrown `ApiError`, a rate-limit rejection, a
+ * crash, Fastify's own validation failures — localises the same way. The
+ * `error` code is never translated: it is what clients switch on.
  *
  * Unrecognised 5xx errors deliberately lose their message: the cause and
  * stack belong in the log line, not in a response a client may display.
  */
-export function errorEnvelope(err: unknown): { statusCode: number; body: ErrorEnvelope } {
+export function errorEnvelope(
+  err: unknown,
+  acceptLanguage?: string | string[],
+): { statusCode: number; body: ErrorEnvelope } {
+  const language = negotiateLanguage(acceptLanguage);
+
   if (err instanceof ApiError) {
+    // `filter_required` lists the filters this route accepts, so the
+    // translation keeps that list rather than hard-coding one that drifts.
+    const params = err.code === 'filter_required' ? { filters: filtersFrom(err.message) } : {};
     return {
       statusCode: err.statusCode,
       body: {
         error: err.code,
-        message: err.message,
+        message: errorMessage(err.code, language, err.message, params),
         ...(err.details !== undefined ? { details: err.details } : {}),
       },
     };
@@ -50,12 +66,21 @@ export function errorEnvelope(err: unknown): { statusCode: number; body: ErrorEn
   const statusCode = typeof fastifyError.statusCode === 'number' ? fastifyError.statusCode : 500;
 
   if (statusCode === 429) {
-    return { statusCode, body: { error: 'rate_limited', message: 'Too many requests' } };
+    return {
+      statusCode,
+      body: {
+        error: 'rate_limited',
+        message: errorMessage('rate_limited', language, 'Too many requests'),
+      },
+    };
   }
   if (statusCode >= 500) {
     return {
       statusCode: 500,
-      body: { error: 'internal_error', message: 'Internal server error' },
+      body: {
+        error: 'internal_error',
+        message: errorMessage('internal_error', language, 'Internal server error'),
+      },
     };
   }
 
@@ -65,7 +90,7 @@ export function errorEnvelope(err: unknown): { statusCode: number; body: ErrorEn
     statusCode,
     body: {
       error: 'bad_request',
-      message: fastifyError.message || 'Bad request',
+      message: fastifyError.message || errorMessage('bad_request', language, 'Bad request'),
       ...(fastifyError.validation !== undefined ? { details: fastifyError.validation } : {}),
     },
   };

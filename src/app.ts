@@ -28,6 +28,7 @@ import {
   NO_STORE,
 } from './lib/cache.js';
 import { errorEnvelope } from './lib/errors.js';
+import { errorMessage, negotiateLanguage } from './lib/i18n.js';
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
 import { httpDuration, httpRequests, registry } from './lib/metrics.js';
 import { APP_VERSION } from './lib/version.js';
@@ -199,16 +200,25 @@ export async function buildApp(
   });
 
   app.setErrorHandler((err, req, reply) => {
-    const { statusCode, body } = errorEnvelope(err);
+    const { statusCode, body } = errorEnvelope(err, req.headers['accept-language']);
     if (statusCode >= 500) req.log.error({ err }, 'request failed');
     else req.log.warn({ err }, 'request rejected');
     reply.code(statusCode).send(body);
   });
 
   app.setNotFoundHandler((req, reply) => {
+    // Same envelope and code as everything else; only the wording follows
+    // the request's Accept-Language (#157). The method and URL stay in the
+    // message in every language — they are what support needs to see.
+    const message = errorMessage(
+      'route_not_found',
+      negotiateLanguage(req.headers['accept-language']),
+      `Route ${req.method} ${req.url} not found`,
+      { method: req.method, url: req.url },
+    );
     reply.code(404).send({
       error: 'route_not_found',
-      message: `Route ${req.method} ${req.url} not found`,
+      message,
     });
   });
 

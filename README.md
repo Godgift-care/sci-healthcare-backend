@@ -100,6 +100,11 @@ example the Zod issues for a bad query). Error codes: `invalid_query`,
 `stream_full`, `bad_request`, `internal_error`. A 5xx is always `internal_error`; the cause
 stays in the log, never in the response.
 
+The `message` is human-readable and is localised: send `Accept-Language` (`fr`, `sw`, or a
+regional form such as `fr-CA`) and it is translated, falling back to English for anything
+unsupported or absent. `error` is the machine-readable code, is never translated, and is what
+to switch on — never `message`. English is unchanged from earlier releases.
+
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Liveness |
@@ -107,8 +112,8 @@ stays in the log, never in the response.
 | `GET /version` | Build version and commit, network, RPC endpoints, contract ids, indexer start ledger and process start time |
 | `GET /stats` | Protocol counters for the dashboard |
 | `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day (`days` 1–365, max 365) |
-| `GET /providers` | Verified clinics, filterable by `status`, `country`, `q` |
-| `GET /providers/:address` | One clinic and its service catalogue |
+| `GET /providers` | Verified clinics, filterable by `status`, `country`, `q`; each carries the clinic's cached off-chain `metadata` (`null` until fetched) |
+| `GET /providers/:address` | One clinic and its service catalogue, plus its cached off-chain `metadata` |
 | `GET /providers/:address/stats` | A clinic's vouchers by status, total settled value, and median claim/attestation times |
 | `GET /providers/:address/history` | Every status transition for a clinic, oldest first |
 | `GET /providers/:address/services/:code/history` | Every observed price for a service, oldest first |
@@ -240,6 +245,19 @@ See [`packages/client/README.md`](packages/client/README.md) for installation an
   ```
 
 #### 2. Healthcare Providers
+
+Both provider responses carry a `metadata` object: the clinic's off-chain document (hours, phone, location), fetched once by the indexer, validated, and cached in the read model rather than re-fetched by every client. `metadata` is `null` until a document has been fetched. The pointer is a URI a clinic publishes on chain (contracts #10), so the document follows the schema below; anything else is ignored with the reason logged.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | string | Optional; ≤200 chars |
+| `address` | string | Optional; ≤300 chars |
+| `location` | `{ lat, lng }` | Optional; bounded to valid coordinates. Accepted from `location` or `geo` in the source document, served as `location` |
+| `hours` | string or object | Optional; a summary string or a per-day object |
+| `phone` | string | Optional; ≤50 chars |
+| `languages` | string[] | Optional; ≤20 entries |
+
+The fetch is fenced in: http(s) only, a 5s timeout, a 64KB cap counted off the stream (a declared `content-length` is checked first, not trusted), JSON only. A document that is invalid, oversized, unreachable or non-JSON is ignored with the reason logged and never fails the cycle; a failed refresh keeps the previously cached document.
 - **`GET /v1/providers`**: List registered clinics with active services, filtered by status, country, or name search.
   ```bash
   curl "http://localhost:8080/v1/providers?status=Active&country=NG&limit=10"
@@ -254,6 +272,14 @@ See [`packages/client/README.md`](packages/client/README.md) for installation an
         "country": "NG",
         "status": "Active",
         "registeredAt": "2026-09-01T08:00:00.000Z",
+        "metadata": {
+          "name": "Ikeja General Clinic",
+          "address": "12 Allen Avenue, Ikeja, Lagos",
+          "location": { "lat": 6.5244, "lng": 3.3792 },
+          "hours": { "mon": "08:00-17:00", "tue": "08:00-17:00" },
+          "phone": "+2348012345678",
+          "languages": ["en", "yo"]
+        },
         "services": [
           { "code": 101, "label": "Outpatient consult", "price": "30000000", "priceDisplay": "3.0000000" }
         ]
@@ -271,6 +297,14 @@ See [`packages/client/README.md`](packages/client/README.md) for installation an
     "name": "Ikeja General Clinic",
     "country": "NG",
     "status": "Active",
+    "metadata": {
+      "name": "Ikeja General Clinic",
+      "address": "12 Allen Avenue, Ikeja, Lagos",
+      "location": { "lat": 6.5244, "lng": 3.3792 },
+      "hours": { "mon": "08:00-17:00", "tue": "08:00-17:00" },
+      "phone": "+2348012345678",
+      "languages": ["en", "yo"]
+    },
     "services": [
       { "code": 101, "label": "Outpatient consult", "price": "30000000", "priceDisplay": "3.0000000" }
     ]
@@ -768,6 +802,8 @@ A new, empty database needs nothing special.
 - **Tracing**: with `OTEL_EXPORTER_OTLP_ENDPOINT` set, the OpenTelemetry SDK starts and emits spans for HTTP routes, Prisma queries, Soroban RPC calls and indexer cycles; unset means no tracing at all. See [Tracing (OpenTelemetry)](#tracing-opentelemetry).
 - **Failed events**: an event the indexer cannot project is stored in the `FailedEvent` table and `/ready` reports degraded until it is cleared. After fixing the cause, run `npm run indexer:retry-failed`; it exits non-zero while any event still fails.
 - **Reconciliation**: the read model is a cache of the chain, so run `npm run indexer:reconcile` on a schedule. It reads `get_voucher` for every non-terminal voucher (plus a rolling sample of settled ones, `--sample`, default 25) and records each disagreement in `ReconcileMismatch`. `/ready` reports `checks.reconcileMismatches` and `checks.reconcile: "drift"`, but stays 200: unlike a failed event, drift says nothing about whether this instance can serve traffic. `--fix` rewrites the differing rows from chain state, which is the only safe direction. The command exits non-zero while any mismatch is open.
+
+  These maintenance commands run the compiled entry points (`node dist/scripts/…`), so run `npm run build` first in a production image — `tsx` is a dev dependency and is not installed there. To run one from source without building, use the `:dev` twin (`npm run indexer:reconcile:dev`, same flags after `--`).
 - **Faucet usage**: with `FAUCET_CONTRACT_ID` set, `dripped` events are indexed into `FaucetDrip` and `/stats` reports `faucetDrips` (total) and `faucetWallets` (distinct wallets) — the closest thing to a count of people who tried the demo.
 
 ## Contributing

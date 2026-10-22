@@ -9,6 +9,7 @@ import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/curs
 import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { providerMetadataOf } from '../lib/provider-metadata.js';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
@@ -27,6 +28,10 @@ const PROVIDER_FIELDS = [
   'country',
   'status',
   'registeredAt',
+  // The cached off-chain document (#159): requestable like any other
+  // field, so a clinic card asking only for hours and a phone number
+  // does not also download every service price.
+  'metadata',
   'services',
 ] as const;
 
@@ -101,6 +106,7 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       country: string;
       status: string;
       registeredAt: Date;
+      metadata: string | null;
       services: { code: number; label: string; price: string }[];
     }) => ({
       address: p.address,
@@ -108,6 +114,10 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       country: p.country,
       status: p.status,
       registeredAt: p.registeredAt,
+      // The cached, validated document the clinic published off chain
+      // (#159); null until one was fetched, so clients treat it as
+      // optional rather than a second request they must make.
+      metadata: providerMetadataOf(p),
       services: p.services.map((s) => ({
         code: s.code,
         label: s.label,
@@ -183,6 +193,7 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       country: p.country,
       status: p.status,
       registeredAt: p.registeredAt,
+      metadata: providerMetadataOf(p),
       services: p.services.map((s) => ({
         code: s.code,
         label: s.label,

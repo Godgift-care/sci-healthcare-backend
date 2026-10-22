@@ -17,6 +17,21 @@ export type ProviderLocation = {
   lng: number;
 };
 
+/**
+ * The clinic's off-chain metadata document (contracts #10), fetched and
+ * validated by the backend before it is cached and served. Null until one
+ * has been fetched; every field is optional because the schema in
+ * `src/lib/provider-metadata.ts` caps, not requires, each of them.
+ */
+export type ProviderMetadata = {
+  name?: string;
+  address?: string;
+  location?: ProviderLocation | null;
+  hours?: string | Record<string, string>;
+  phone?: string;
+  languages?: string[];
+};
+
 export type Provider = {
   address: string;
   name: string;
@@ -25,7 +40,7 @@ export type Provider = {
   registeredAt: string | Date;
   services: Service[];
   location?: ProviderLocation | null;
-  metadata?: { location?: ProviderLocation | null } | null;
+  metadata?: ProviderMetadata | null;
 };
 
 export type ServicePriceChange = {
