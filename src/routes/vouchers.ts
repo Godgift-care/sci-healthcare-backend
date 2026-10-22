@@ -262,11 +262,21 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
 
       const { rows, total } =
         min === null && max === null && sort !== 'amount'
-          ? await pageByWhere(where, sort, order, limit, offset)
-          : await pageByAmount(where, min, max, sort, order, limit, offset);
+          ? await pageByWhere(where, sort, order, limit + 1, offset)
+          : await pageByAmount(where, min, max, sort, order, limit + 1, offset);
 
-      const labels = await serviceLabels(rows);
-      return { total, limit, offset, vouchers: rows.map((v) => serialise(v, labels)) };
+      const hasNext = rows.length > limit;
+      const page = hasNext ? rows.slice(0, limit) : rows;
+      const labels = await serviceLabels(page);
+      const last = page[page.length - 1];
+      const nextCursor = hasNext && last ? encodeCursor(last.createdAt, last.id) : undefined;
+      return {
+        total,
+        limit,
+        offset,
+        nextCursor,
+        vouchers: page.map((v) => serialise(v, labels)),
+      };
     },
   );
 
