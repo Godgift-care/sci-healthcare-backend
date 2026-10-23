@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { FastifyError } from 'fastify';
 
 import { errorMessage, filtersFrom, negotiateLanguage } from './i18n.js';
@@ -31,6 +32,39 @@ export type ErrorEnvelope = {
 };
 
 /**
+ * Prisma error codes meaning "the database could not serve this query right
+ * now" rather than "this query is wrong and would fail again": the server is
+ * unreachable (P1001), the database does not exist (P1003), an operation
+ * timed out (P1008), a connection came up but the client could not use it
+ * (P1009), and the pool or the server is at its connection limit (P2024).
+ */
+const DATABASE_UNAVAILABLE_CODES = new Set(['P1001', 'P1003', 'P1008', 'P1009', 'P2024']);
+
+/**
+ * How long a client is asked to wait before retrying a `503`.
+ *
+ * Five seconds, which is how long the read model is cached for: a dropped
+ * connection is normally back within one indexer poll, and promising more
+ * than that would be a guess.
+ */
+export const DATABASE_RETRY_AFTER_SECONDS = 5;
+
+/**
+ * Whether a thrown value means the database is unreachable (#133).
+ *
+ * An initialisation error always is one: a client that cannot start or
+ * cannot reach its server is a deployment that cannot answer right now,
+ * which is exactly what a `503` describes. Everything else is judged by its
+ * Prisma code, so a query that is merely wrong stays a `500`.
+ */
+export function isDatabaseUnavailable(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientInitializationError) return true;
+  // A handler can reject with anything, including null and primitives.
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'string' && DATABASE_UNAVAILABLE_CODES.has(code);
+}
+
+/**
  * Maps any thrown value to a status code and the common envelope, with the
  * message in the request's language (#157).
  *
@@ -41,11 +75,16 @@ export type ErrorEnvelope = {
  *
  * Unrecognised 5xx errors deliberately lose their message: the cause and
  * stack belong in the log line, not in a response a client may display.
+ *
+ * A database that is unreachable is the one 5xx with something useful to say,
+ * so it becomes `503 database_unavailable` with `Retry-After` (#133). `headers`
+ * carries the response headers that go with a body; the error handler applies
+ * them.
  */
 export function errorEnvelope(
   err: unknown,
   acceptLanguage?: string | string[],
-): { statusCode: number; body: ErrorEnvelope } {
+): { statusCode: number; body: ErrorEnvelope; headers?: Record<string, string> } {
   const language = negotiateLanguage(acceptLanguage);
 
   if (err instanceof ApiError) {
@@ -63,6 +102,28 @@ export function errorEnvelope(
   }
 
   const fastifyError = err as FastifyError;
+
+  // Checked before the status mapping, because a connection failure has no
+  // statusCode of its own and would otherwise be flattened into a generic
+  // 500. The cause stays in the log; a client only needs to know that this
+  // one is worth retrying.
+  if (isDatabaseUnavailable(fastifyError)) {
+    const seconds = String(DATABASE_RETRY_AFTER_SECONDS);
+    return {
+      statusCode: 503,
+      body: {
+        error: 'database_unavailable',
+        message: errorMessage(
+          'database_unavailable',
+          language,
+          `Database is unavailable, retry in ${seconds} seconds`,
+          { seconds },
+        ),
+      },
+      headers: { 'retry-after': seconds },
+    };
+  }
+
   const statusCode = typeof fastifyError.statusCode === 'number' ? fastifyError.statusCode : 500;
 
   if (statusCode === 429) {

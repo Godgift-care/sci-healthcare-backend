@@ -29,9 +29,10 @@ export const DEFAULT_LANGUAGE: Language = 'en';
  * Message per error code, per language.
  *
  * The keys are the `error` codes the API can emit: the envelope's own
- * (`internal_error`, `rate_limited`, `bad_request`, `route_not_found`,
- * `method_not_allowed`) and every `ApiError` code thrown by the routes.
- * `{method}`, `{url}`, `{path}`, `{allowed}` and `{filters}` are filled in by
+ * (`internal_error`, `database_unavailable`, `rate_limited`, `bad_request`,
+ * `route_not_found`, `method_not_allowed`) and every `ApiError` code thrown by
+ * the routes. `{method}`, `{url}`, `{path}`, `{allowed}`, `{seconds}` and
+ * `{filters}` are filled in by
  * `errorMessage`, so a localised message never loses the dynamic part. The
  * English catalogue exists for completeness — English responses use the
  * message the route threw (see `errorMessage`),
@@ -41,6 +42,7 @@ export const DEFAULT_LANGUAGE: Language = 'en';
 const CATALOGUES: Record<Language, Record<string, string>> = {
   en: {
     internal_error: 'Internal server error',
+    database_unavailable: 'Database is unavailable, retry in {seconds} seconds',
     rate_limited: 'Too many requests',
     bad_request: 'Bad request',
     route_not_found: 'Route {method} {url} not found',
@@ -56,6 +58,8 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
   },
   fr: {
     internal_error: 'Erreur interne du serveur',
+    database_unavailable:
+      'La base de données est indisponible, réessayez dans {seconds} secondes',
     rate_limited: 'Trop de requêtes',
     bad_request: 'Requête invalide',
     route_not_found: 'Route {method} {url} introuvable',
@@ -74,6 +78,7 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
   },
   sw: {
     internal_error: 'Hitilafuo ya ndani ya seva',
+    database_unavailable: 'Hifadhidata haipatikani, jaribu tena baada ya sekunde {seconds}',
     rate_limited: 'Maombi mengi mno',
     bad_request: 'Ombi lisilokubalika',
     route_not_found: 'Njia {method} {url} haipatikani',
