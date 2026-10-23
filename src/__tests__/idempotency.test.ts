@@ -159,6 +159,7 @@ async function snapshot() {
     failedEvents,
     faucetDrips,
     indexerState,
+    dailyStats,
   ] = await Promise.all([
     prisma.provider.findMany({ orderBy: { address: 'asc' } }),
     prisma.service.findMany({ orderBy: { id: 'asc' } }),
@@ -170,6 +171,7 @@ async function snapshot() {
     prisma.failedEvent.findMany({ orderBy: { id: 'asc' } }),
     prisma.faucetDrip.findMany({ orderBy: { id: 'asc' } }),
     prisma.indexerState.findMany(),
+    prisma.dailyStat.findMany({ orderBy: { date: 'asc' } }),
   ]);
 
   return {
@@ -183,6 +185,7 @@ async function snapshot() {
     failedEvents,
     faucetDrips,
     indexerState: indexerState.map(({ updatedAt: _updatedAt, ...row }) => row),
+    dailyStats: dailyStats.map(({ updatedAt: _updatedAt, ...row }) => row),
   };
 }
 
@@ -204,6 +207,7 @@ beforeEach(async () => {
   await prisma.failedEvent.deleteMany();
   await prisma.faucetDrip.deleteMany();
   await prisma.reconcileMismatch.deleteMany();
+  await prisma.dailyStat.deleteMany();
 
   await prisma.indexerState.upsert({
     where: { id: 1 },

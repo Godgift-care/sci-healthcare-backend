@@ -7,8 +7,10 @@ import { buildApp } from '../app.js';
 import { prisma, queryStats } from '../db.js';
 import { CONTRACTS, env } from '../env.js';
 import { encodeCursor } from '../lib/cursor.js';
+import { backfillDailyStats } from '../lib/daily-stats.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { resetStatsCache } from '../routes/health.js';
 import { server } from '../stellar/client.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
@@ -373,7 +375,9 @@ beforeEach(async () => {
   await prisma.governanceEvent.deleteMany();
   await prisma.providerStatusChange.deleteMany();
   await prisma.servicePriceChange.deleteMany();
+  await prisma.dailyStat.deleteMany();
   await seed();
+  resetStatsCache();
 });
 
 describe('OpenAPI spec', () => {
@@ -1021,6 +1025,10 @@ describe('GET /providers/:address/stats', () => {
 });
 
 describe('GET /stats/daily', () => {
+  beforeEach(async () => {
+    await backfillDailyStats();
+  });
+
   const sum = (body: { series: Array<Record<string, { count: number; amount: string }>> }, key: string) =>
     body.series.reduce(
       (acc, row) => {
@@ -1080,6 +1088,7 @@ describe('GET /stats/daily', () => {
         refundedAt,
       },
     });
+    await backfillDailyStats();
 
     const { body } = await get('/stats/daily?days=7');
     const day = body.series.find(
@@ -2559,5 +2568,28 @@ describe('query parameter length limits', () => {
     const { status, body } = await get(`/receipts?beneficiaryRef=${longRef}`);
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_query');
+  });
+});
+
+describe('GET /stats/services', () => {
+  it('ranks service codes by settled value, highest first', async () => {
+    const { status, body } = await get('/stats/services');
+    expect(status).toBe(200);
+    expect(Array.isArray(body.services)).toBe(true);
+    const values = body.services.map((s: { value: string }) => BigInt(s.value));
+    for (let i = 1; i < values.length; i += 1) {
+      expect(values[i - 1]! >= values[i]!).toBe(true);
+    }
+  });
+
+  it('reports count and value per service code and label', async () => {
+    const { body } = await get('/stats/services?limit=2');
+    expect(body.services.length).toBeLessThanOrEqual(2);
+    for (const s of body.services) {
+      expect(s).toHaveProperty('serviceCode');
+      expect(s).toHaveProperty('label');
+      expect(s).toHaveProperty('count');
+      expect(s).toHaveProperty('value');
+    }
   });
 });

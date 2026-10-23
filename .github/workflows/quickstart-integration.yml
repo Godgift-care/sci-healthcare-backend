@@ -1,0 +1,57 @@
+name: Quickstart Integration
+
+# Integration tests exercising the indexer and API against a local Stellar Quickstart node.
+# Gated so it does not slow down the standard PR loop: runs on push to main, manual dispatch,
+# or when the `integration` label is applied to a pull request.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [labeled, opened, synchronize]
+  workflow_dispatch:
+
+jobs:
+  quickstart-integration:
+    name: quickstart-integration
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'integration')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Download contract release WASMs
+        run: |
+          mkdir -p contracts/wasm
+          gh release download v0.2.0 -R Godgift-care/sci-healthcare-contracts -D contracts/wasm || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Start Stellar Quickstart and Postgres
+        run: |
+          docker compose -f test/quickstart/docker-compose.quickstart.yml up -d stellar
+          echo "Waiting for stellar to be healthy..."
+          timeout 120s bash -c 'until docker compose -f test/quickstart/docker-compose.quickstart.yml ps | grep -q "healthy"; do sleep 2; done' || true
+
+      - name: Deploy contracts and seed lifecycle
+        run: |
+          docker compose -f test/quickstart/docker-compose.quickstart.yml up deploy-contracts
+
+      - name: Run Integration Tests
+        run: |
+          npm test -- src/__tests__/quickstart-integration.test.ts
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker compose -f test/quickstart/docker-compose.quickstart.yml down -v
