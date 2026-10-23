@@ -305,6 +305,64 @@
         }
       }
     },
+    "/v1/stats/services": {
+      "get": {
+        "summary": "Most-funded services",
+        "tags": [
+          "health"
+        ],
+        "description": "Voucher count and total value per service code and label, sorted by value descending. Use ?limit=N to cap the number of rows (top N).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "serviceCode": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "vouchers": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "Total voucher value as a base-unit decimal string."
+                      }
+                    },
+                    "required": [
+                      "serviceCode",
+                      "label",
+                      "vouchers",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/vouchers": {
       "get": {
         "summary": "List vouchers, optionally embedding their receipt and clinic",
