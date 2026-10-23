@@ -53,7 +53,7 @@ searchable as text; these are the fields you will filter on under pressure.
 | `ledger` | indexer and webhook lines | The ledger an event came from, which is the unit of replay (`npm run indexer:backfill -- --from <ledger>`) |
 | `txHash` / `voucherId` | indexer, webhook lines | The on-chain proof and the row it touched; both are public |
 | `attempts` / `abandoned` | webhook lines | Distinguishes "retrying" from "given up on" without parsing the message |
-| `err.message` (and `err.stack`) | error lines | The only place a 5xx cause is recorded — the API responds `internal_error` and keeps the cause here |
+| `err.message` (and `err.stack`) | error lines | The only place a 5xx cause is recorded — the API responds `internal_error` (or `database_unavailable` for a connection failure) and keeps the cause here |
 
 Two deliberate exclusions:
 

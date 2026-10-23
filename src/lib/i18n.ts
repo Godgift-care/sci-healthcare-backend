@@ -29,20 +29,24 @@ export const DEFAULT_LANGUAGE: Language = 'en';
  * Message per error code, per language.
  *
  * The keys are the `error` codes the API can emit: the envelope's own
- * (`internal_error`, `rate_limited`, `bad_request`, `route_not_found`) and
- * every `ApiError` code thrown by the routes. `{method}`, `{url}` and
- * `{filters}` are filled in by `errorMessage`, so a localised message never
- * loses the dynamic part. The English catalogue exists for completeness —
- * English responses use the message the route threw (see `errorMessage`),
+ * (`internal_error`, `database_unavailable`, `rate_limited`, `bad_request`,
+ * `route_not_found`, `method_not_allowed`) and every `ApiError` code thrown by
+ * the routes. `{method}`, `{url}`, `{path}`, `{allowed}`, `{seconds}` and
+ * `{filters}` are filled in by
+ * `errorMessage`, so a localised message never loses the dynamic part. The
+ * English catalogue exists for completeness — English responses use the
+ * message the route threw (see `errorMessage`),
  * so a code whose English carries a runtime value (`stream_full`) is only
  * listed where it is translated.
  */
 const CATALOGUES: Record<Language, Record<string, string>> = {
   en: {
     internal_error: 'Internal server error',
+    database_unavailable: 'Database is unavailable, retry in {seconds} seconds',
     rate_limited: 'Too many requests',
     bad_request: 'Bad request',
     route_not_found: 'Route {method} {url} not found',
+    method_not_allowed: 'Method {method} not allowed for {path}; allowed: {allowed}',
     invalid_query: 'Invalid query parameters',
     invalid_cursor: 'Invalid cursor',
     invalid_code: 'code must be a non-negative integer',
@@ -54,9 +58,13 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
   },
   fr: {
     internal_error: 'Erreur interne du serveur',
+    database_unavailable:
+      'La base de données est indisponible, réessayez dans {seconds} secondes',
     rate_limited: 'Trop de requêtes',
     bad_request: 'Requête invalide',
     route_not_found: 'Route {method} {url} introuvable',
+    method_not_allowed:
+      'La méthode {method} n’est pas autorisée pour {path} ; méthodes autorisées : {allowed}',
     invalid_query: 'Paramètres de requête invalides',
     invalid_cursor: 'Curseur invalide',
     invalid_code: 'le code doit être un entier non négatif',
@@ -70,9 +78,11 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
   },
   sw: {
     internal_error: 'Hitilafuo ya ndani ya seva',
+    database_unavailable: 'Hifadhidata haipatikani, jaribu tena baada ya sekunde {seconds}',
     rate_limited: 'Maombi mengi mno',
     bad_request: 'Ombi lisilokubalika',
     route_not_found: 'Njia {method} {url} haipatikani',
+    method_not_allowed: 'Njia {method} hairuhusiwi kwa {path}; njia zinazoruhusiwa: {allowed}',
     invalid_query: 'Vipimo vya hoja visivyo sahihi',
     invalid_cursor: 'Mwelekeo (cursor) si sahihi',
     invalid_code: 'msimbo lazima uwe namba nzima isiyo hasi',
