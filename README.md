@@ -96,9 +96,18 @@ Errors all use one envelope, whatever layer rejected the request:
 `details` is present only when there is something structured to add (for
 example the Zod issues for a bad query). Error codes: `invalid_query`,
 `filter_required`, `invalid_code`, `provider_not_found`, `service_not_found`,
-`voucher_not_found`, `receipt_not_found`, `route_not_found`, `rate_limited`,
+`voucher_not_found`, `receipt_not_found`, `route_not_found`, `method_not_allowed`, `rate_limited`,
 `stream_full`, `bad_request`, `internal_error`. A 5xx is always `internal_error`; the cause
 stays in the log, never in the response.
+
+The API is read-only, so a known path called with another verb answers
+`405` with an `Allow` header listing the methods that do work there:
+
+```json
+{ "error": "method_not_allowed", "message": "Method POST not allowed for /vouchers; allowed: GET, HEAD" }
+```
+
+A path that does not exist stays a `404`, whatever the method.
 
 The `message` is human-readable and is localised: send `Accept-Language` (`fr`, `sw`, or a
 regional form such as `fr-CA`) and it is translated, falling back to English for anything
