@@ -31,6 +31,22 @@ export function fromBaseUnits(base: string): string {
   return `${negative ? '-' : ''}${whole}.${frac}`;
 }
 
+/**
+ * Digits in the largest i128, 170141183460469231731687303715884105727. Every
+ * voucher amount fits in this many digits once zero-padded.
+ */
+export const AMOUNT_KEY_WIDTH = 39;
+
+/**
+ * The amount as a fixed-width, zero-padded string (#96). Two such keys compare
+ * as strings exactly as their amounts compare as numbers, so the database can
+ * sort and range-filter `Voucher.amountKey` without knowing it holds an i128.
+ * Voucher amounts are non-negative base units.
+ */
+export function amountKey(base: string): string {
+  return base.padStart(AMOUNT_KEY_WIDTH, '0');
+}
+
 /** Basis-point fee, matching the contract's integer truncation exactly. */
 export function feeFor(amountBase: string, feeBps: number): string {
   return ((BigInt(amountBase) * BigInt(feeBps)) / 10_000n).toString();

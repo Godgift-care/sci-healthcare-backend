@@ -12,7 +12,7 @@ The SCI Healthcare backend is a **public, unauthenticated read-only indexer** fo
 - **On-chain source of truth:** All data exposed by the API is derived from public Soroban smart contract events and ledger state on the Stellar network.
 - **No Protected Health Information (PHI) / PII:** The protocol does not record, process, or store patient names, national identity numbers, medical histories, diagnostic notes, or clinical outcomes.
 - **Cryptographic Beneficiary Pseudonymity:** Beneficiaries are identified solely by a 32-byte cryptographic commitment (`beneficiaryRef`), typically a SHA-256 hash or salted commitment generated off-chain. The API has no mechanism to resolve a `beneficiaryRef` to an individual's real-world identity.
-- **Redaction in Bulk Channels:** High-throughput and export surfaces (such as CSV exports and real-time Server-Sent Events) deliberately omit `beneficiaryRef` to prevent broad correlation attacks.
+- **Redaction in Bulk Channels:** High-throughput and export surfaces (such as CSV exports, real-time Server-Sent Events and the Atom activity feed) deliberately omit `beneficiaryRef` to prevent broad correlation attacks. A feed reader polls, caches and syndicates what it is given, so the feed is the one surface where a leaked commitment would be reproduced beyond anyone's control.
 
 ---
 
@@ -40,6 +40,7 @@ The SCI Healthcare backend is a **public, unauthenticated read-only indexer** fo
 | **`GET /v1/governance/proposals/:id`** | Public | Single governance proposal details and calldata target | Governance contract state | Structured view | Open governance transparent to all DAO stakeholders. |
 | **`GET /v1/governance/history`** | Public | Historical admin actions (provider approval/suspension, parameter changes) | Contract admin event logs | Indexed audit trail | Regulatory transparency and protocol governance auditing. |
 | **`GET /v1/stream`** | Public | Real-time Server-Sent Events (SSE) for voucher transitions | In-process event bus | Push delivery filtering on voucher ID or provider address | **`beneficiaryRef` is strictly omitted** from SSE payloads. Stream cannot be used to scrape beneficiary commitments. |
+| **`GET /v1/feed.xml`** | Public | Atom 1.0 activity feed: at most 20 of the latest settled vouchers (id, clinic name, service label, amount, settlement time) and newly verified clinics, each linking to the JSON route that proves it | Receipt contract `ReceiptMinted` events, Registry contract `ProviderStatusChange` events | Weakest-ETag/`Cache-Control` caching so a polling reader costs one read per window | **`beneficiaryRef` is never selected for this route** — entries are built through the same receipt serialiser `GET /v1/receipts/:id` uses, whose input type excludes it. A test asserts the reference value and the word "beneficiary" appear nowhere in the document. Clinic names are arbitrary on-chain text and are XML-escaped. Asserted in `src/__tests__/feed.test.ts`. |
 
 ---
 
@@ -53,7 +54,7 @@ The SCI Healthcare backend is a **public, unauthenticated read-only indexer** fo
 
 3. **Protection Against Bulk Scraping:**
    - Public rate limiting is enforced (`30 req/min` for list routes, `120 req/min` for other routes).
-   - Real-time streams and CSV exports scrub sensitive commitment fields.
+   - Real-time streams, CSV exports and the Atom activity feed scrub sensitive commitment fields.
    - Paging uses bounded cursors (`limit <= 100`) preventing memory denial-of-service.
 
 4. **Auditability Without Surveillance:**

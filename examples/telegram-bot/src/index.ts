@@ -6,6 +6,7 @@ export * from './bot.js';
 export * from './formatter.js';
 export * from './server.js';
 export * from './verify.js';
+export * from './email.js';
 
 // Auto-start server when run directly
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];

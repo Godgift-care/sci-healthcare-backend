@@ -8,18 +8,29 @@ import {
   getAllDeployments,
   INDEXED_CONTRACTS,
 } from '../env.js';
-import { voucherSeq } from '../lib/voucher_seq.js';
+import { voucherSeq } from '../lib/voucher-seq.js';
 import { enqueueWebhook } from '../lib/webhooks.js';
+import {
+  metadataUriOf,
+  METADATA_URI_MAX_LENGTH,
+  refreshDueProviderMetadata,
+} from '../lib/provider-metadata.js';
 import {
   hasStreamListeners,
   publishVoucherSignals,
   type VoucherSignal,
 } from '../lib/event-bus.js';
 import {
+  recordDailyStatFunded,
+  recordDailyStatRefunded,
+  recordDailyStatSettled,
+} from '../lib/daily-stats.js';
+import {
   eventsApplied,
   eventsSkipped,
   indexerLagLedgers,
   markIndexerSuccess,
+  recordEventLatency,
 } from '../lib/metrics.js';
 import { server } from './client.js';
 import {
@@ -175,6 +186,15 @@ function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
   });
 }
 
+/**
+ * How often the lease holder looks for provider metadata that is due (#159).
+ *
+ * The due-check is one indexed query over the provider table; running it on
+ * every poll would be waste, and waiting a full day would delay a clinic's
+ * fresh URI by up to 24 hours. Five minutes bounds both.
+ */
+const METADATA_CHECK_INTERVAL_MS = 5 * 60_000;
+
 export type IndexerOptions = {
   /** Overridable for tests; defaults to a lease over this database. */
   lease?: IndexerLease;
@@ -202,6 +222,8 @@ export class Indexer {
   private readonly unknownEvents = new Set<string>();
   /** Consecutive failed cycles; drives the backoff and is reset on success. */
   private failures = 0;
+  /** Wall-clock ms of the last provider-metadata due-check (#159). */
+  private lastMetadataCheckAt = 0;
   private readonly lease: IndexerLease;
   private readonly shutdownTimeoutMs: number;
 
@@ -602,6 +624,7 @@ export class Indexer {
                 const signal = await this.project(decoded, tx);
                 await tx.$executeRawUnsafe('RELEASE SAVEPOINT event');
                 applied += 1;
+                recordEventLatency(decoded.ledgerClosedAt);
                 if (signal) pending.push(signal);
                 appliedByName.set(decoded.name, (appliedByName.get(decoded.name) ?? 0) + 1);
               } catch (err) {
@@ -645,6 +668,11 @@ export class Indexer {
 
     await this.publishCommitted(pending);
 
+    // After the commit, never inside it: a slow or hostile metadata host
+    // must not hold the cursor's transaction open, and a rejected document
+    // must not fail the cycle (the read model is already current).
+    await this.refreshMetadataIfDue();
+
     if (applied > 0) {
       this.log.info({ applied, throughLedger: advanceTo }, 'indexed events');
     }
@@ -660,7 +688,27 @@ export class Indexer {
   async applyEvent(e: DecodedEvent): Promise<void> {
     // Handlers write several rows; one transaction keeps an event atomic.
     const pending = await prisma.$transaction((tx) => this.project(e, tx));
+    recordEventLatency(e.ledgerClosedAt);
     if (pending) await this.publishCommitted([pending]);
+  }
+
+  /**
+   * Fetches the metadata of every clinic whose URI is new or a day old.
+   *
+   * Only reachable while this instance holds the single-writer lease (it
+   * runs inside `poll`), so N replicas produce one fetch per URI per day.
+   * Its own failure is logged and dropped: metadata is a directory
+   * convenience, and losing it must never look like an indexing failure.
+   */
+  private async refreshMetadataIfDue(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastMetadataCheckAt < METADATA_CHECK_INTERVAL_MS) return;
+    this.lastMetadataCheckAt = now;
+    try {
+      await refreshDueProviderMetadata({ log: this.log });
+    } catch (err) {
+      this.log.warn({ err }, 'provider metadata refresh failed');
+    }
   }
 
   /**
@@ -682,6 +730,9 @@ export class Indexer {
         return null;
       case 'provider_status_changed':
         await this.onProviderStatus(db, e);
+        return null;
+      case 'provider_metadata_changed':
+        await this.onProviderMetadataChanged(db, e);
         return null;
       case 'service_upserted':
         await this.onServiceUpserted(db, e);
@@ -922,9 +973,76 @@ export class Indexer {
         status: 'Pending',
         registeredAt: asTimestamp(d.registered_at),
         deploymentId,
+        ...this.storedMetadataUri(d.metadata_uri),
       },
       update: { name: String(d.name), country: String(d.country) },
     });
+
+    // A re-registration that repoints the URI must invalidate the cached
+    // document: serving the old clinic's hours under the new URI would be
+    // worse than serving none. The guard is what makes a replay a no-op
+    // while a genuine change clears the cache, so it has to mean "the row
+    // does not already hold this URI" exactly.
+    //
+    // `NOT: { metadataUri: uri }` is not that guard. Under SQL's NULL
+    // semantics a `NULL` column fails every comparison, so the first
+    // registration of a new URI would match nothing and be dropped, while
+    // a replay — whose `metadataUri` already equals `uri` — would match
+    // the row and wipe the document it had just cached. The disjunction
+    // spells the intent out: different value, or no value stored yet.
+    const uri = metadataUriOf(d.metadata_uri);
+    if (uri !== null) {
+      await db.provider.updateMany({
+        where: {
+          address,
+          OR: [{ metadataUri: { not: uri } }, { metadataUri: null }],
+        },
+        data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
+      });
+    }
+  }
+
+  /**
+   * The clinic repointed (or cleared) its metadata URI (contracts #10).
+   *
+   * The URI itself is on-chain public and is stored; the document it points
+   * at is fetched later by the refresh pass, outside this transaction. The
+   * cached document is cleared the moment the pointer changes — it describes
+   * a different URI now — and the fetch stamp goes with it, so the new URI
+   * is due immediately.
+   */
+  private async onProviderMetadataChanged(db: Db, e: DecodedEvent): Promise<void> {
+    const address = asAddress(e.fields.provider);
+    const uri = metadataUriOf(e.fields.metadata_uri);
+    // Same guard as registration, and the same reason: a replay of this
+    // event must not clear a document the refresh pass has since cached,
+    // while a genuine repoint (including clearing the pointer to null)
+    // must. A stored `NULL` differs from every URI, including none.
+    const differs =
+      uri === null
+        ? { metadataUri: { not: null } }
+        : { OR: [{ metadataUri: { not: uri } }, { metadataUri: null }] };
+    await db.provider.updateMany({
+      where: { address, ...differs },
+      data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
+    });
+  }
+
+  /**
+   * The metadata fields for a `create` payload: the URI when it fits the
+   * cap, nothing otherwise. A URI that looked like one but was refused is
+   * logged once, with the length that lost it, rather than stored truncated.
+   */
+  private storedMetadataUri(input: unknown): { metadataUri?: string } {
+    const uri = metadataUriOf(input);
+    if (uri !== null) return { metadataUri: uri };
+    if (typeof input === 'string' && input.trim() !== '') {
+      this.log.warn(
+        { length: input.length, max: METADATA_URI_MAX_LENGTH },
+        'provider metadata URI ignored; over the length cap',
+      );
+    }
+    return {};
   }
 
   private async onProviderStatus(db: Db, e: DecodedEvent): Promise<void> {
@@ -1040,6 +1158,14 @@ export class Indexer {
 
     const deploymentId = await this.lookupDeploymentId(e.contractId, db);
 
+    const existing = await db.voucher.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) {
+      await recordDailyStatFunded(db, asTimestamp(d.created_at), asAmount(d.amount));
+    }
+
     await db.voucher.upsert({
       where: { id },
       create: {
@@ -1076,6 +1202,16 @@ export class Indexer {
     extra: Record<string, unknown>,
   ): Promise<void> {
     const id = asId(d.voucher_id);
+    if (status === 'Refunded') {
+      const existing = await db.voucher.findUnique({
+        where: { id },
+        select: { refundedAt: true, amount: true },
+      });
+      if (existing && !existing.refundedAt) {
+        const refundedAt = (extra.refundedAt as Date) ?? new Date();
+        await recordDailyStatRefunded(db, refundedAt, existing.amount);
+      }
+    }
     await db.voucher.updateMany({
       where: { id },
       data: { status, ...extra },
@@ -1108,6 +1244,14 @@ export class Indexer {
     const d = e.fields;
     const voucherId = asId(d.voucher_id);
     const deploymentId = await this.lookupDeploymentId(e.contractId, db);
+
+    const existing = await db.receipt.findUnique({
+      where: { voucherId },
+      select: { voucherId: true },
+    });
+    if (!existing) {
+      await recordDailyStatSettled(db, asTimestamp(d.settled_at), asAmount(d.amount));
+    }
 
     await db.receipt.upsert({
       where: { voucherId },
