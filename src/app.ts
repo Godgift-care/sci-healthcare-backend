@@ -29,6 +29,7 @@ import {
 } from './lib/cache.js';
 import { errorEnvelope } from './lib/errors.js';
 import { errorMessage, negotiateLanguage } from './lib/i18n.js';
+import { allowedMethods, routePatterns, type RoutePattern } from './lib/method-allowed.js';
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
 import { httpDuration, httpRequests, registry } from './lib/metrics.js';
 import { APP_VERSION } from './lib/version.js';
@@ -116,6 +117,14 @@ export async function buildApp(
     logger: withRedactedLogging(opts.logger),
     trustProxy: true,
     genReqId,
+  });
+
+  // Every route the app and its plugins register, prefix already applied.
+  // The not-found handler reads this to tell a wrong verb from an unknown
+  // path (#126), so the hook is installed before anything is registered.
+  const registeredRoutes: { method: string | string[]; url: string }[] = [];
+  app.addHook('onRoute', (routeOptions) => {
+    registeredRoutes.push({ method: routeOptions.method, url: routeOptions.url });
   });
 
   app.setValidatorCompiler(validatorCompiler);
@@ -209,13 +218,39 @@ export async function buildApp(
     reply.code(statusCode).send(body);
   });
 
+  // `registeredRoutes` only fills up as scopes register, and the first request
+  // cannot arrive before that is finished, so the lookup table is collapsed on
+  // demand and kept from then on.
+  let routePatternList: RoutePattern[] | null = null;
+  const knownPaths = (): RoutePattern[] =>
+    (routePatternList ??= routePatterns(registeredRoutes));
+
   app.setNotFoundHandler((req, reply) => {
+    const language = negotiateLanguage(req.headers['accept-language']);
+    const path = req.url.split('?')[0]!.split('#')[0]!;
+
+    // A known path called with a verb it does not serve is 405, not 404: the
+    // endpoint exists, the method does not. `Allow` says which ones do.
+    const allowed = allowedMethods(knownPaths(), req.method, req.url);
+    if (allowed) {
+      const list = allowed.join(', ');
+      return reply.code(405).header('allow', list).send({
+        error: 'method_not_allowed',
+        message: errorMessage(
+          'method_not_allowed',
+          language,
+          `Method ${req.method} not allowed for ${path}; allowed: ${list}`,
+          { method: req.method, path, allowed: list },
+        ),
+      });
+    }
+
     // Same envelope and code as everything else; only the wording follows
     // the request's Accept-Language (#157). The method and URL stay in the
     // message in every language — they are what support needs to see.
     const message = errorMessage(
       'route_not_found',
-      negotiateLanguage(req.headers['accept-language']),
+      language,
       `Route ${req.method} ${req.url} not found`,
       { method: req.method, url: req.url },
     );
