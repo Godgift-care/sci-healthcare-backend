@@ -1,17 +1,20 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../app.js';
-import { prisma } from '../db.js';
+import { prisma, queryStats } from '../db.js';
 import { CONTRACTS, env } from '../env.js';
 import { encodeCursor } from '../lib/cursor.js';
+import { backfillDailyStats } from '../lib/daily-stats.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { resetStatsCache } from '../routes/health.js';
 import { server } from '../stellar/client.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
-const SECOND_CLINIC = 'GCMDQZBBTZBR3ZDPCEFSDNNWVQFA44VHOJHR2JZTL7CHJHZ3N2LQDW3B';
+const SECOND_CLINIC = 'GDRHSGBLCHN4DNXQMIHWR3XJH4JM4ZNEIZGURNG42KSQVYULDW3PQH3I';
 const PENDING_CLINIC = 'GBWBYKGC5OCRELVP5WHAKEMBSZMNUY3HOKVSYBQGLFNWWQHNH2SD53FZ';
 /** An address that appears on a receipt but never registered (`#51`). */
 const UNREGISTERED_CLINIC = `G${'U'.repeat(55)}`;
@@ -372,7 +375,9 @@ beforeEach(async () => {
   await prisma.governanceEvent.deleteMany();
   await prisma.providerStatusChange.deleteMany();
   await prisma.servicePriceChange.deleteMany();
+  await prisma.dailyStat.deleteMany();
   await seed();
+  resetStatsCache();
 });
 
 describe('OpenAPI spec', () => {
@@ -604,6 +609,29 @@ describe('GET /version', () => {
 describe('GET /ready', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  // Webhook rows are not part of the per-test reset above, and another suite
+  // may leave some behind (every test file shares one database).
+  beforeEach(async () => {
+    await prisma.webhookDelivery.deleteMany();
+  });
+
+  /** One queued delivery, aged by `ageMs` so the backlog threshold is testable. */
+  async function queueDelivery(ageMs = 0) {
+    await prisma.webhookDelivery.create({
+      data: {
+        id: randomUUID(),
+        url: 'https://clinic.example.test/webhooks',
+        event: 'voucher_settled',
+        voucherId: '1',
+        status: 'Settled',
+        ledger: 1,
+        payload: '{}',
+        nextAttemptAt: new Date(),
+        createdAt: new Date(Date.now() - ageMs),
+      },
+    });
+  }
+
   async function seedCursor(lastLedger: number) {
     await prisma.indexerState.upsert({
       where: { id: 1 },
@@ -656,6 +684,66 @@ describe('GET /ready', () => {
     } finally {
       await prisma.reconcileMismatch.deleteMany();
     }
+  });
+
+  it('reports a fresh webhook backlog without degrading (#130)', async () => {
+    await seedCursor(1000);
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 1000 } as never);
+    await queueDelivery();
+
+    const { status, body } = await get('/ready');
+    // A delivery that is merely queued says nothing about this instance:
+    // the loop runs every few seconds and retries inside the backoff ceiling.
+    expect(status).toBe(200);
+    expect(body.checks.webhooks).toMatchObject({
+      state: 'ok',
+      enabled: true,
+      pending: 1,
+      abandoned: 0,
+      oldestPendingAgeSeconds: 0,
+      maxPendingAgeSeconds: env.READY_WEBHOOK_MAX_AGE_MS / 1000,
+    });
+  });
+
+  it('degrades when a delivery has been pending past the threshold (#130)', async () => {
+    await seedCursor(1000);
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 1000 } as never);
+    const maxAgeSeconds = env.READY_WEBHOOK_MAX_AGE_MS / 1000;
+    await queueDelivery((maxAgeSeconds + 60) * 1000);
+
+    const { status, body } = await get('/ready');
+    expect(status).toBe(503);
+    expect(body.status).toBe('degraded');
+    expect(body.checks.webhooks.state).toBe('backlog');
+    expect(body.checks.webhooks.pending).toBe(1);
+    expect(body.checks.webhooks.oldestPendingAgeSeconds).toBeGreaterThanOrEqual(maxAgeSeconds);
+  });
+
+  it('counts abandoned deliveries separately from the pending backlog (#130)', async () => {
+    await seedCursor(1000);
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 1000 } as never);
+    await prisma.webhookDelivery.create({
+      data: {
+        id: randomUUID(),
+        url: 'https://clinic.example.test/webhooks',
+        event: 'voucher_settled',
+        voucherId: '1',
+        status: 'Settled',
+        ledger: 1,
+        payload: '{}',
+        nextAttemptAt: new Date(),
+        attempts: 6,
+        abandonedAt: new Date(),
+        lastError: 'HTTP 500',
+      },
+    });
+
+    const { status, body } = await get('/ready');
+    // An abandoned delivery is already counted where it matters; it is not
+    // pending, so it does not change readiness on its own.
+    expect(status).toBe(200);
+    expect(body.checks.webhooks).toMatchObject({ state: 'ok', pending: 0, abandoned: 1 });
+    expect(body.checks.webhooks.oldestPendingAgeSeconds).toBeNull();
   });
 
   it('is degraded one ledger past the threshold', async () => {
@@ -937,6 +1025,10 @@ describe('GET /providers/:address/stats', () => {
 });
 
 describe('GET /stats/daily', () => {
+  beforeEach(async () => {
+    await backfillDailyStats();
+  });
+
   const sum = (body: { series: Array<Record<string, { count: number; amount: string }>> }, key: string) =>
     body.series.reduce(
       (acc, row) => {
@@ -996,6 +1088,7 @@ describe('GET /stats/daily', () => {
         refundedAt,
       },
     });
+    await backfillDailyStats();
 
     const { body } = await get('/stats/daily?days=7');
     const day = body.series.find(
@@ -1176,6 +1269,64 @@ describe('GET /vouchers sort', () => {
     expect(body.total).toBe(5);
   });
 
+  it('sorts and bands amounts across the whole i128 range (#96)', async () => {
+    const now = Date.now();
+    const huge = '170141183460469231731687303715884105727';
+    await prisma.voucher.create({
+      data: {
+        id: 'huge',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: huge,
+        status: 'Funded',
+        createdAt: new Date(now - DAY),
+        expiresAt: new Date(now + 10 * DAY),
+      },
+    });
+    // Every write through the shared client fills the sortable key.
+    const row = await prisma.voucher.findUnique({ where: { id: 'huge' } });
+    expect(row?.amountKey).toBe(huge);
+
+    const desc = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=desc&limit=2`);
+    expect(desc.body.total).toBe(6);
+    expect(desc.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['huge', '3']);
+
+    const top = await get(`/vouchers?funder=${FUNDER}&minAmount=${huge}`);
+    expect(top.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['huge']);
+
+    // Leading zeros are the same number.
+    const padded = await get(`/vouchers?funder=${FUNDER}&minAmount=00050000000`);
+    expect(padded.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['huge', '3']);
+
+    // A bound wider than any i128 compares as a number would.
+    const wide = '1' + '0'.repeat(40);
+    expect((await get(`/vouchers?funder=${FUNDER}&minAmount=${wide}`)).body.total).toBe(0);
+    expect((await get(`/vouchers?funder=${FUNDER}&maxAmount=${wide}`)).body.total).toBe(6);
+  });
+
+  it('orders by the stored amount key, in the database (#96)', async () => {
+    // Plant a key out of step with its amount. Only a database sort on
+    // `amountKey` puts voucher 2 (the cheapest) first; an in-memory sort on
+    // `amount` would not.
+    await prisma.voucher.updateMany({ where: { id: '2' }, data: { amountKey: '9'.repeat(39) } });
+    const { body } = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=desc&limit=1`);
+    expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual(['2']);
+    expect(body.total).toBe(5);
+  });
+
+  it('keeps an amount band on the cursor walk', async () => {
+    const { body: page1 } = await get(`/vouchers?funder=${FUNDER}&minAmount=30000000&limit=2`);
+    expect(page1.vouchers.map((v: { id: string }) => v.id)).toEqual(['5', '4']);
+    const cursor = encodeCursor(new Date(page1.vouchers[1].createdAt), page1.vouchers[1].id);
+    const { body: page2 } = await get(
+      `/vouchers?funder=${FUNDER}&minAmount=30000000&limit=2&cursor=${cursor}`,
+    );
+    expect(page2.vouchers.map((v: { id: string }) => v.id)).toEqual(['1', '3']);
+    expect(page2.nextCursor).toBeNull();
+  });
+
   it('rejects an unknown sort or order', async () => {
     expect((await get(`/vouchers?funder=${FUNDER}&sort=price`)).status).toBe(400);
     expect((await get(`/vouchers?funder=${FUNDER}&order=up`)).status).toBe(400);
@@ -1222,7 +1373,7 @@ describe('GET /vouchers.csv', () => {
   });
 
   it('escapes commas, quotes and line breaks in cells', async () => {
-    const tricky = 'G'.repeat(56);
+    const tricky = 'GD456OLJUTPFVB7GK5TQJ7MQZ3LRGAEL74VIH6BLVE4TATDASHO3SSUO';
     await prisma.provider.create({
       data: {
         address: tricky,
@@ -1316,6 +1467,106 @@ describe('GET /vouchers/:id', () => {
   });
 });
 
+describe('?include=receipt,provider (#167)', () => {
+  it('embeds the receipt GET /receipts/:voucherId serves, null before settlement', async () => {
+    const { status, body } = await get(`/vouchers?funder=${FUNDER}&include=receipt`);
+    expect(status).toBe(200);
+
+    // The acceptance criterion: the embedded object is the separate
+    // endpoint's response, not a second hand-built shape.
+    const settled = body.vouchers.find((v: { id: string }) => v.id === '1');
+    const separate = await get('/receipts/1');
+    expect(settled.receipt).toEqual(separate.body);
+
+    const unsettled = body.vouchers.find((v: { id: string }) => v.id === '2');
+    expect(unsettled.receipt).toBeNull();
+  });
+
+  it('embeds the provider GET /providers/:address serves', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&include=provider&limit=1`);
+    const voucher = body.vouchers[0];
+    const separate = await get(`/providers/${voucher.provider.address}`);
+    expect(voucher.provider).toEqual(separate.body);
+  });
+
+  it('embeds both together', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&include=receipt,provider`);
+    const voucher = body.vouchers.find((v: { id: string }) => v.id === '1');
+    expect(voucher.receipt).toEqual((await get('/receipts/1')).body);
+    expect(voucher.provider).toEqual((await get(`/providers/${CLINIC}`)).body);
+  });
+
+  it('leaves the default response unchanged when nothing is included', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&limit=1`);
+    expect(body.vouchers[0]).not.toHaveProperty('receipt');
+    expect(Object.keys(body.vouchers[0].provider).sort()).toEqual(['address', 'country', 'name']);
+  });
+
+  it('treats an empty include as no embedding, like an empty fields', async () => {
+    const { body } = await get(`/vouchers?funder=${FUNDER}&limit=1&include=`);
+    expect(body.vouchers[0]).not.toHaveProperty('receipt');
+  });
+
+  it('rejects an unknown include on the list route', async () => {
+    const { status, body } = await get(`/vouchers?funder=${FUNDER}&include=receipt,nope`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('applies to GET /vouchers/:id, matching both separate endpoints', async () => {
+    const { body } = await get('/vouchers/1?include=receipt,provider');
+    expect(body.receipt).toEqual((await get('/receipts/1')).body);
+    expect(body.provider).toEqual((await get(`/providers/${CLINIC}`)).body);
+  });
+
+  it('keeps the stored receipt row on GET /vouchers/:id without include', async () => {
+    const { body } = await get('/vouchers/1');
+    expect(body.receipt).toMatchObject({ voucherId: '1', beneficiaryRef: REF });
+  });
+
+  it('rejects an unknown include on the detail route', async () => {
+    const { status } = await get('/vouchers/1?include=nope');
+    expect(status).toBe(400);
+  });
+
+  it('projects include alongside ?fields=', async () => {
+    const { body } = await get(
+      `/vouchers?funder=${FUNDER}&limit=1&include=receipt&fields=id,receipt`,
+    );
+    expect(Object.keys(body.vouchers[0]).sort()).toEqual(['id', 'receipt']);
+  });
+
+  it('embeds a page in a fixed number of queries, not one per row', async () => {
+    // `queryStats` counts the Prisma operations the request asks for
+    // (`src/db.ts`, test-only). An N+1 implementation would show one receipt
+    // lookup per voucher, so a five-row page would make five.
+    // Give every seeded voucher a receipt so both pages take the same code
+    // path; then the only difference between them is the row count.
+    await prisma.receipt.createMany({
+      data: ['2', '3', '4', '5'].map((voucherId) => ({
+        voucherId,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '1000000',
+        settledAt: new Date(),
+      })),
+    });
+
+    const beforeOne = queryStats.queries;
+    const single = await get(`/vouchers?funder=${FUNDER}&limit=1&include=receipt,provider`);
+    expect(single.body.vouchers).toHaveLength(1);
+    expect(single.body.vouchers[0].receipt).not.toBeNull();
+    const forOneRow = queryStats.queries - beforeOne;
+    expect(forOneRow).toBeGreaterThan(0);
+
+    const beforePage = queryStats.queries;
+    const page = await get(`/vouchers?funder=${FUNDER}&limit=5&include=receipt,provider`);
+    expect(page.body.vouchers).toHaveLength(5);
+    expect(queryStats.queries - beforePage).toBe(forOneRow);
+  });
+});
+
 describe('GET /vouchers/:id/events', () => {
   it('returns the event log in ledger order with transaction hashes', async () => {
     const { status, body } = await get('/vouchers/1/events');
@@ -1389,6 +1640,113 @@ describe('GET /attesters/:address', () => {
 
   it('404s an unknown attester', async () => {
     const { status, body } = await get(`/attesters/${FUNDER}`);
+    expect(status).toBe(404);
+    expect(body.error).toBe('attester_not_found');
+  });
+});
+
+describe('GET /attesters/:address/stats', () => {
+  it('counts attestations, later disputes and the median wait from claim (#169)', async () => {
+    const claimed = new Date(Date.now() - 10 * DAY);
+    const after = (hours: number) => new Date(claimed.getTime() + hours * 3_600_000);
+    const fixture = {
+      funder: FUNDER,
+      beneficiaryRef: REF,
+      providerAddress: CLINIC,
+      serviceCode: 101,
+      amount: '10000000',
+      createdAt: new Date(claimed.getTime() - DAY),
+      expiresAt: new Date(Date.now() + 20 * DAY),
+      claimedAt: claimed,
+      attestedBy: ATTESTER,
+    };
+    await prisma.voucher.createMany({
+      data: [
+        // Disputed, then resolved for the provider and settled: still counts.
+        {
+          ...fixture,
+          id: 'a1',
+          status: 'Settled',
+          attestedAt: after(1),
+          disputeReason: 3,
+          disputeOutcome: 'Provider',
+        },
+        // Disputed and open.
+        { ...fixture, id: 'a2', status: 'Disputed', attestedAt: after(3), disputeReason: 1 },
+        // Settled without a dispute.
+        { ...fixture, id: 'a3', status: 'Settled', attestedAt: after(8) },
+        // Another attester's dispute does not count here.
+        {
+          ...fixture,
+          id: 'a4',
+          status: 'Disputed',
+          attestedAt: after(2),
+          attestedBy: FORMER_ATTESTER,
+          disputeReason: 1,
+        },
+      ],
+    });
+
+    const { status, body } = await get(`/attesters/${ATTESTER}/stats`);
+    expect(status).toBe(200);
+    // Voucher 4 from the shared seed has no claimedAt, so it counts as an
+    // attestation but not towards the median: waits are 1h, 3h and 8h.
+    expect(body).toEqual({
+      address: ATTESTER,
+      active: true,
+      attestations: 4,
+      disputedAfterAttestation: 2,
+      medianSecondsFromClaim: 3 * 3600,
+    });
+
+    const former = await get(`/attesters/${FORMER_ATTESTER}/stats`);
+    expect(former.body).toMatchObject({
+      active: false,
+      attestations: 1,
+      disputedAfterAttestation: 1,
+      medianSecondsFromClaim: 2 * 3600,
+    });
+  });
+
+  it('reports a null median before any timed attestation', async () => {
+    const { body } = await get(`/attesters/${FORMER_ATTESTER}/stats`);
+    expect(body).toEqual({
+      address: FORMER_ATTESTER,
+      active: false,
+      attestations: 0,
+      disputedAfterAttestation: 0,
+      medianSecondsFromClaim: null,
+    });
+  });
+
+  it('averages the two middle waits for an even count', async () => {
+    const claimed = new Date(Date.now() - 5 * DAY);
+    await prisma.voucher.update({
+      where: { id: '4' },
+      data: { claimedAt: claimed, attestedAt: new Date(claimed.getTime() + 2 * 3_600_000) },
+    });
+    await prisma.voucher.create({
+      data: {
+        id: 'a5',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '10000000',
+        status: 'Attested',
+        createdAt: new Date(claimed.getTime() - DAY),
+        expiresAt: new Date(Date.now() + 20 * DAY),
+        claimedAt: claimed,
+        attestedAt: new Date(claimed.getTime() + 5 * 3_600_000),
+        attestedBy: ATTESTER,
+      },
+    });
+    const { body } = await get(`/attesters/${ATTESTER}/stats`);
+    expect(body.medianSecondsFromClaim).toBe(3.5 * 3600);
+  });
+
+  it('404s an unknown attester', async () => {
+    const { status, body } = await get(`/attesters/${FUNDER}/stats`);
     expect(status).toBe(404);
     expect(body.error).toBe('attester_not_found');
   });
@@ -2144,6 +2502,31 @@ describe('HTTP caching', () => {
   });
 });
 
+describe('Stellar address validation (#171)', () => {
+  // FUNDER with its last character changed: still 56 base32 characters,
+  // but the strkey checksum no longer matches.
+  const corrupted = FUNDER.slice(0, -1) + (FUNDER.endsWith('A') ? 'B' : 'A');
+
+  it('rejects an address with a bad checksum on every filter that takes one', async () => {
+    for (const url of [
+      `/vouchers?funder=${corrupted}`,
+      `/vouchers?provider=${corrupted}`,
+      `/vouchers/due?funder=${corrupted}&within=72h`,
+      `/receipts?provider=${corrupted}`,
+    ]) {
+      const { status, body } = await get(url);
+      expect(status, url).toBe(400);
+      expect(body.error, url).toBe('invalid_query');
+      expect(JSON.stringify(body.details), url).toContain('must be a valid Stellar account address');
+    }
+    expect((await getCsv(`/vouchers.csv?funder=${corrupted}`)).status).toBe(400);
+  });
+
+  it('still accepts a valid address', async () => {
+    expect((await get(`/vouchers?funder=${FUNDER}`)).status).toBe(200);
+  });
+});
+
 describe('query parameter length limits', () => {
   it('rejects an over-long q parameter in /providers', async () => {
     const longQ = 'a'.repeat(65);
@@ -2185,5 +2568,28 @@ describe('query parameter length limits', () => {
     const { status, body } = await get(`/receipts?beneficiaryRef=${longRef}`);
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_query');
+  });
+});
+
+describe('GET /stats/services', () => {
+  it('ranks service codes by settled value, highest first', async () => {
+    const { status, body } = await get('/stats/services');
+    expect(status).toBe(200);
+    expect(Array.isArray(body.services)).toBe(true);
+    const values = body.services.map((s: { value: string }) => BigInt(s.value));
+    for (let i = 1; i < values.length; i += 1) {
+      expect(values[i - 1]! >= values[i]!).toBe(true);
+    }
+  });
+
+  it('reports count and value per service code and label', async () => {
+    const { body } = await get('/stats/services?limit=2');
+    expect(body.services.length).toBeLessThanOrEqual(2);
+    for (const s of body.services) {
+      expect(s).toHaveProperty('serviceCode');
+      expect(s).toHaveProperty('label');
+      expect(s).toHaveProperty('count');
+      expect(s).toHaveProperty('value');
+    }
   });
 });

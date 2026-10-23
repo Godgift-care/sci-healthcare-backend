@@ -96,26 +96,49 @@ Errors all use one envelope, whatever layer rejected the request:
 `details` is present only when there is something structured to add (for
 example the Zod issues for a bad query). Error codes: `invalid_query`,
 `filter_required`, `invalid_code`, `provider_not_found`, `service_not_found`,
-`voucher_not_found`, `receipt_not_found`, `route_not_found`, `rate_limited`,
-`stream_full`, `bad_request`, `internal_error`. A 5xx is always `internal_error`; the cause
-stays in the log, never in the response.
+`voucher_not_found`, `receipt_not_found`, `route_not_found`, `method_not_allowed`,
+`rate_limited`, `stream_full`, `bad_request`, `internal_error`, `database_unavailable`.
+Any other 5xx is `internal_error`; the cause stays in the log, never in the response.
+
+When the database cannot be reached at all — the server is down, the connection pool is
+exhausted, a query timed out — the API answers `503 database_unavailable` with a
+`Retry-After` header instead of a bare `500`, so a client can tell "try again in a few
+seconds" from "this is broken" and back off for the right amount of time:
+
+```json
+{ "error": "database_unavailable", "message": "Database is unavailable, retry in 5 seconds" }
+```
+
+The API is read-only, so a known path called with another verb answers
+`405` with an `Allow` header listing the methods that do work there:
+
+```json
+{ "error": "method_not_allowed", "message": "Method POST not allowed for /vouchers; allowed: GET, HEAD" }
+```
+
+A path that does not exist stays a `404`, whatever the method.
+
+The `message` is human-readable and is localised: send `Accept-Language` (`fr`, `sw`, or a
+regional form such as `fr-CA`) and it is translated, falling back to English for anything
+unsupported or absent. `error` is the machine-readable code, is never translated, and is what
+to switch on — never `message`. English is unchanged from earlier releases.
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Liveness |
-| `GET /ready` | Readiness; 503 once the indexer trails by more than `READY_MAX_LAG_LEDGERS` |
+| `GET /ready` | Readiness; 503 once the indexer trails by more than `READY_MAX_LAG_LEDGERS`, a failed event is dead-lettered, or a webhook delivery is stuck in the outbox |
 | `GET /version` | Build version and commit, network, RPC endpoints, contract ids, indexer start ledger and process start time |
 | `GET /stats` | Protocol counters for the dashboard |
 | `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day (`days` 1–365, max 365) |
-| `GET /providers` | Verified clinics, filterable by `status`, `country`, `q` |
-| `GET /providers/:address` | One clinic and its service catalogue |
+| `GET /providers` | Verified clinics, filterable by `status`, `country`, `q`; each carries the clinic's cached off-chain `metadata` (`null` until fetched) |
+| `GET /providers/:address` | One clinic and its service catalogue, plus its cached off-chain `metadata` |
 | `GET /providers/:address/stats` | A clinic's vouchers by status, total settled value, and median claim/attestation times |
 | `GET /providers/:address/history` | Every status transition for a clinic, oldest first |
 | `GET /providers/:address/services/:code/history` | Every observed price for a service, oldest first |
 | `GET /attesters` | Attesters trusted to confirm care; `?all=true` includes removed ones |
 | `GET /attesters/:address` | One attester with its attestation count |
-| `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status` |
-| `GET /vouchers/:id` | One voucher, with its care receipt if settled, attester and dispute outcome |
+| `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status`; `?include=receipt,provider` embeds related records |
+| `GET /vouchers/:id` | One voucher, with its care receipt if settled, attester and dispute outcome; `?include=receipt,provider` embeds the canonical forms |
 | `GET /vouchers/:id/events` | Every contract event for a voucher, oldest first, with transaction hashes |
 | `GET /receipts?beneficiaryRef=` | A patient's settled care history |
 | `GET /countries` | Countries with at least one active clinic and their clinic counts |
@@ -129,8 +152,23 @@ stays in the log, never in the response.
 | `GET /receipts/:voucherId` | One receipt, for a shareable receipt page |
 | `GET /governance` | Current and pending admin per contract, plus the handover history |
 | `GET /stream` | Live voucher state transitions as the indexer commits them (server-sent events) |
+| `GET /feed.xml` | The latest settled vouchers and newly verified clinics as an Atom 1.0 feed, for feed readers; 20 entries at most, and no patient references |
 
 `GET /vouchers` **requires at least one filter**. An unfiltered dump of every voucher is not a useful endpoint and invites scraping. It accepts `sort=createdAt|expiresAt|amount` and `order=asc|desc` (defaults: `createdAt`, `desc`). Amounts are compared with `BigInt`, so `amount` sorting is numeric rather than lexicographic.
+
+`GET /vouchers` and `GET /vouchers/:id` also accept `?include=receipt,provider`,
+so a mobile page renders a voucher's receipt and clinic without one request per
+row. `receipt` is the same object `GET /receipts/:voucherId` returns (`null` for
+a voucher that has not settled); on `GET /vouchers/:id`, which already carries
+the stored receipt row, asking for it returns this canonical shape instead.
+`provider` is the same object `GET /providers/:address` returns — `status`,
+`registeredAt`, the cached `metadata` and the whole service catalogue — in place
+of the `address`/`name`/`country` summary the routes serve by default. Both are
+fetched for the entire page in a fixed number of queries (one `Receipt` and one
+`Provider` batch, each with its own batched lookups), never one per row. An
+unrequested or empty `include` changes nothing, an unknown name is a
+`400 invalid_query`, and `?fields=` still projects the top-level keys, so
+`?fields=id,receipt&include=receipt` is a valid request.
 
 `GET /vouchers.csv` takes the same `funder`, `provider`, `beneficiaryRef` and
 `status` filters (and also requires at least one). Rows are read in batches
@@ -173,16 +211,29 @@ indexer and the streams have to share a process, the feed is live in combined
 mode; in a split deployment an API-only process has nothing to subscribe to and
 its streams only beat (see "Running the indexer and the API separately").
 
+`GET /feed.xml` (also `/v1/feed.xml`) is the same activity for a feed reader
+rather than a browser: an Atom 1.0 document of at most 20 entries, newest first,
+made of settled vouchers — from the `Receipt` the chain minted, so the date is
+the settlement rather than the row's last write — and clinics whose status
+became `Active`, so a suspension never reads as a verification. Each entry links
+to the JSON route that proves it (`/v1/vouchers/<id>`). It is the one route that
+must never carry a beneficiary reference, because third-party readers poll,
+cache and syndicate it beyond anyone's control, so it reads receipts through the
+same serialiser `GET /receipts/:voucherId` uses. Clinic names come from the
+on-chain registry and are XML-escaped on the way out.
+
 ### Response behaviour
 
-List routes (`/vouchers`, `/vouchers/due`, `/providers`, `/receipts`) are limited to 30 requests
+List routes (`/vouchers`, `/vouchers/due`, `/providers`, `/receipts`) and
+`/feed.xml` — which scans the same read model — are limited to 30 requests
 per minute per client; other routes default to 120, while `/health` and `/ready`
 are exempt so a struggling service can always be probed. JSON above 1 KB is
 gzip-compressed when the client accepts it, and every response carries the
 standard `@fastify/helmet` security headers (no CSP — this API serves JSON, not
 HTML).
 
-List and detail routes are cacheable for a short window. They send
+List and detail routes are cacheable for a short window, as is `/feed.xml` so a
+reader that polls every minute costs one read per five seconds. They send
 `Cache-Control: public, max-age=5, stale-while-revalidate=30` and a weak `ETag`
 derived from the indexer's last ledger and the exact request URL, so a reload
 with a matching `If-None-Match` gets `304 Not Modified` without the API touching
@@ -249,6 +300,19 @@ sci vouchers --funder GDUP... --json | jq -r '.vouchers[].id'   # table or JSON 
   ```
 
 #### 2. Healthcare Providers
+
+Both provider responses carry a `metadata` object: the clinic's off-chain document (hours, phone, location), fetched once by the indexer, validated, and cached in the read model rather than re-fetched by every client. `metadata` is `null` until a document has been fetched. The pointer is a URI a clinic publishes on chain (contracts #10), so the document follows the schema below; anything else is ignored with the reason logged.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | string | Optional; ≤200 chars |
+| `address` | string | Optional; ≤300 chars |
+| `location` | `{ lat, lng }` | Optional; bounded to valid coordinates. Accepted from `location` or `geo` in the source document, served as `location` |
+| `hours` | string or object | Optional; a summary string or a per-day object |
+| `phone` | string | Optional; ≤50 chars |
+| `languages` | string[] | Optional; ≤20 entries |
+
+The fetch is fenced in: http(s) only, a 5s timeout, a 64KB cap counted off the stream (a declared `content-length` is checked first, not trusted), JSON only. A document that is invalid, oversized, unreachable or non-JSON is ignored with the reason logged and never fails the cycle; a failed refresh keeps the previously cached document.
 - **`GET /v1/providers`**: List registered clinics with active services, filtered by status, country, or name search.
   ```bash
   curl "http://localhost:8080/v1/providers?status=Active&country=NG&limit=10"
@@ -263,6 +327,14 @@ sci vouchers --funder GDUP... --json | jq -r '.vouchers[].id'   # table or JSON 
         "country": "NG",
         "status": "Active",
         "registeredAt": "2026-09-01T08:00:00.000Z",
+        "metadata": {
+          "name": "Ikeja General Clinic",
+          "address": "12 Allen Avenue, Ikeja, Lagos",
+          "location": { "lat": 6.5244, "lng": 3.3792 },
+          "hours": { "mon": "08:00-17:00", "tue": "08:00-17:00" },
+          "phone": "+2348012345678",
+          "languages": ["en", "yo"]
+        },
         "services": [
           { "code": 101, "label": "Outpatient consult", "price": "30000000", "priceDisplay": "3.0000000" }
         ]
@@ -280,6 +352,14 @@ sci vouchers --funder GDUP... --json | jq -r '.vouchers[].id'   # table or JSON 
     "name": "Ikeja General Clinic",
     "country": "NG",
     "status": "Active",
+    "metadata": {
+      "name": "Ikeja General Clinic",
+      "address": "12 Allen Avenue, Ikeja, Lagos",
+      "location": { "lat": 6.5244, "lng": 3.3792 },
+      "hours": { "mon": "08:00-17:00", "tue": "08:00-17:00" },
+      "phone": "+2348012345678",
+      "languages": ["en", "yo"]
+    },
     "services": [
       { "code": 101, "label": "Outpatient consult", "price": "30000000", "priceDisplay": "3.0000000" }
     ]
@@ -522,6 +602,29 @@ sci vouchers --funder GDUP... --json | jq -r '.vouchers[].id'   # table or JSON 
   data: {"id":"1","status":"Redeemed","updatedAt":"2026-09-02T14:30:00.000Z"}
   ```
 
+#### 8. Atom Feed
+- **`GET /v1/feed.xml`**: The latest protocol activity for a feed reader — settled vouchers and newly verified clinics, newest first, 20 at most. No beneficiary reference appears anywhere in the document.
+  ```bash
+  curl -H "Accept: application/atom+xml" http://localhost:8080/v1/feed.xml
+  ```
+  ```xml
+  <?xml version="1.0" encoding="utf-8"?>
+  <feed xmlns="http://www.w3.org/2005/Atom">
+    <id>urn:sci-healthcare:activity</id>
+    <title>SCI Healthcare protocol activity</title>
+    <updated>2026-10-21T09:00:00.000Z</updated>
+    <link rel="self" type="application/atom+xml" href="/v1/feed.xml"/>
+    <author><name>SCI Healthcare</name></author>
+    <entry>
+      <title>Voucher 12 settled at Kigali Care Centre</title>
+      <link rel="alternate" type="application/json" href="/v1/vouchers/12"/>
+      <id>urn:sci-healthcare:voucher-settled:12</id>
+      <updated>2026-10-21T09:00:00.000Z</updated>
+      <content type="text">Care voucher 12 settled at Kigali Care Centre, Antenatal visit for 30000000 base units (3.0000000).</content>
+    </entry>
+  </feed>
+  ```
+
 Amounts are `i128` on chain and are returned as **decimal strings**. Parsing one into a JavaScript number loses precision above 2^53 — use `BigInt`.
 
 `GET /stats/daily` returns one row per UTC day, oldest first, and includes days
@@ -616,6 +719,16 @@ abandons the row on the spot: a 404 will not become a 204 by waiting.
   nothing is re-sent once `deliveredAt` or `abandonedAt` is set. There is no
   replay command, so a receiver that lost deliveries should read the state
   from the API (for example `GET /vouchers/:id/events`) rather than wait.
+A backlog is visible instead of silent. `GET /ready` reports
+`checks.webhooks` — `state` (`ok`, `backlog` or `disabled`), `pending`,
+`abandoned`, `oldestPendingAgeSeconds` and `maxPendingAgeSeconds` — and
+answers 503 once a delivery has been pending longer than
+`READY_WEBHOOK_MAX_AGE_MS` (default fifteen minutes), because a healthy loop
+drains every retry far sooner than that. `/metrics` exposes the same counts
+as `webhook_deliveries_pending` and `webhook_deliveries_abandoned`, which is
+what the `SciWebhookBacklog` rule in `ops/alerts.yml` watches. Abandoned
+rows are never retried: those clinics missed those events, which is why the
+count is reported separately rather than folded into the log.
 
 Each request is `POST` with a JSON body and an `X-SCI-Signature` header holding
 the hex HMAC-SHA256 of the **raw request body** under `WEBHOOK_SECRET`:
@@ -703,7 +816,10 @@ this table and the schema drift apart.
 | `LOG_LEVEL` | No | `info` | `info` | pino log level: `fatal`, `error`, `warn`, `info`, `debug` or `trace` |
 | `CORS_ORIGIN` | No | `http://localhost:3000` | `https://sci-healthcare.vercel.app` | Comma-separated origins allowed to call the API |
 | `READY_MAX_LAG_LEDGERS` | No | `120` | `120` | Indexer lag in ledgers at which `/ready` reports degraded (503) |
+| `READY_WEBHOOK_MAX_AGE_MS` | No | `900000` | `900000` | Age at which a pending webhook delivery makes `/ready` report a backlog and answer 503 |
 | `DATABASE_URL` | Yes | — | `file:./dev.db` | Database connection string. SQLite paths resolve **relative to `prisma/`**; production uses a Postgres URL |
+| `DATABASE_POOL_SIZE` | No | — | `5` | Maximum Postgres connection pool size; applied via `connection_limit` parameter on Postgres URLs, ignored on SQLite |
+| `DATABASE_STATEMENT_TIMEOUT_MS` | No | — | `10000` | Maximum Postgres query execution time in milliseconds; applied via `statement_timeout` parameter on Postgres URLs, ignored on SQLite |
 | `STELLAR_NETWORK` | No | `testnet` | `testnet` | Stellar network: `testnet`, `public` or `futurenet` |
 | `SOROBAN_RPC_URL` | No | — | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint (used when `SOROBAN_RPC_URLS` is unset) |
 | `SOROBAN_RPC_URLS` | No | — | `https://rpc-a.example,https://rpc-b.example` | Comma-separated endpoints, tried in order on repeated failure |
@@ -727,6 +843,8 @@ this table and the schema drift apart.
 Set `INDEXER_START_LEDGER` to the deployment ledger. Leaving it at `0` starts at the current tip and silently skips all prior history. Soroban RPC also only retains a rolling window of ledgers (about 7 days on testnet) — an indexer that falls further behind than the window cannot catch up, and `/ready` will say so rather than pretend otherwise.
 
 `READY_MAX_LAG_LEDGERS` (default `120`, about ten minutes at five seconds a ledger) is where `/ready` flips from 200 to 503. A free-tier demo can tolerate a much larger window than production, so tune it per deployment. `GET /ready` echoes it as `checks.maxLagLedgers`.
+
+`READY_WEBHOOK_MAX_AGE_MS` (default `900000`, fifteen minutes) is the same idea for the webhook outbox: a delivery that has been pending longer than that makes `/ready` answer 503 with `checks.webhooks.state: "backlog"`. Every retry of a reachable endpoint resolves inside the backoff ceiling (six attempts within a few minutes), so an older row means the delivery loop is not draining, not that a clinic's endpoint is slow. With `WEBHOOK_URLS` unset the check reports `state: "disabled"` and never degrades.
 
 `SOROBAN_RPC_URLS` is the failover list. Set it to two endpoints and an outage at the first one costs a few failed reads rather than an indexing stall; with one endpoint (or only `SOROBAN_RPC_URL` set) the behaviour is exactly as before. `GET /version` reports every configured endpoint and `GET /ready` reports the active one, both with any credentials redacted.
 
@@ -850,10 +968,15 @@ A new, empty database needs nothing special.
 
 ## Operations
 
-- **Metrics**: `GET /metrics` is Prometheus text (not rate limited). `ops/grafana-dashboard.json` is a ready-made Grafana dashboard (import it, pick your Prometheus datasource) with panels for request rate, latency, error rate, indexer lag, seconds since the last successful poll and events applied/skipped; a test keeps it in sync with `src/lib/metrics.ts`. Alert on `indexer_lag_ledgers` and `indexer_seconds_since_success`; both are set by the process running the indexer. `stream_connections` is the number of `GET /stream` clients this process is holding, so `rate-limited`-looking `503 stream_full` responses can be seen before they happen; it only moves in the process that serves the streams (combined mode, or the API in a split deployment).
+- **Metrics**: `GET /metrics` is Prometheus text (not rate limited). `ops/grafana-dashboard.json` is a ready-made Grafana dashboard (import it, pick your Prometheus datasource) with panels for request rate, latency, error rate, indexer lag, seconds since the last successful poll, events applied/skipped and the webhook backlog; a test keeps it in sync with `src/lib/metrics.ts`. Alert on `indexer_lag_ledgers` and `indexer_seconds_since_success`; both are set by the process running the indexer. `stream_connections` is the number of `GET /stream` clients this process is holding, so `rate-limited`-looking `503 stream_full` responses can be seen before they happen; it only moves in the process that serves the streams (combined mode, or the API in a split deployment). `webhook_deliveries_pending` and `webhook_deliveries_abandoned` are the outbox backlog, refreshed by the process running the delivery loop, and are the series `/ready` reports as `checks.webhooks`.
+- **Alerts**: `ops/alerts.yml` holds the Prometheus rules that should page someone — indexer lag past `READY_MAX_LAG_LEDGERS`, an indexer that has not completed a poll in five minutes, failed projections, a 5xx rate above 5%, and a webhook backlog that never drains. Load it with `rule_files:` in Prometheus (or as a `PrometheusRule`); CI validates it with `promtool check rules` in the `alerts` job, and `src/__tests__/alerts.test.ts` fails if a rule references a metric the service does not serve. Thresholds and what each alert means are commented in the file.
+- **Logs**: Render's log explorer keeps a short window, so incident forensics need a stream to somewhere searchable. See [docs/logging.md](docs/logging.md) for the fields worth indexing, the Better Stack and Axiom recipes, and an end-to-end check that one request is one line.
 - **Tracing**: with `OTEL_EXPORTER_OTLP_ENDPOINT` set, the OpenTelemetry SDK starts and emits spans for HTTP routes, Prisma queries, Soroban RPC calls and indexer cycles; unset means no tracing at all. See [Tracing (OpenTelemetry)](#tracing-opentelemetry).
+- **Dependency review**: `.github/workflows/dependency-review.yml` reviews the dependencies a pull request adds or bumps and fails it on a high or critical advisory. It complements the `audit` job, which runs `npm audit --omit=dev` over the whole lockfile; this one only looks at the diff, so a bad package is caught in the pull request that introduces it. It needs the repository's dependency graph, which a maintainer enables under **Settings → Code security and analysis → Dependency graph**; until then the job reports a warning naming that setting instead of failing every pull request, and starts reviewing as soon as it is on.
 - **Failed events**: an event the indexer cannot project is stored in the `FailedEvent` table and `/ready` reports degraded until it is cleared. After fixing the cause, run `npm run indexer:retry-failed`; it exits non-zero while any event still fails.
 - **Reconciliation**: the read model is a cache of the chain, so run `npm run indexer:reconcile` on a schedule. It reads `get_voucher` for every non-terminal voucher (plus a rolling sample of settled ones, `--sample`, default 25) and records each disagreement in `ReconcileMismatch`. `/ready` reports `checks.reconcileMismatches` and `checks.reconcile: "drift"`, but stays 200: unlike a failed event, drift says nothing about whether this instance can serve traffic. `--fix` rewrites the differing rows from chain state, which is the only safe direction. The command exits non-zero while any mismatch is open.
+
+  These maintenance commands run the compiled entry points (`node dist/scripts/…`), so run `npm run build` first in a production image — `tsx` is a dev dependency and is not installed there. To run one from source without building, use the `:dev` twin (`npm run indexer:reconcile:dev`, same flags after `--`).
 - **Faucet usage**: with `FAUCET_CONTRACT_ID` set, `dripped` events are indexed into `FaucetDrip` and `/stats` reports `faucetDrips` (total) and `faucetWallets` (distinct wallets) — the closest thing to a count of people who tried the demo.
 
 ## Contributing

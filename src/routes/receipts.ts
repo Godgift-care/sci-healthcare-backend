@@ -8,7 +8,9 @@ import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/curs
 import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { providerSummaries, type ProviderSummary } from '../lib/providers.js';
-import { serviceKey, serviceLabels } from '../lib/services.js';
+import { serialiseReceipt } from '../lib/receipts.js';
+import { serviceLabels } from '../lib/services.js';
+import { accountAddress } from '../lib/stellar-address.js';
 
 const listQuery = z
   .object({
@@ -17,7 +19,7 @@ const listQuery = z
       .max(64)
       .refine(isValidRef, 'must be 64 hex characters')
       .optional(),
-    provider: z.string().length(56).optional(),
+    provider: accountAddress.optional(),
     cursor: cursorParam,
     limit: limitParam,
     offset: z.coerce.number().int().min(0).default(0),
@@ -91,25 +93,10 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       labels: Map<string, string>,
       clinics: Map<string, ProviderSummary>,
     ) => {
-      // The chain only records an address. The clinic row is what turns it
-      // into the name a patient recognises, resolved for the whole page in
-      // one query by `providerSummaries` rather than row by row. A clinic the
-      // indexer never saw registered keeps its address and reports the name
-      // and country as unknown rather than guessed.
-      const clinic = clinics.get(r.providerAddress);
+      // Same shape the single-receipt endpoint and `?include=receipt` serve
+      // (#167); the patient view alone carries the beneficiary reference.
       return {
-        voucherId: r.voucherId,
-        providerAddress: r.providerAddress,
-        provider: {
-          address: r.providerAddress,
-          name: clinic?.name ?? null,
-          country: clinic?.country ?? null,
-        },
-        serviceCode: r.serviceCode,
-        serviceLabel: labels.get(serviceKey(r.providerAddress, r.serviceCode)) ?? null,
-        amount: r.amount,
-        amountDisplay: fromBaseUnits(r.amount),
-        settledAt: r.settledAt,
+        ...serialiseReceipt(r, labels, clinics),
         ...(isProviderView ? {} : { beneficiaryRef: r.beneficiaryRef }),
       };
     };
@@ -317,21 +304,8 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       providerSummaries([receipt]),
     ]);
     // The clinic behind the address, so a shareable receipt page can show
-    // where it was issued. `GET /vouchers/:id` already returns this shape.
-    const clinic = clinics.get(receipt.providerAddress);
-    return {
-      voucherId: receipt.voucherId,
-      providerAddress: receipt.providerAddress,
-      provider: {
-        address: receipt.providerAddress,
-        name: clinic?.name ?? null,
-        country: clinic?.country ?? null,
-      },
-      serviceCode: receipt.serviceCode,
-      serviceLabel: labels.get(serviceKey(receipt.providerAddress, receipt.serviceCode)) ?? null,
-      amount: receipt.amount,
-      amountDisplay: fromBaseUnits(receipt.amount),
-      settledAt: receipt.settledAt,
-    };
+    // where it was issued. `GET /vouchers/:id?include=receipt` returns this
+    // exact object, so the two endpoints cannot drift apart.
+    return serialiseReceipt(receipt, labels, clinics);
   });
 }

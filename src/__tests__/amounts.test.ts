@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { feeFor, fromBaseUnits, toBaseUnits } from '../lib/amounts.js';
+import { AMOUNT_KEY_WIDTH, amountKey, feeFor, fromBaseUnits, toBaseUnits } from '../lib/amounts.js';
 import { beneficiaryRef, isValidRef, refsMatch } from '../lib/beneficiary.js';
 
 describe('amounts', () => {
+  it('builds amount keys whose string order is numeric order', () => {
+    const max = '170141183460469231731687303715884105727';
+    const keys = ['10', '9', max, '0', '100'].map(amountKey);
+    expect(keys.every((k) => k.length === AMOUNT_KEY_WIDTH)).toBe(true);
+    expect([...keys].sort()).toEqual(['0', '9', '10', '100', max].map(amountKey));
+  });
+
   it('converts display amounts to base units', () => {
     expect(toBaseUnits('3')).toBe('30000000');
     expect(toBaseUnits('3.00')).toBe('30000000');

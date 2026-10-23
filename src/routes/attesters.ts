@@ -53,6 +53,53 @@ async function attestationCounts(addresses: string[]): Promise<Map<string, numbe
   return counts;
 }
 
+/** Middle value of a sorted list; the mean of the two middle values when even. */
+function median(sorted: number[]): number | null {
+  if (sorted.length === 0) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/**
+ * How an attester's confirmations have held up (#169).
+ *
+ * A voucher can only be disputed once it is attested, so every disputed
+ * voucher an attester signed counts as disputed after attestation. That
+ * includes disputes since resolved either way: `disputeReason` stays set
+ * when the voucher moves on to Settled or Refunded.
+ *
+ * Only the two timestamps are read per voucher. An attester signs a bounded
+ * share of vouchers, and SQLite has no portable median, so the median is
+ * taken here rather than in SQL.
+ */
+async function attesterStats(address: string) {
+  const attested = { attestedBy: address };
+  const [attestations, disputedAfterAttestation, timed] = await Promise.all([
+    prisma.voucher.count({ where: attested }),
+    prisma.voucher.count({
+      where: {
+        ...attested,
+        OR: [{ status: 'Disputed' }, { disputeReason: { not: null } }, { disputeOutcome: { not: null } }],
+      },
+    }),
+    prisma.voucher.findMany({
+      where: { ...attested, claimedAt: { not: null }, attestedAt: { not: null } },
+      select: { claimedAt: true, attestedAt: true },
+    }),
+  ]);
+
+  const waits = timed
+    .map((v) => (v.attestedAt!.getTime() - v.claimedAt!.getTime()) / 1000)
+    .sort((a, b) => a - b);
+  const med = median(waits);
+
+  return {
+    attestations,
+    disputedAfterAttestation,
+    medianSecondsFromClaim: med === null ? null : Math.round(med),
+  };
+}
+
 /**
  * The attesters trusted to confirm care.
  *
@@ -95,5 +142,19 @@ export async function attesterRoutes(app: FastifyInstance): Promise<void> {
 
     const attestations = await prisma.voucher.count({ where: { attestedBy: address } });
     return serialise(attester, attestations);
+  });
+
+  /**
+   * Activity and dispute record for one attester (#169): how many vouchers
+   * it attested, how many of those were later disputed, and the median time
+   * from claim to attestation in seconds (`null` before any timed
+   * attestation). Lets a funder judge an attester before trusting it.
+   */
+  app.get('/attesters/:address/stats', async (req, reply) => {
+    const { address } = req.params as { address: string };
+    const attester = await prisma.attester.findUnique({ where: { address } });
+    if (!attester) return reply.code(404).send({ error: 'attester_not_found' });
+
+    return { address, active: attester.active, ...(await attesterStats(address)) };
   });
 }

@@ -10,6 +10,7 @@ import {
   subscribeVoucherSignals,
 } from '../lib/event-bus.js';
 import { ApiError } from '../lib/errors.js';
+import { accountAddress } from '../lib/stellar-address.js';
 
 /**
  * Live voucher updates over server-sent events (#50).
@@ -33,7 +34,7 @@ import { ApiError } from '../lib/errors.js';
 const streamQuery = z
   .object({
     voucher: z.string().min(1).max(64).optional(),
-    provider: z.string().length(56).optional(),
+    provider: accountAddress.optional(),
   })
   .refine((data) => Boolean(data.voucher) !== Boolean(data.provider), {
     message: 'Provide exactly one of: voucher, provider',

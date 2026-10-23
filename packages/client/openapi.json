@@ -42,7 +42,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, and database connectivity.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
         "responses": {
           "200": {
             "description": "Default Response"
@@ -307,6 +307,8 @@
     },
     "/v1/vouchers": {
       "get": {
+        "summary": "List vouchers, optionally embedding their receipt and clinic",
+        "description": "Accepts ?include=receipt,provider. `receipt` embeds the same object GET /receipts/{voucherId} serves (null before settlement); `provider` embeds the full clinic record GET /providers/{address} serves in place of the address/name/country summary. Both are read for the whole page in a fixed number of queries, never one per row.",
         "responses": {
           "200": {
             "description": "Default Response"
@@ -334,6 +336,8 @@
     },
     "/v1/vouchers/{id}": {
       "get": {
+        "summary": "One voucher, with its care receipt",
+        "description": "Accepts ?include=provider to embed the full clinic record GET /providers/{address} serves, and ?include=receipt to return the receipt in the canonical shape GET /receipts/{voucherId} serves instead of the stored row. Both are single batched lookups.",
         "parameters": [
           {
             "schema": {
@@ -426,6 +430,17 @@
         }
       }
     },
+    "/v1/feed.xml": {
+      "get": {
+        "summary": "Atom feed of protocol activity",
+        "description": "The most recent settled vouchers and newly verified clinics as an Atom 1.0 document, for feed readers. Public chain data only: no entry carries a beneficiary reference.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/governance": {
       "get": {
         "summary": "Admin history for each contract",
@@ -450,6 +465,25 @@
       }
     },
     "/v1/attesters/{address}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/attesters/{address}/stats": {
       "get": {
         "parameters": [
           {
@@ -515,7 +549,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, and database connectivity.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
         "responses": {
           "200": {
             "description": "Default Response"
@@ -780,6 +814,8 @@
     },
     "/vouchers": {
       "get": {
+        "summary": "List vouchers, optionally embedding their receipt and clinic",
+        "description": "Accepts ?include=receipt,provider. `receipt` embeds the same object GET /receipts/{voucherId} serves (null before settlement); `provider` embeds the full clinic record GET /providers/{address} serves in place of the address/name/country summary. Both are read for the whole page in a fixed number of queries, never one per row.",
         "responses": {
           "200": {
             "description": "Default Response"
@@ -807,6 +843,8 @@
     },
     "/vouchers/{id}": {
       "get": {
+        "summary": "One voucher, with its care receipt",
+        "description": "Accepts ?include=provider to embed the full clinic record GET /providers/{address} serves, and ?include=receipt to return the receipt in the canonical shape GET /receipts/{voucherId} serves instead of the stored row. Both are single batched lookups.",
         "parameters": [
           {
             "schema": {
@@ -899,6 +937,17 @@
         }
       }
     },
+    "/feed.xml": {
+      "get": {
+        "summary": "Atom feed of protocol activity",
+        "description": "The most recent settled vouchers and newly verified clinics as an Atom 1.0 document, for feed readers. Public chain data only: no entry carries a beneficiary reference.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/governance": {
       "get": {
         "summary": "Admin history for each contract",
@@ -923,6 +972,25 @@
       }
     },
     "/attesters/{address}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/attesters/{address}/stats": {
       "get": {
         "parameters": [
           {

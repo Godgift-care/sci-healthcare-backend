@@ -44,6 +44,10 @@ const CACHEABLE_ROUTES = new Set([
   '/receipts',
   '/receipts/summary',
   '/receipts/:voucherId',
+  // A feed is fetched on a timer by third-party readers, so it is the client
+  // most worth telling "nothing has happened yet" to. The document is a
+  // function of the cursor, so the usual validator serves it exactly.
+  '/feed.xml',
   '/governance',
   '/stats',
   '/version',

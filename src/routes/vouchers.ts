@@ -5,16 +5,19 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
-import { fromBaseUnits } from '../lib/amounts.js';
+import { AMOUNT_KEY_WIDTH, amountKey, fromBaseUnits } from '../lib/amounts.js';
 import { isValidRef } from '../lib/beneficiary.js';
-import { voucherSeq } from '../lib/voucher_seq.js';
+import { voucherSeq } from '../lib/voucher-seq.js';
 import { csvRow } from '../lib/csv.js';
 import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { isRefundable, isSettleable, refundableAt } from '../lib/lifecycle.js';
+import { providerDetails } from '../lib/providers.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { receiptsByVoucherId } from '../lib/receipts.js';
 import { serviceKey, serviceLabels } from '../lib/services.js';
+import { accountAddress } from '../lib/stellar-address.js';
 
 const STATUSES = [
   'Funded',
@@ -51,7 +54,29 @@ const VOUCHER_FIELDS = [
   'refundableAt',
   'isSettleable',
   'isRefundable',
+  // Only present with `?include=receipt` (#167).
+  'receipt',
 ] as const;
+
+/** Related records a voucher response can embed (#167). */
+type Include = 'receipt' | 'provider';
+
+const INCLUDABLE = ['receipt', 'provider'] as const;
+
+/**
+ * `?include=receipt,provider` — the related-record counterpart of `?fields=`.
+ *
+ * An empty value means "embed nothing", exactly as `?fields=` means "project
+ * nothing" — an unpassed or empty parameter leaves the response as it was
+ * before this feature. An unknown name is a 400, so a typo can never look
+ * like a successful empty embed.
+ */
+const includeParam = z
+  .string()
+  .max(64)
+  .transform((raw) => raw.split(',').map((name) => name.trim()).filter((name) => name !== ''))
+  .pipe(z.array(z.enum(INCLUDABLE)))
+  .optional();
 
 /** Amounts are i128 base units carried as decimal strings. */
 const BASE_UNITS = /^\d+$/;
@@ -63,8 +88,8 @@ const statusList = z
   .pipe(z.array(z.enum(STATUSES)).min(1));
 
 const listQuery = z.object({
-  funder: z.string().length(56).optional(),
-  provider: z.string().length(56).optional(),
+  funder: accountAddress.optional(),
+  provider: accountAddress.optional(),
   beneficiaryRef: z
     .string()
     .max(64)
@@ -89,6 +114,7 @@ const listQuery = z.object({
   limit: limitParam,
   offset: z.coerce.number().int().min(0).default(0),
   fields: z.string().max(512).optional(),
+  include: includeParam,
 })
   .refine(
     (q) => !q.createdFrom || !q.createdTo || Date.parse(q.createdFrom) <= Date.parse(q.createdTo),
@@ -101,8 +127,8 @@ const listQuery = z.object({
 
 /** The CSV export takes the filters but none of the paging or sort options. */
 const csvQuery = z.object({
-  funder: z.string().length(56).optional(),
-  provider: z.string().length(56).optional(),
+  funder: accountAddress.optional(),
+  provider: accountAddress.optional(),
   beneficiaryRef: z
     .string()
     .max(64)
@@ -153,9 +179,13 @@ function idOrder(order: 'asc' | 'desc'): Prisma.VoucherOrderByWithRelationInput[
   return [{ seq: { sort: order, nulls: 'last' } }, { id: order }];
 }
 
+const detailQuery = z.object({
+  include: includeParam,
+});
+
 const dueQuery = z.object({
-  funder: z.string().length(56).optional(),
-  provider: z.string().length(56).optional(),
+  funder: accountAddress.optional(),
+  provider: accountAddress.optional(),
   within: z
     .string()
     .max(16)
@@ -165,7 +195,21 @@ const dueQuery = z.object({
 export async function voucherRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/vouchers',
-    { config: { rateLimit: LIST_ROUTE_RATE_LIMIT } },
+    {
+      // Documented without a querystring schema: the filters are validated
+      // by `listQuery` in the handler, where a cross-field refinement
+      // (minAmount <= maxAmount) cannot be expressed as JSON Schema anyway.
+      schema: {
+        summary: 'List vouchers, optionally embedding their receipt and clinic',
+        description:
+          'Accepts ?include=receipt,provider. `receipt` embeds the same object ' +
+          'GET /receipts/{voucherId} serves (null before settlement); ' +
+          '`provider` embeds the full clinic record GET /providers/{address} ' +
+          'serves in place of the address/name/country summary. Both are read ' +
+          'for the whole page in a fixed number of queries, never one per row.',
+      },
+      config: { rateLimit: LIST_ROUTE_RATE_LIMIT },
+    },
     async (req) => {
       const parsed = listQuery.safeParse(req.query);
       if (!parsed.success) {
@@ -186,8 +230,10 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
         limit,
         offset,
         fields,
+        include,
       } = parsed.data;
 
+      const includes = new Set<Include>(include ?? []);
       const fieldSet = parseFields(fields, VOUCHER_FIELDS, 'GET /vouchers');
       const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
         fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
@@ -222,10 +268,15 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
               },
             }
           : {}),
+        ...(minAmount || maxAmount
+          ? {
+              amountKey: {
+                ...(minAmount ? { gte: amountBound(minAmount) } : {}),
+                ...(maxAmount ? { lte: amountBound(maxAmount) } : {}),
+              },
+            }
+          : {}),
       };
-
-      const min = minAmount === undefined ? null : BigInt(minAmount);
-      const max = maxAmount === undefined ? null : BigInt(maxAmount);
 
       if (cursor) {
         const decoded = decodeCursor(cursor);
@@ -268,40 +319,22 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
                 { createdAt: at, seq: null },
               ];
         const cursorWhere: Prisma.VoucherWhereInput = { ...where, OR: afterCursor };
-        const rows =
-          min === null && max === null
-            ? await prisma.voucher.findMany({
-                where: cursorWhere,
-                include: { provider: true },
-                orderBy: [{ createdAt: 'desc' }, ...idOrder('desc')],
-                take: limit + 1,
-              })
-            : (
-                await pageByAmount(
-                  cursorWhere,
-                  min,
-                  max,
-                  'createdAt',
-                  'desc',
-                  limit + 1,
-                  0,
-                )
-              ).rows;
+        const rows = await prisma.voucher.findMany({
+          where: cursorWhere,
+          include: { provider: true },
+          orderBy: [{ createdAt: 'desc' }, ...idOrder('desc')],
+          take: limit + 1,
+        });
         const hasNext = rows.length > limit;
         const page = hasNext ? rows.slice(0, limit) : rows;
-        const labels = await serviceLabels(page);
         const last = page[page.length - 1];
         const nextCursor = hasNext && last ? encodeCursor(last.createdAt, last.id) : null;
-        return { limit, nextCursor, vouchers: project(page.map((v) => serialise(v, labels))) };
+        return { limit, nextCursor, vouchers: project(await serialisePage(page, includes)) };
       }
 
-      const { rows, total } =
-        min === null && max === null && sort !== 'amount'
-          ? await pageByWhere(where, sort, order, limit, offset)
-          : await pageByAmount(where, min, max, sort, order, limit, offset);
+      const { rows, total } = await pageByWhere(where, sort, order, limit, offset);
 
-      const labels = await serviceLabels(rows);
-      return { total, limit, offset, vouchers: project(rows.map((v) => serialise(v, labels))) };
+      return { total, limit, offset, vouchers: project(await serialisePage(rows, includes)) };
     },
   );
 
@@ -389,20 +422,47 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/vouchers/:id', async (req) => {
-    const { id } = req.params as { id: string };
-    const v = await prisma.voucher.findUnique({
-      where: { id },
-      include: { provider: true },
-    });
-    if (!v) throw new ApiError(404, 'voucher_not_found', 'Voucher not found');
+  app.get(
+    '/vouchers/:id',
+    {
+      schema: {
+        summary: 'One voucher, with its care receipt',
+        description:
+          'Accepts ?include=provider to embed the full clinic record ' +
+          'GET /providers/{address} serves, and ?include=receipt to return the ' +
+          'receipt in the canonical shape GET /receipts/{voucherId} serves ' +
+          'instead of the stored row. Both are single batched lookups.',
+      },
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const parsed = detailQuery.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
+      }
+      const includes = new Set<Include>(parsed.data.include ?? []);
 
-    const [receipt, labels] = await Promise.all([
-      prisma.receipt.findUnique({ where: { voucherId: id } }),
-      serviceLabels([v]),
-    ]);
-    return { ...serialise(v, labels), receipt };
-  });
+      const v = await prisma.voucher.findUnique({
+        where: { id },
+        include: { provider: true },
+      });
+      if (!v) throw new ApiError(404, 'voucher_not_found', 'Voucher not found');
+
+      const [labels, providers, receipt] = await Promise.all([
+        serviceLabels([v]),
+        includes.has('provider') ? providerDetails([v]) : null,
+        includes.has('receipt')
+          ? receiptsByVoucherId([id]).then((receipts) => receipts.get(id) ?? null)
+          : prisma.receipt.findUnique({ where: { voucherId: id } }),
+      ]);
+
+      const summary = serialise(v, labels);
+      const base = providers
+        ? { ...summary, provider: providers.get(v.providerAddress) ?? summary.provider }
+        : summary;
+      return { ...base, receipt };
+    },
+  );
 
   /**
    * Every contract event for one voucher, oldest first, each with the
@@ -503,15 +563,24 @@ async function* voucherCsv(where: Prisma.VoucherWhereInput): AsyncGenerator<stri
   }
 }
 
-/** The common path: filter, count and page entirely in the database. */
+/**
+ * Filter, count and page entirely in the database. Amount sorts and bands use
+ * `amountKey`, the zero-padded amount, whose string order is numeric order
+ * (#96): `amount` itself is an i128 string, and "9" sorts after "10".
+ */
 async function pageByWhere(
   where: Prisma.VoucherWhereInput,
-  sort: 'createdAt' | 'expiresAt',
+  sort: 'createdAt' | 'expiresAt' | 'amount',
   order: 'asc' | 'desc',
   limit: number,
   offset: number,
 ): Promise<{ rows: Row[]; total: number }> {
-  const primary = sort === 'createdAt' ? { createdAt: order } : { expiresAt: order };
+  const primary =
+    sort === 'createdAt'
+      ? { createdAt: order }
+      : sort === 'expiresAt'
+        ? { expiresAt: order }
+        : { amountKey: order };
   const [rows, total] = await Promise.all([
     prisma.voucher.findMany({
       where,
@@ -528,46 +597,16 @@ async function pageByWhere(
 }
 
 /**
- * Amounts are i128 carried as strings, so the database cannot compare them
- * numerically — string ordering puts "9" after "10". Compare with BigInt
- * instead, then fetch only the requested page.
+ * A minAmount/maxAmount bound as an `amountKey`. A bound wider than any i128
+ * is clamped to all nines, which is above every stored key: as a minimum it
+ * matches nothing and as a maximum it matches everything, as it would
+ * numerically. Leading zeros are dropped first so `007` means 7.
  */
-async function pageByAmount(
-  where: Prisma.VoucherWhereInput,
-  min: bigint | null,
-  max: bigint | null,
-  sort: 'createdAt' | 'expiresAt' | 'amount',
-  order: 'asc' | 'desc',
-  limit: number,
-  offset: number,
-): Promise<{ rows: Row[]; total: number }> {
-  const candidates = await prisma.voucher.findMany({
-    where,
-    orderBy:
-      sort === 'amount'
-        ? { createdAt: 'desc' }
-        : [
-            sort === 'createdAt' ? { createdAt: order } : { expiresAt: order },
-            ...idOrder(order),
-          ],
-    select: { id: true, amount: true },
-  });
-
-  const matching = candidates.filter((c) => {
-    const amount = BigInt(c.amount);
-    return (min === null || amount >= min) && (max === null || amount <= max);
-  });
-  if (sort === 'amount') matching.sort((a, b) => compareAmount(a, b, order));
-
-  const ids = matching.slice(offset, offset + limit).map((c) => c.id);
-  if (ids.length === 0) return { rows: [], total: matching.length };
-
-  const rows = await prisma.voucher.findMany({
-    where: { id: { in: ids } },
-    include: { provider: true },
-  });
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  return { rows: ids.map((id) => byId.get(id)!), total: matching.length };
+function amountBound(base: string): string {
+  const canonical = BigInt(base).toString();
+  return canonical.length > AMOUNT_KEY_WIDTH
+    ? '9'.repeat(AMOUNT_KEY_WIDTH)
+    : amountKey(canonical);
 }
 
 function parseWithin(within: string, now: number): number {
@@ -587,17 +626,25 @@ function parseWithin(within: string, now: number): number {
   }
 }
 
-function compareAmount(
-  a: { id: string; amount: string },
-  b: { id: string; amount: string },
-  order: 'asc' | 'desc',
-): number {
-  const av = BigInt(a.amount);
-  const bv = BigInt(b.amount);
-  const sign = order === 'asc' ? 1 : -1;
-  if (av !== bv) return av < bv ? -sign : sign;
-  if (a.id === b.id) return 0;
-  return a.id < b.id ? -sign : sign;
+/** Serialises one page, resolving any requested related records in batches. */
+async function serialisePage(rows: Row[], includes: ReadonlySet<Include>) {
+  const labels = await serviceLabels(rows);
+  // One `Receipt` batch and one `Provider` batch for the whole page (each
+  // with its own single batched label/lookup query): the number of round
+  // trips does not grow with the page size (#167). A requested record that
+  // does not exist stays null rather than disappearing from the page.
+  const [receipts, providers] = await Promise.all([
+    includes.has('receipt') ? receiptsByVoucherId(rows.map((v) => v.id)) : null,
+    includes.has('provider') ? providerDetails(rows) : null,
+  ]);
+
+  return rows.map((v) => {
+    const summary = serialise(v, labels);
+    const base = providers
+      ? { ...summary, provider: providers.get(v.providerAddress) ?? summary.provider }
+      : summary;
+    return receipts ? { ...base, receipt: receipts.get(v.id) ?? null } : base;
+  });
 }
 
 type Row = {

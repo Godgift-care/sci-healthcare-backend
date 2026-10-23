@@ -2,8 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
-import { env } from '../env.js';
+import { env, WEBHOOKS_ENABLED } from '../env.js';
+import { lastIndexedLedger } from '../lib/cache.js';
 import { isPostgres } from '../lib/database.js';
+import { webhookBacklog } from '../lib/webhooks.js';
 import { APP_VERSION, deployedCommit, STARTED_AT } from '../lib/version.js';
 import { server } from '../stellar/client.js';
 
@@ -85,6 +87,29 @@ async function settledTotals(): Promise<SettledTotals> {
   };
 }
 
+type StatsResponse = {
+  providers: number;
+  activeProviders: number;
+  vouchers: number;
+  settledVouchers: number;
+  settledValue: string;
+  feesCollected: string;
+  receipts: number;
+  faucetDrips: number;
+  faucetWallets: number;
+};
+
+type CachedStats = {
+  ledger: number;
+  data: StatsResponse;
+};
+
+let statsCache: CachedStats | null = null;
+
+export function resetStatsCache(): void {
+  statsCache = null;
+}
+
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
   // The app-level onSend hook sends `Cache-Control: no-store` on this and
   // /ready; both are probed continuously and must reflect the current state.
@@ -152,7 +177,9 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
     schema: {
       tags: ['health'],
       summary: 'Readiness check',
-      description: 'Reports indexer lag, RPC retention gaps, and database connectivity.',
+      description:
+        'Reports indexer lag, RPC retention gaps, database connectivity, failed ' +
+        'events and the webhook outbox backlog.',
     },
   }, async (_req, reply) => {
     const checks: Record<string, unknown> = {};
@@ -174,6 +201,27 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       const reconcileMismatches = await prisma.reconcileMismatch.count();
       checks.reconcileMismatches = reconcileMismatches;
       checks.reconcile = reconcileMismatches > 0 ? 'drift' : 'ok';
+
+      // Failed or stuck webhook deliveries pile up in the outbox without
+      // failing anything else: the indexer keeps indexing and the API keeps
+      // serving while clinics stop being notified. A delivery older than
+      // `READY_WEBHOOK_MAX_AGE_MS` cannot be normal retry traffic — every
+      // attempt resolves inside the backoff ceiling — so it is degraded.
+      const backlog = await webhookBacklog();
+      const webhookState = !WEBHOOKS_ENABLED
+        ? 'disabled'
+        : backlog.stale > 0
+          ? 'backlog'
+          : 'ok';
+      checks.webhooks = {
+        state: webhookState,
+        enabled: WEBHOOKS_ENABLED,
+        pending: backlog.pending,
+        abandoned: backlog.abandoned,
+        oldestPendingAgeSeconds: backlog.oldestPendingAgeSeconds,
+        maxPendingAgeSeconds: env.READY_WEBHOOK_MAX_AGE_MS / 1000,
+      };
+      if (webhookState === 'backlog') healthy = false;
     } catch (err) {
       healthy = false;
       checks.database = `error: ${(err as Error).message}`;
@@ -232,6 +280,11 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
   app.get('/stats', {
     schema: { tags: ['health'], summary: 'Aggregate dashboard counters' },
   }, async () => {
+    const currentLedger = await lastIndexedLedger();
+    if (statsCache !== null && currentLedger !== null && statsCache.ledger === currentLedger) {
+      return statsCache.data;
+    }
+
     const [providers, activeProviders, vouchers, totals, receipts, faucetDrips, faucetWallets] =
       await Promise.all([
         prisma.provider.count(),
@@ -245,7 +298,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         prisma.faucetDrip.groupBy({ by: ['wallet'] }),
       ]);
 
-    return {
+    const result: StatsResponse = {
       providers,
       activeProviders,
       vouchers,
@@ -258,6 +311,12 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       faucetDrips,
       faucetWallets: faucetWallets.length,
     };
+
+    if (currentLedger !== null) {
+      statsCache = { ledger: currentLedger, data: result };
+    }
+
+    return result;
   });
 
   /**
@@ -284,47 +343,44 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
     const todayUtcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
     const fromMs = todayUtcMs - (days - 1) * MS_PER_DAY;
     const from = new Date(fromMs);
-    const to = new Date(todayUtcMs + MS_PER_DAY);
 
-    const [funded, settled, refunded] = await Promise.all([
-      prisma.voucher.findMany({
-        where: { createdAt: { gte: from, lt: to } },
-        select: { amount: true, createdAt: true },
-      }),
-      prisma.receipt.findMany({
-        where: { settledAt: { gte: from, lt: to } },
-        select: { amount: true, settledAt: true },
-      }),
-      prisma.voucher.findMany({
-        where: { refundedAt: { gte: from, lt: to } },
-        select: { amount: true, refundedAt: true },
-      }),
-    ]);
+    const fromDateStr = utcDate(from);
+    const toDateStr = utcDate(new Date(todayUtcMs));
 
-    const series: DailyRow[] = [];
-    const byDate = new Map<string, DailyRow>();
-    for (let i = 0; i < days; i += 1) {
-      const row: DailyRow = {
-        date: utcDate(new Date(fromMs + i * MS_PER_DAY)),
-        funded: { count: 0, amount: '0' },
-        settled: { count: 0, amount: '0' },
-        refunded: { count: 0, amount: '0' },
-      };
-      series.push(row);
-      byDate.set(row.date, row);
+    const stats = await prisma.dailyStat.findMany({
+      where: {
+        date: {
+          gte: fromDateStr,
+          lte: toDateStr,
+        },
+      },
+    });
+
+    const byDate = new Map<string, (typeof stats)[number]>();
+    for (const s of stats) {
+      byDate.set(s.date, s);
     }
 
-    const add = (at: Date, amount: string, key: 'funded' | 'settled' | 'refunded'): void => {
-      const row = byDate.get(utcDate(at));
-      if (!row) return;
-      const bucket = row[key];
-      bucket.count += 1;
-      bucket.amount = (BigInt(bucket.amount) + BigInt(amount)).toString();
-    };
-
-    for (const v of funded) add(v.createdAt, v.amount, 'funded');
-    for (const r of settled) add(r.settledAt, r.amount, 'settled');
-    for (const v of refunded) if (v.refundedAt) add(v.refundedAt, v.amount, 'refunded');
+    const series: DailyRow[] = [];
+    for (let i = 0; i < days; i += 1) {
+      const dateStr = utcDate(new Date(fromMs + i * MS_PER_DAY));
+      const stat = byDate.get(dateStr);
+      series.push({
+        date: dateStr,
+        funded: {
+          count: stat?.fundedCount ?? 0,
+          amount: stat?.fundedAmount ?? '0',
+        },
+        settled: {
+          count: stat?.settledCount ?? 0,
+          amount: stat?.settledAmount ?? '0',
+        },
+        refunded: {
+          count: stat?.refundedCount ?? 0,
+          amount: stat?.refundedAmount ?? '0',
+        },
+      });
+    }
 
     return {
       days,
