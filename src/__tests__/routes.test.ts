@@ -3,29 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-describe('GET /stats/services', () => {
-  it('ranks service codes by settled value, highest first', async () => {
-    const { status, body } = await get('/stats/services');
-    expect(status).toBe(200);
-    expect(Array.isArray(body.services)).toBe(true);
-    const values = body.services.map((s: { value: string }) => BigInt(s.value));
-    for (let i = 1; i < values.length; i += 1) {
-      expect(values[i - 1]! >= values[i]!).toBe(true);
-    }
-  });
-
-  it('reports count and value per service code and label', async () => {
-    const { body } = await get('/stats/services?limit=2');
-    expect(body.services.length).toBeLessThanOrEqual(2);
-    for (const s of body.services) {
-      expect(s).toHaveProperty('serviceCode');
-      expect(s).toHaveProperty('label');
-      expect(s).toHaveProperty('count');
-      expect(s).toHaveProperty('value');
-    }
-  });
-});
-
 import { buildApp } from '../app.js';
 import { prisma, queryStats } from '../db.js';
 import { CONTRACTS, env } from '../env.js';
@@ -2591,5 +2568,28 @@ describe('query parameter length limits', () => {
     const { status, body } = await get(`/receipts?beneficiaryRef=${longRef}`);
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_query');
+  });
+});
+
+describe('GET /stats/services', () => {
+  it('ranks service codes by settled value, highest first', async () => {
+    const { status, body } = await get('/stats/services');
+    expect(status).toBe(200);
+    expect(Array.isArray(body.services)).toBe(true);
+    const values = body.services.map((s: { value: string }) => BigInt(s.value));
+    for (let i = 1; i < values.length; i += 1) {
+      expect(values[i - 1]! >= values[i]!).toBe(true);
+    }
+  });
+
+  it('reports count and value per service code and label', async () => {
+    const { body } = await get('/stats/services?limit=2');
+    expect(body.services.length).toBeLessThanOrEqual(2);
+    for (const s of body.services) {
+      expect(s).toHaveProperty('serviceCode');
+      expect(s).toHaveProperty('label');
+      expect(s).toHaveProperty('count');
+      expect(s).toHaveProperty('value');
+    }
   });
 });

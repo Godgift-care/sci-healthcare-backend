@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
 import { ApiError } from '../lib/errors.js';
+import { serviceKey, serviceLabels } from '../lib/services.js';
 
 type CatalogueRow = {
   code: number;
@@ -87,8 +88,10 @@ export async function serviceRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const vouchers = await prisma.voucher.findMany({
-      select: { serviceCode: true, value: true, label: true },
+      select: { serviceCode: true, providerAddress: true, amount: true },
     });
+    // Labels live in each clinic's catalog, keyed by (clinic, code).
+    const labelOf = await serviceLabels(vouchers);
 
     type Agg = { serviceCode: number; labels: Set<string>; count: number; value: bigint };
     const byCode = new Map<number, Agg>();
@@ -98,9 +101,10 @@ export async function serviceRoutes(app: FastifyInstance): Promise<void> {
         agg = { serviceCode: v.serviceCode, labels: new Set(), count: 0, value: 0n };
         byCode.set(v.serviceCode, agg);
       }
-      if (v.label) agg.labels.add(v.label);
+      const label = labelOf.get(serviceKey(v.providerAddress, v.serviceCode));
+      if (label) agg.labels.add(label);
       agg.count += 1;
-      agg.value += BigInt(v.value);
+      agg.value += BigInt(v.amount);
     }
 
     const services = [...byCode.values()]
@@ -108,6 +112,9 @@ export async function serviceRoutes(app: FastifyInstance): Promise<void> {
       .slice(0, limit)
       .map((agg) => ({
         serviceCode: agg.serviceCode,
+        // Clinics may name the same code differently: the first name
+        // alphabetically, and every name in `labels`.
+        label: [...agg.labels].sort()[0] ?? null,
         labels: [...agg.labels].sort(),
         count: agg.count,
         value: agg.value.toString(),
