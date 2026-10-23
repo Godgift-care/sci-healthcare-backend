@@ -33,6 +33,7 @@ import { redactBeneficiaryRef } from './lib/log-redaction.js';
 import { httpDuration, httpRequests, registry } from './lib/metrics.js';
 import { APP_VERSION } from './lib/version.js';
 import { attesterRoutes } from './routes/attesters.js';
+import { feedRoutes } from './routes/feed.js';
 import { governanceRoutes } from './routes/governance.js';
 import { healthRoutes } from './routes/health.js';
 import { providerRoutes } from './routes/providers.js';
@@ -98,6 +99,7 @@ async function registerRoutes(scope: FastifyInstance): Promise<void> {
   await scope.register(serviceRoutes);
   await scope.register(voucherRoutes);
   await scope.register(receiptRoutes);
+  await scope.register(feedRoutes);
   await scope.register(governanceRoutes);
   await scope.register(attesterRoutes);
   await scope.register(streamRoutes);

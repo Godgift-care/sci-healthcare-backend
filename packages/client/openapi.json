@@ -430,6 +430,17 @@
         }
       }
     },
+    "/v1/feed.xml": {
+      "get": {
+        "summary": "Atom feed of protocol activity",
+        "description": "The most recent settled vouchers and newly verified clinics as an Atom 1.0 document, for feed readers. Public chain data only: no entry carries a beneficiary reference.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/governance": {
       "get": {
         "summary": "Admin history for each contract",
@@ -919,6 +930,17 @@
             "required": true
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/feed.xml": {
+      "get": {
+        "summary": "Atom feed of protocol activity",
+        "description": "The most recent settled vouchers and newly verified clinics as an Atom 1.0 document, for feed readers. Public chain data only: no entry carries a beneficiary reference.",
         "responses": {
           "200": {
             "description": "Default Response"

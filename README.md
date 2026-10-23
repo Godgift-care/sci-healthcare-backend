@@ -134,6 +134,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /receipts/:voucherId` | One receipt, for a shareable receipt page |
 | `GET /governance` | Current and pending admin per contract, plus the handover history |
 | `GET /stream` | Live voucher state transitions as the indexer commits them (server-sent events) |
+| `GET /feed.xml` | The latest settled vouchers and newly verified clinics as an Atom 1.0 feed, for feed readers; 20 entries at most, and no patient references |
 
 `GET /vouchers` **requires at least one filter**. An unfiltered dump of every voucher is not a useful endpoint and invites scraping. It accepts `sort=createdAt|expiresAt|amount` and `order=asc|desc` (defaults: `createdAt`, `desc`). Amounts are compared with `BigInt`, so `amount` sorting is numeric rather than lexicographic.
 
@@ -192,16 +193,29 @@ indexer and the streams have to share a process, the feed is live in combined
 mode; in a split deployment an API-only process has nothing to subscribe to and
 its streams only beat (see "Running the indexer and the API separately").
 
+`GET /feed.xml` (also `/v1/feed.xml`) is the same activity for a feed reader
+rather than a browser: an Atom 1.0 document of at most 20 entries, newest first,
+made of settled vouchers — from the `Receipt` the chain minted, so the date is
+the settlement rather than the row's last write — and clinics whose status
+became `Active`, so a suspension never reads as a verification. Each entry links
+to the JSON route that proves it (`/v1/vouchers/<id>`). It is the one route that
+must never carry a beneficiary reference, because third-party readers poll,
+cache and syndicate it beyond anyone's control, so it reads receipts through the
+same serialiser `GET /receipts/:voucherId` uses. Clinic names come from the
+on-chain registry and are XML-escaped on the way out.
+
 ### Response behaviour
 
-List routes (`/vouchers`, `/vouchers/due`, `/providers`, `/receipts`) are limited to 30 requests
+List routes (`/vouchers`, `/vouchers/due`, `/providers`, `/receipts`) and
+`/feed.xml` — which scans the same read model — are limited to 30 requests
 per minute per client; other routes default to 120, while `/health` and `/ready`
 are exempt so a struggling service can always be probed. JSON above 1 KB is
 gzip-compressed when the client accepts it, and every response carries the
 standard `@fastify/helmet` security headers (no CSP — this API serves JSON, not
 HTML).
 
-List and detail routes are cacheable for a short window. They send
+List and detail routes are cacheable for a short window, as is `/feed.xml` so a
+reader that polls every minute costs one read per five seconds. They send
 `Cache-Control: public, max-age=5, stale-while-revalidate=30` and a weak `ETag`
 derived from the indexer's last ledger and the exact request URL, so a reload
 with a matching `If-None-Match` gets `304 Not Modified` without the API touching
@@ -559,6 +573,29 @@ The fetch is fenced in: http(s) only, a 5s timeout, a 64KB cap counted off the s
   ```text
   event: voucher_update
   data: {"id":"1","status":"Redeemed","updatedAt":"2026-09-02T14:30:00.000Z"}
+  ```
+
+#### 8. Atom Feed
+- **`GET /v1/feed.xml`**: The latest protocol activity for a feed reader — settled vouchers and newly verified clinics, newest first, 20 at most. No beneficiary reference appears anywhere in the document.
+  ```bash
+  curl -H "Accept: application/atom+xml" http://localhost:8080/v1/feed.xml
+  ```
+  ```xml
+  <?xml version="1.0" encoding="utf-8"?>
+  <feed xmlns="http://www.w3.org/2005/Atom">
+    <id>urn:sci-healthcare:activity</id>
+    <title>SCI Healthcare protocol activity</title>
+    <updated>2026-10-21T09:00:00.000Z</updated>
+    <link rel="self" type="application/atom+xml" href="/v1/feed.xml"/>
+    <author><name>SCI Healthcare</name></author>
+    <entry>
+      <title>Voucher 12 settled at Kigali Care Centre</title>
+      <link rel="alternate" type="application/json" href="/v1/vouchers/12"/>
+      <id>urn:sci-healthcare:voucher-settled:12</id>
+      <updated>2026-10-21T09:00:00.000Z</updated>
+      <content type="text">Care voucher 12 settled at Kigali Care Centre, Antenatal visit for 30000000 base units (3.0000000).</content>
+    </entry>
+  </feed>
   ```
 
 Amounts are `i128` on chain and are returned as **decimal strings**. Parsing one into a JavaScript number loses precision above 2^53 — use `BigInt`.
