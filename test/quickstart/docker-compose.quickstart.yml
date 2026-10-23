@@ -1,0 +1,63 @@
+services:
+  stellar:
+    image: stellar/quickstart:latest
+    command: ["--local"]
+    ports:
+      - "8000:8000"
+    environment:
+      ENABLE_LOGS: "true"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-sf",
+          "-X",
+          "POST",
+          "http://127.0.0.1:8000/soroban/rpc",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          '{"jsonrpc":"2.0","id":1,"method":"getHealth"}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 25
+      start_period: 15s
+
+  deploy-contracts:
+    image: stellar/quickstart:latest
+    depends_on:
+      stellar:
+        condition: service_healthy
+    volumes:
+      - ./contracts/wasm:/workspace/contracts/wasm:ro
+      - ./test/quickstart:/workspace/test/quickstart
+    working_dir: /workspace
+    entrypoint:
+      [
+        "/bin/bash",
+        "-c",
+        "stellar network rm local 2>/dev/null || true; stellar network add local --rpc-url http://stellar:8000/soroban/rpc --network-passphrase 'Standalone Network ; February 2017' && for id in sci-admin sci-issuer sci-clinic sci-attester sci-funder; do stellar keys generate \"$$id\" --network local --fund --overwrite; done && ADMIN_ADDR=$$(stellar keys address sci-admin) && ISSUER_ADDR=$$(stellar keys address sci-issuer) && CLINIC_ADDR=$$(stellar keys address sci-clinic) && ATTESTER_ADDR=$$(stellar keys address sci-attester) && FUNDER_ADDR=$$(stellar keys address sci-funder) && stellar contract asset deploy --asset \"USDC:$$ISSUER_ADDR\" --source-account sci-issuer --network local || true && USDC_ID=$$(stellar contract id asset --asset \"USDC:$$ISSUER_ADDR\" --network local) && REGISTRY_ID=$$(stellar contract deploy --wasm /workspace/contracts/wasm/sci_registry.wasm --source-account sci-admin --network local) && RECEIPT_ID=$$(stellar contract deploy --wasm /workspace/contracts/wasm/sci_receipt.wasm --source-account sci-admin --network local) && VOUCHER_ID=$$(stellar contract deploy --wasm /workspace/contracts/wasm/sci_voucher.wasm --source-account sci-admin --network local) && stellar contract invoke --id \"$$REGISTRY_ID\" --source-account sci-admin --network local -- initialize --admin \"$$ADMIN_ADDR\" && stellar contract invoke --id \"$$RECEIPT_ID\" --source-account sci-admin --network local -- initialize --admin \"$$ADMIN_ADDR\" --minter \"$$VOUCHER_ID\" && stellar contract invoke --id \"$$VOUCHER_ID\" --source-account sci-admin --network local -- initialize --admin \"$$ADMIN_ADDR\" --registry \"$$REGISTRY_ID\" --receipt_book \"$$RECEIPT_ID\" --token \"$$USDC_ID\" --dispute_window 259200 --fee_bps 100 --attester_share_bps 50 --fee_account \"$$ADMIN_ADDR\" && for who in sci-funder sci-clinic sci-admin; do stellar tx new change-trust --source-account \"$$who\" --network local --line \"USDC:$$ISSUER_ADDR\" || true; done && stellar contract invoke --id \"$$USDC_ID\" --source-account sci-issuer --network local -- mint --to \"$$FUNDER_ADDR\" --amount 1000000000 && stellar contract invoke --id \"$$REGISTRY_ID\" --source-account sci-clinic --network local -- register_provider --owner \"$$CLINIC_ADDR\" --name 'Test Clinic' --country 'NG' && stellar contract invoke --id \"$$REGISTRY_ID\" --source-account sci-admin --network local -- set_provider_status --admin \"$$ADMIN_ADDR\" --provider_addr \"$$CLINIC_ADDR\" --status 1 && stellar contract invoke --id \"$$REGISTRY_ID\" --source-account sci-clinic --network local -- upsert_service --provider_addr \"$$CLINIC_ADDR\" --code 101 --label 'Outpatient' --price 30000000 && stellar contract invoke --id \"$$REGISTRY_ID\" --source-account sci-admin --network local -- add_attester --admin \"$$ADMIN_ADDR\" --attester \"$$ATTESTER_ADDR\" && BREF=$$(printf 'patient-001' | sha256sum | cut -d' ' -f1) && stellar contract invoke --id \"$$VOUCHER_ID\" --source-account sci-funder --network local -- create_voucher --funder \"$$FUNDER_ADDR\" --beneficiary_ref \"$$BREF\" --provider \"$$CLINIC_ADDR\" --service_code 101 --amount 30000000 --expires_at 1893456000 && stellar contract invoke --id \"$$VOUCHER_ID\" --source-account sci-clinic --network local -- claim --provider \"$$CLINIC_ADDR\" --voucher_id 1 && stellar contract invoke --id \"$$VOUCHER_ID\" --source-account sci-attester --network local -- attest --attester \"$$ATTESTER_ADDR\" --voucher_id 1"
+      ]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: runtime
+    depends_on:
+      deploy-contracts:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: file:/tmp/integration.db
+      PORT: "8080"
+      HOST: 0.0.0.0
+      LOG_LEVEL: info
+      STELLAR_NETWORK: local
+      SOROBAN_RPC_URL: http://stellar:8000/soroban/rpc
+      NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
+      INDEXER_START_LEDGER: "0"
+      INDEXER_POLL_MS: "1000"
