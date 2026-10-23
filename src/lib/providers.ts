@@ -114,12 +114,13 @@ export function serialiseProviderDetail(p: {
  */
 export async function countryActivity(): Promise<CountryActivity[]> {
   const vouchers = await prisma.voucher.findMany({
-    select: {
-      value: true,
-      status: true,
-      provider: { select: { country: true } },
-    },
+    select: { amount: true, status: true, providerAddress: true },
   });
+  const providers = await prisma.provider.findMany({
+    where: { address: { in: [...new Set(vouchers.map((v) => v.providerAddress))] } },
+    select: { address: true, country: true },
+  });
+  const countryOf = new Map(providers.map((p) => [p.address, p.country]));
 
   const byCountry = new Map<
     string,
@@ -127,16 +128,18 @@ export async function countryActivity(): Promise<CountryActivity[]> {
   >();
 
   for (const v of vouchers) {
-    const country = v.provider.country;
+    const country = countryOf.get(v.providerAddress);
+    // A voucher for a clinic the indexer has not seen yet has no country.
+    if (!country) continue;
     let agg = byCountry.get(country);
     if (!agg) {
       agg = { vouchersFunded: 0, vouchersSettled: 0, fundedValue: 0n, settledValue: 0n };
       byCountry.set(country, agg);
     }
-    const value = BigInt(v.value);
+    const value = BigInt(v.amount);
     agg.vouchersFunded += 1;
     agg.fundedValue += value;
-    if (v.status === 'settled') {
+    if (v.status === 'Settled') {
       agg.vouchersSettled += 1;
       agg.settledValue += value;
     }
