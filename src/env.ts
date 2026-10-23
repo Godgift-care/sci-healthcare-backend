@@ -330,3 +330,43 @@ export const CONTRACTS = [
   { contract: 'voucher', contractId: env.VOUCHER_CONTRACT_ID },
   { contract: 'receipt', contractId: env.RECEIPT_CONTRACT_ID },
 ] as const;
+
+/**
+ * Endpoints that receive signed voucher events, parsed from the comma
+ * separated `WEBHOOK_URLS`. Empty means webhooks are off.
+ */
+export const WEBHOOK_URLS = env.WEBHOOK_URLS.split(',')
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
+
+/** True when at least one endpoint is configured. */
+export const WEBHOOKS_ENABLED = WEBHOOK_URLS.length > 0;
+
+/**
+ * Map from contract ID to its type (registry/voucher/receipt).
+ * Includes both current and historical deployments.
+ */
+const CONTRACT_ID_TO_TYPE = new Map<string, string>([
+  [env.REGISTRY_CONTRACT_ID, 'registry'],
+  [env.VOUCHER_CONTRACT_ID, 'voucher'],
+  [env.RECEIPT_CONTRACT_ID, 'receipt'],
+  ...DEPLOYMENTS.map((d) => [d.contractId, d.type] as const),
+]);
+
+export function contractName(contractId: string): string {
+  return CONTRACT_ID_TO_TYPE.get(contractId) ?? 'unknown';
+}
+
+/**
+ * Returns all contract IDs for a given type across all deployments.
+ */
+export function contractIdsForType(type: 'registry' | 'voucher' | 'receipt'): string[] {
+  const ids: string[] = [];
+  // Add current deployment
+  if (type === 'registry') ids.push(env.REGISTRY_CONTRACT_ID);
+  else if (type === 'voucher') ids.push(env.VOUCHER_CONTRACT_ID);
+  else if (type === 'receipt') ids.push(env.RECEIPT_CONTRACT_ID);
+  // Add historical deployments
+  ids.push(...DEPLOYMENTS.filter((d) => d.type === type).map((d) => d.contractId));
+  return [...new Set(ids)];
+}

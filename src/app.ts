@@ -59,6 +59,8 @@ function genReqId(req: IncomingMessage): string {
 
 export type BuildAppOptions = {
   logger?: FastifyServerOptions['logger'];
+  /** Bearer token for `GET /metrics`; defaults to `METRICS_TOKEN`. */
+  metricsToken?: string;
 };
 
 /**
@@ -129,6 +131,7 @@ async function registerRoutes(scope: FastifyInstance): Promise<void> {
 export async function buildApp(
   opts: BuildAppOptions = { logger: { level: env.LOG_LEVEL } },
 ): Promise<FastifyInstance> {
+  const metricsToken = opts.metricsToken ?? env.METRICS_TOKEN;
   const app = Fastify({
     logger: withRedactedLogging(opts.logger),
     trustProxy: true,
@@ -301,8 +304,8 @@ export async function buildApp(
     '/metrics',
     { schema: { hide: true }, config: { rateLimit: false } },
     async (req, reply) => {
-      if (env.METRICS_TOKEN !== undefined) {
-        if (!bearerTokenMatches(req.headers.authorization, env.METRICS_TOKEN)) {
+      if (metricsToken !== undefined) {
+        if (!bearerTokenMatches(req.headers.authorization, metricsToken)) {
           reply.header('www-authenticate', 'Bearer');
           return reply.code(401).send({
             error: 'unauthorized',
