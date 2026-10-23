@@ -388,6 +388,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app.close();
+  // One SQLite file backs the whole suite and the files run one at a time, so
+  // what this file leaves behind is what the next file inherits: a single
+  // leftover `Service` row is enough for `GET /providers` cleanup in
+  // `provider-metadata.test.ts` to fail on a foreign key. Leave no rows.
+  await clearReadModel();
 });
 
 describe('GET /feed.xml', () => {
