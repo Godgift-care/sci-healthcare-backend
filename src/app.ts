@@ -40,6 +40,7 @@ import { healthRoutes } from './routes/health.js';
 import { providerRoutes } from './routes/providers.js';
 import { receiptRoutes } from './routes/receipts.js';
 import { serviceRoutes } from './routes/services.js';
+import { statsRoutes } from './routes/stats.js';
 import { streamRoutes } from './routes/stream.js';
 import { voucherRoutes } from './routes/vouchers.js';
 import { DEFAULT_RATE_LIMIT } from './lib/rate-limits.js';
@@ -98,6 +99,7 @@ async function registerRoutes(scope: FastifyInstance): Promise<void> {
   await scope.register(healthRoutes);
   await scope.register(providerRoutes);
   await scope.register(serviceRoutes);
+  await scope.register(statsRoutes);
   await scope.register(voucherRoutes);
   await scope.register(receiptRoutes);
   await scope.register(feedRoutes);

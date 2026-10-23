@@ -78,6 +78,44 @@ export async function serviceRoutes(app: FastifyInstance): Promise<void> {
 
     return { code: serviceCode, clinicCount: clinics.length, clinics };
   });
+
+  app.get('/stats/services', async (req) => {
+    const query = req.query as { limit?: string };
+    const limit = query.limit === undefined ? 10 : Number(query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new ApiError(400, 'invalid_limit', 'limit must be an integer between 1 and 100');
+    }
+
+    const vouchers = await prisma.voucher.findMany({
+      select: { serviceCode: true, value: true, label: true },
+    });
+
+    type Agg = { serviceCode: number; labels: Set<string>; count: number; value: bigint };
+    const byCode = new Map<number, Agg>();
+    for (const v of vouchers) {
+      let agg = byCode.get(v.serviceCode);
+      if (!agg) {
+        agg = { serviceCode: v.serviceCode, labels: new Set(), count: 0, value: 0n };
+        byCode.set(v.serviceCode, agg);
+      }
+      if (v.label) agg.labels.add(v.label);
+      agg.count += 1;
+      agg.value += BigInt(v.value);
+    }
+
+    const services = [...byCode.values()]
+      .sort((a, b) => (a.value < b.value ? 1 : a.value > b.value ? -1 : a.serviceCode - b.serviceCode))
+      .slice(0, limit)
+      .map((agg) => ({
+        serviceCode: agg.serviceCode,
+        labels: [...agg.labels].sort(),
+        count: agg.count,
+        value: agg.value.toString(),
+        valueDisplay: fromBaseUnits(agg.value.toString()),
+      }));
+
+    return { total: byCode.size, limit, services };
+  });
 }
 
 function median(prices: bigint[]): bigint {
