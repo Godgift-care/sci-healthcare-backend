@@ -97,8 +97,17 @@ Errors all use one envelope, whatever layer rejected the request:
 example the Zod issues for a bad query). Error codes: `invalid_query`,
 `filter_required`, `invalid_code`, `provider_not_found`, `service_not_found`,
 `voucher_not_found`, `receipt_not_found`, `route_not_found`, `rate_limited`,
-`stream_full`, `bad_request`, `internal_error`. A 5xx is always `internal_error`; the cause
-stays in the log, never in the response.
+`stream_full`, `bad_request`, `internal_error`, `database_unavailable`. Any other 5xx is
+`internal_error`; the cause stays in the log, never in the response.
+
+When the database cannot be reached at all — the server is down, the connection pool is
+exhausted, a query timed out — the API answers `503 database_unavailable` with a
+`Retry-After` header instead of a bare `500`, so a client can tell "try again in a few
+seconds" from "this is broken" and back off for the right amount of time:
+
+```json
+{ "error": "database_unavailable", "message": "Database is unavailable, retry in 5 seconds" }
+```
 
 The `message` is human-readable and is localised: send `Accept-Language` (`fr`, `sw`, or a
 regional form such as `fr-CA`) and it is translated, falling back to English for anything

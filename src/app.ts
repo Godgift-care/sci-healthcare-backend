@@ -200,9 +200,12 @@ export async function buildApp(
   });
 
   app.setErrorHandler((err, req, reply) => {
-    const { statusCode, body } = errorEnvelope(err, req.headers['accept-language']);
+    const { statusCode, body, headers } = errorEnvelope(err, req.headers['accept-language']);
     if (statusCode >= 500) req.log.error({ err }, 'request failed');
     else req.log.warn({ err }, 'request rejected');
+    // A database outage answers Retry-After with its 503 (#133); every other
+    // error has none, so this is normally an empty loop.
+    for (const [name, value] of Object.entries(headers ?? {})) reply.header(name, value);
     reply.code(statusCode).send(body);
   });
 
