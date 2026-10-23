@@ -41,6 +41,18 @@ export async function providerSummaries(
 /** The voucher column a provider row can be resolved from. */
 type ProviderAddressRow = { providerAddress: string };
 
+/**
+ * Per-country funding activity, aggregated for `GET /stats/countries`.
+ * Sums are exact base-unit strings so no precision is lost to floats.
+ */
+export type CountryActivity = {
+  country: string;
+  vouchersFunded: number;
+  vouchersSettled: number;
+  fundedValue: string;
+  settledValue: string;
+};
+
 /** One clinic in the shape `GET /providers/:address` serves. */
 export type ProviderDetail = {
   address: string;
@@ -93,6 +105,52 @@ export function serialiseProviderDetail(p: {
         active: s.active,
       })),
   };
+}
+
+/**
+ * Aggregates voucher activity per clinic country. Joins vouchers to their
+ * provider so each voucher is counted under the country of the clinic that
+ * issued it. Sums are kept as exact base-unit strings.
+ */
+export async function countryActivity(): Promise<CountryActivity[]> {
+  const vouchers = await prisma.voucher.findMany({
+    select: {
+      value: true,
+      status: true,
+      provider: { select: { country: true } },
+    },
+  });
+
+  const byCountry = new Map<
+    string,
+    { vouchersFunded: number; vouchersSettled: number; fundedValue: bigint; settledValue: bigint }
+  >();
+
+  for (const v of vouchers) {
+    const country = v.provider.country;
+    let agg = byCountry.get(country);
+    if (!agg) {
+      agg = { vouchersFunded: 0, vouchersSettled: 0, fundedValue: 0n, settledValue: 0n };
+      byCountry.set(country, agg);
+    }
+    const value = BigInt(v.value);
+    agg.vouchersFunded += 1;
+    agg.fundedValue += value;
+    if (v.status === 'settled') {
+      agg.vouchersSettled += 1;
+      agg.settledValue += value;
+    }
+  }
+
+  return [...byCountry.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([country, agg]) => ({
+      country,
+      vouchersFunded: agg.vouchersFunded,
+      vouchersSettled: agg.vouchersSettled,
+      fundedValue: agg.fundedValue.toString(),
+      settledValue: agg.settledValue.toString(),
+    }));
 }
 
 /**
