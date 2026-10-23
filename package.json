@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=20.12"
   },
   "workspaces": [
     "packages/*"
@@ -27,18 +27,21 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "mutation": "stryker run",
-    "indexer:backfill": "tsx src/scripts/backfill.ts",
-    "indexer:retry-failed": "tsx src/scripts/retry-failed.ts",
-    "indexer:reconcile": "tsx src/scripts/reconcile.ts",
+    "indexer:backfill": "node dist/scripts/backfill.js",
+    "stats:backfill": "node dist/scripts/backfill-daily-stats.js",
+    "indexer:retry-failed": "node dist/scripts/retry-failed.js",
+    "indexer:reconcile": "node dist/scripts/reconcile.js",
+    "indexer:backfill:dev": "tsx src/scripts/backfill.ts",
+    "stats:backfill:dev": "tsx src/scripts/backfill-daily-stats.ts",
+    "indexer:retry-failed:dev": "tsx src/scripts/retry-failed.ts",
+    "indexer:reconcile:dev": "tsx src/scripts/reconcile.ts",
+    "fixtures:capture": "tsx src/scripts/capture-testnet-fixtures.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "loadtest": "node scripts/loadtest.mjs",
     "prepare": "husky"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@fastify/compress": "9.2.2",

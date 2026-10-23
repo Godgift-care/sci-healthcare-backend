@@ -2,7 +2,8 @@ import { createHash, createHmac } from 'node:crypto';
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 
-import { voucherSeq } from '../lib/voucher_seq.js';
+import { amountKey } from '../lib/amounts.js';
+import { voucherSeq } from '../lib/voucher-seq.js';
 
 /**
  * Deterministic local seed data (issue #59).
@@ -160,6 +161,7 @@ type SeedVoucher = {
   beneficiaryRef: string;
   serviceCode: number;
   amount: string;
+  amountKey: string;
   status: string;
   createdAt: Date;
   expiresAt: Date;
@@ -223,6 +225,9 @@ function buildVoucher(index: number, providerAddress: string, funder: string): S
     beneficiaryRef: seedBeneficiaryRef(index % 40),
     serviceCode: catalog.code,
     amount,
+    // This script writes with its own client, which does not fill the
+    // sortable key the way the shared one in src/db.ts does (#96).
+    amountKey: amountKey(amount),
     status,
     createdAt,
     expiresAt,

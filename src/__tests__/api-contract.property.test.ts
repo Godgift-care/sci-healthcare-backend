@@ -5,8 +5,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { buildApp } from '../app.js';
 import { prisma } from '../db.js';
 
-const PROPERTY_FUNDER = 'F'.repeat(56);
-const PROPERTY_PROVIDER = 'P'.repeat(56);
+const PROPERTY_FUNDER = 'GBBWALOPPNFWQUPJR3PQU6VL5JHXOJXJAN7KAAKYOSLT5RUTFXJ3BB6Q';
+const PROPERTY_PROVIDER = 'GBLQ2O5YHO55OU7NI47B6AV3QJDDZHCJX3XXQ2QAUVSZ4OKDC2ZSRP7K';
 const PROPERTY_REF = 'a'.repeat(64);
 const BASE_TIME = Date.UTC(2026, 0, 1, 12, 0, 0);
 

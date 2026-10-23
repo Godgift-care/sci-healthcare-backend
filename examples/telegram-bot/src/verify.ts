@@ -8,6 +8,18 @@ export function computeSignature(payload: string | Buffer, secret: string): stri
 }
 
 /**
+ * Returns true if the given signature header is valid for the raw payload.
+ * Thin alias over verifySignature for use by notifier integrations.
+ */
+export function isValidSignature(
+  rawBody: string | Buffer,
+  signatureHeader: string | undefined | null,
+  secret: string,
+): boolean {
+  return verifySignature(rawBody, signatureHeader, secret);
+}
+
+/**
  * Verifies that the incoming X-SCI-Signature header matches the expected HMAC-SHA256
  * signature over the raw payload using constant-time comparison to prevent timing attacks.
  * Accepts signature in form of raw hex string or "sha256=<hex>".

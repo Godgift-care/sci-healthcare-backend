@@ -6,8 +6,11 @@ import { fromBaseUnits } from '../lib/amounts.js';
 import { isValidRef } from '../lib/beneficiary.js';
 import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
+import { applyFields, parseFields } from '../lib/fields.js';
 import { providerSummaries, type ProviderSummary } from '../lib/providers.js';
-import { serviceKey, serviceLabels } from '../lib/services.js';
+import { serialiseReceipt } from '../lib/receipts.js';
+import { serviceLabels } from '../lib/services.js';
+import { accountAddress } from '../lib/stellar-address.js';
 
 const listQuery = z
   .object({
@@ -16,10 +19,11 @@ const listQuery = z
       .max(64)
       .refine(isValidRef, 'must be 64 hex characters')
       .optional(),
-    provider: z.string().length(56).optional(),
+    provider: accountAddress.optional(),
     cursor: cursorParam,
     limit: limitParam,
     offset: z.coerce.number().int().min(0).default(0),
+    fields: z.string().max(512).optional(),
   })
   .refine((data) => Boolean(data.beneficiaryRef) !== Boolean(data.provider), {
     message: 'Provide exactly one of: beneficiaryRef, provider',
@@ -33,6 +37,23 @@ const voucherIdParam = z.object({
 const summaryQuery = z.object({
   beneficiaryRef: z.string().refine(isValidRef, 'must be 64 hex characters'),
 });
+
+/**
+ * Top-level keys the receipt list items emit: the allow-list for `?fields=`
+ * (#166). `beneficiaryRef` only exists on the patient view — a provider-view
+ * client asking for it simply gets nothing for it, never the value.
+ */
+const RECEIPT_FIELDS = [
+  'voucherId',
+  'providerAddress',
+  'provider',
+  'serviceCode',
+  'serviceLabel',
+  'amount',
+  'amountDisplay',
+  'settledAt',
+  'beneficiaryRef',
+] as const;
 
 export async function receiptRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -48,7 +69,11 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) {
       throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
     }
-    const { beneficiaryRef, provider, cursor, limit, offset } = parsed.data;
+    const { beneficiaryRef, provider, cursor, limit, offset, fields } = parsed.data;
+
+    const fieldSet = parseFields(fields, RECEIPT_FIELDS, 'GET /receipts');
+    const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
+      fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
 
     const baseWhere = beneficiaryRef
       ? { beneficiaryRef }
@@ -68,25 +93,10 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       labels: Map<string, string>,
       clinics: Map<string, ProviderSummary>,
     ) => {
-      // The chain only records an address. The clinic row is what turns it
-      // into the name a patient recognises, resolved for the whole page in
-      // one query by `providerSummaries` rather than row by row. A clinic the
-      // indexer never saw registered keeps its address and reports the name
-      // and country as unknown rather than guessed.
-      const clinic = clinics.get(r.providerAddress);
+      // Same shape the single-receipt endpoint and `?include=receipt` serve
+      // (#167); the patient view alone carries the beneficiary reference.
       return {
-        voucherId: r.voucherId,
-        providerAddress: r.providerAddress,
-        provider: {
-          address: r.providerAddress,
-          name: clinic?.name ?? null,
-          country: clinic?.country ?? null,
-        },
-        serviceCode: r.serviceCode,
-        serviceLabel: labels.get(serviceKey(r.providerAddress, r.serviceCode)) ?? null,
-        amount: r.amount,
-        amountDisplay: fromBaseUnits(r.amount),
-        settledAt: r.settledAt,
+        ...serialiseReceipt(r, labels, clinics),
         ...(isProviderView ? {} : { beneficiaryRef: r.beneficiaryRef }),
       };
     };
@@ -117,7 +127,7 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       ]);
       const last = page[page.length - 1];
       const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : null;
-      return { limit, nextCursor, receipts: page.map((r) => formatReceipt(r, labels, clinics)) };
+      return { limit, nextCursor, receipts: project(page.map((r) => formatReceipt(r, labels, clinics))) };
     }
 
     const [rows, total, spend] = await Promise.all([
@@ -153,7 +163,7 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       nextCursor,
       totalSpend,
       totalSpendDisplay: fromBaseUnits(totalSpend),
-      receipts: page.map((r) => formatReceipt(r, labels, clinics)),
+      receipts: project(page.map((r) => formatReceipt(r, labels, clinics))),
     };
   });
 
@@ -234,6 +244,44 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * Proof for a receipt on chain.
+   *
+   * To prove a receipt on chain, a third party needs the transaction hash,
+   * ledger and event id, which the receipt route does not return.
+   *
+   * Acceptance criteria:
+   * - Proof fields returned: tx hash, ledger, event id and contract id
+   * - 404 when unknown
+   */
+  app.get('/receipts/:voucherId/proof', async (req) => {
+    const parsed = voucherIdParam.safeParse(req.params);
+    if (!parsed.success) {
+      throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
+    }
+    const { voucherId } = parsed.data;
+
+    const receipt = await prisma.receipt.findUnique({
+      where: { voucherId },
+    });
+    if (!receipt) throw new ApiError(404, 'receipt_not_found', 'Receipt not found');
+
+    const events = await prisma.contractEvent.findMany({
+      where: { voucherId },
+      orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
+    });
+
+    if (events.length === 0) throw new ApiError(404, 'receipt_not_found', 'Receipt not found');
+
+    const proofEvent = events[events.length - 1];
+    return {
+      txHash: proofEvent!.txHash,
+      ledger: proofEvent!.ledger,
+      eventId: proofEvent!.id,
+      contractId: proofEvent!.contractId,
+    };
+  });
+
+  /**
    * Single receipt by voucher ID.
    *
    * Used for shareable receipt pages and verification. No beneficiary
@@ -256,21 +304,8 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       providerSummaries([receipt]),
     ]);
     // The clinic behind the address, so a shareable receipt page can show
-    // where it was issued. `GET /vouchers/:id` already returns this shape.
-    const clinic = clinics.get(receipt.providerAddress);
-    return {
-      voucherId: receipt.voucherId,
-      providerAddress: receipt.providerAddress,
-      provider: {
-        address: receipt.providerAddress,
-        name: clinic?.name ?? null,
-        country: clinic?.country ?? null,
-      },
-      serviceCode: receipt.serviceCode,
-      serviceLabel: labels.get(serviceKey(receipt.providerAddress, receipt.serviceCode)) ?? null,
-      amount: receipt.amount,
-      amountDisplay: fromBaseUnits(receipt.amount),
-      settledAt: receipt.settledAt,
-    };
+    // where it was issued. `GET /vouchers/:id?include=receipt` returns this
+    // exact object, so the two endpoints cannot drift apart.
+    return serialiseReceipt(receipt, labels, clinics);
   });
 }

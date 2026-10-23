@@ -1,0 +1,18 @@
+{
+  "name": "email-notifier",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Example webhook receiver that forwards notifications by email over SMTP",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "nodemailer": "^6.9.14"
+  }
+}

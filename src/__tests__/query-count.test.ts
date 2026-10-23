@@ -52,7 +52,7 @@ describe('list routes use batched queries (#79)', () => {
     // This is O(1) database calls regardless of page size.
     const res = await app.inject({
       method: 'GET',
-      url: '/vouchers?funder=' + 'F'.repeat(56),
+      url: '/vouchers?funder=GDRHSGBLCHN4DNXQMIHWR3XJH4JM4ZNEIZGURNG42KSQVYULDW3PQH3I',
     });
     expect(res.statusCode).toBe(200);
 

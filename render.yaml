@@ -31,6 +31,11 @@ services:
         fromDatabase:
           name: sci-healthcare-db
           property: connectionString
+      # Bound Postgres connection pool and query timeout for Render's free tier.
+      - key: DATABASE_POOL_SIZE
+        value: "5"
+      - key: DATABASE_STATEMENT_TIMEOUT_MS
+        value: "10000"
       - key: NODE_VERSION
         value: "22"
       - key: PORT
