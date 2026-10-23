@@ -34,7 +34,9 @@ export const WEBHOOK_DELIVERY_INTERVAL_MS = 5_000;
 /**
  * The event a receiver is told about. There is deliberately no beneficiary
  * reference here: the payload must not carry anything that could identify a
- * patient, even though the reference is itself opaque.
+ * patient, even though the reference is itself opaque. The same rule applies
+ * to every downstream channel (for example the email notifier in
+ * `examples/email-notifier/`), which must never forward beneficiary references.
  */
 export type VoucherWebhookEvent = {
   /** Contract event name, e.g. `voucher_settled`. */

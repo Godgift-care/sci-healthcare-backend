@@ -26,6 +26,70 @@ function escapeHtml(text: string): string {
 }
 
 /**
+ * Formats a plain-text email notification body for clinic staff.
+ * Throws an Error if any beneficiary reference is present in the payload.
+ */
+export function formatEmailMessage(payload: WebhookVoucherPayload): string {
+  if (
+    'beneficiaryRef' in payload ||
+    'beneficiary' in payload ||
+    'patient' in payload ||
+    'beneficiary_ref' in payload
+  ) {
+    throw new Error('Privacy violation: payload contains beneficiary references');
+  }
+
+  const event = String(payload.event ?? 'voucher_event');
+  const voucherId = String(payload.voucherId ?? 'N/A');
+  const status = String(payload.status ?? 'Updated');
+  const amount = payload.amountDisplay
+    ? `${payload.amountDisplay} USDC`
+    : payload.amount
+      ? `${payload.amount} stroops`
+      : null;
+  const service = payload.serviceLabel ?? (payload.serviceCode ? `Service #${payload.serviceCode}` : null);
+  const ledger = payload.ledger ? `(Ledger #${payload.ledger})` : '';
+
+  let subjectLabel = 'Voucher Notification';
+  if (status === 'Funded' || event === 'voucher_funded') {
+    subjectLabel = 'New Care Voucher Funded';
+  } else if (status === 'Claimed' || event === 'voucher_claimed') {
+    subjectLabel = 'Voucher Claimed';
+  } else if (status === 'Attested' || event === 'voucher_attested') {
+    subjectLabel = 'Voucher Attested';
+  } else if (status === 'Settled' || event === 'voucher_settled') {
+    subjectLabel = 'Voucher Settled & Paid';
+  } else if (status === 'Disputed' || event === 'voucher_disputed') {
+    subjectLabel = 'Voucher Disputed';
+  } else if (status === 'Refunded' || event === 'voucher_refunded') {
+    subjectLabel = 'Voucher Refunded';
+  }
+
+  const lines = [
+    subjectLabel,
+    '',
+    `Voucher ID: ${voucherId}`,
+    `Status: ${status} ${ledger}`.trim(),
+  ];
+
+  if (amount) {
+    lines.push(`Amount: ${amount}`);
+  }
+  if (service) {
+    lines.push(`Service: ${service}`);
+  }
+  if (payload.txHash) {
+    lines.push(`Tx: ${String(payload.txHash)}`);
+  }
+
+  if (status === 'Funded' || event === 'voucher_funded') {
+    lines.push('', 'Action: Please examine the patient upon arrival and submit your claim.');
+  }
+
+  return lines.join('\n');
+}
+
+/**
  * Formats a Telegram notification message for clinic staff.
  * Throws an Error if any beneficiary reference is present in the payload.
  */
