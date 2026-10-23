@@ -134,6 +134,53 @@ describe('versioned paths', () => {
   });
 });
 
+describe('metrics bearer token', () => {
+  const TOKEN = 'test-metrics-token';
+
+  it('returns 401 without a token when METRICS_TOKEN is configured', async () => {
+    const guarded = await buildApp({ logger: false, metricsToken: TOKEN });
+    try {
+      const res = await guarded.inject({ method: 'GET', url: '/metrics' });
+      expect(res.statusCode).toBe(401);
+    } finally {
+      await guarded.close();
+    }
+  });
+
+  it('returns 401 with a wrong token when METRICS_TOKEN is configured', async () => {
+    const guarded = await buildApp({ logger: false, metricsToken: TOKEN });
+    try {
+      const res = await guarded.inject({
+        method: 'GET',
+        url: '/metrics',
+        headers: { authorization: 'Bearer wrong-token' },
+      });
+      expect(res.statusCode).toBe(401);
+    } finally {
+      await guarded.close();
+    }
+  });
+
+  it('serves metrics with the correct bearer token', async () => {
+    const guarded = await buildApp({ logger: false, metricsToken: TOKEN });
+    try {
+      const res = await guarded.inject({
+        method: 'GET',
+        url: '/metrics',
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      expect(res.statusCode).toBe(200);
+    } finally {
+      await guarded.close();
+    }
+  });
+
+  it('stays open when METRICS_TOKEN is unset', async () => {
+    const res = await app.inject({ method: 'GET', url: '/metrics' });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 describe('error envelope', () => {
   it('404s unknown routes in the envelope', async () => {
     const res = await app.inject({ method: 'GET', url: '/does-not-exist' });

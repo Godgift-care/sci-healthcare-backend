@@ -126,6 +126,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Liveness |
+| `GET /metrics` | Prometheus metrics. Open when `METRICS_TOKEN` is unset (local dev); when set, requires `Authorization: Bearer <METRICS_TOKEN>` and answers `401` otherwise |
 | `GET /ready` | Readiness; 503 once the indexer trails by more than `READY_MAX_LAG_LEDGERS`, a failed event is dead-lettered, or a webhook delivery is stuck in the outbox |
 | `GET /version` | Build version and commit, network, RPC endpoints, contract ids, indexer start ledger and process start time |
 | `GET /stats` | Protocol counters for the dashboard |

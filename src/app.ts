@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 
 import compress from '@fastify/compress';
@@ -92,6 +92,20 @@ function withRedactedLogging(logger: FastifyServerOptions['logger']): LoggerOpti
     ...options,
     serializers: { ...options.serializers, req: serializeRequestForLog },
   } as LoggerOption;
+}
+
+/**
+ * Compares a presented bearer token with the configured one without leaking
+ * the match position through timing. Both sides are hashed first so the
+ * buffers always have equal length, which `timingSafeEqual` requires.
+ */
+export function bearerTokenMatches(header: string | undefined, expected: string): boolean {
+  if (typeof header !== 'string') return false;
+  const match = /^Bearer (.+)$/.exec(header);
+  if (!match) return false;
+  const presented = createHash('sha256').update(match[1]!).digest();
+  const wanted = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(presented, wanted);
 }
 
 async function registerRoutes(scope: FastifyInstance): Promise<void> {
@@ -280,11 +294,22 @@ export async function buildApp(
   });
 
   // Scraped by a monitoring system on a fixed interval, so it must not share
-  // the public per-IP budget.
+  // the public per-IP budget. When METRICS_TOKEN is configured the route is
+  // gated behind a bearer token, since the series reveal route traffic,
+  // indexer lag and error counts; unset keeps it open for local development.
   app.get(
     '/metrics',
     { schema: { hide: true }, config: { rateLimit: false } },
-    async (_req, reply) => {
+    async (req, reply) => {
+      if (env.METRICS_TOKEN !== undefined) {
+        if (!bearerTokenMatches(req.headers.authorization, env.METRICS_TOKEN)) {
+          reply.header('www-authenticate', 'Bearer');
+          return reply.code(401).send({
+            error: 'unauthorized',
+            message: 'A valid bearer token is required to read metrics',
+          });
+        }
+      }
       reply.header('content-type', registry.contentType);
       return registry.metrics();
     },
