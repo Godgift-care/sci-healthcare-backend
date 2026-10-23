@@ -40,6 +40,21 @@ model Provider {
   registeredAt DateTime
   updatedAt    DateTime @updatedAt
 
+  /// Off-chain metadata pointer announced on chain (contracts #10): hours,
+  /// a phone number and a location live at this URI, not in the ledger.
+  /// Stored only when it fits `METADATA_URI_MAX_LENGTH`; null when the
+  /// clinic never published one or cleared it.
+  metadataUri String?
+  /// The document at `metadataUri`, validated against the schema in
+  /// `src/lib/provider-metadata.ts` and stored as JSON. Null until a fetch
+  /// succeeds; a failed refresh keeps the previous document rather than
+  /// blanking the directory.
+  metadata String?
+  /// When the URI was last fetched — successfully or rejected — and the
+  /// basis of the daily refresh. Stamped on rejection too, so a dead URI
+  /// is retried once a day rather than on every cycle.
+  metadataFetchedAt DateTime?
+
   /// Which deployment this provider was registered under.
   deployment Deployment? @relation(fields: [deploymentId], references: [id])
   deploymentId Int?
@@ -72,7 +87,7 @@ model Voucher {
   /// voucher 10 before voucher 9 (issue #61).
   ///
   /// Written from `id` by the `voucher_created` handler (see
-  /// `voucherSeq()` in `src/lib/voucher_seq.ts`) and backfilled for rows that
+  /// `voucherSeq()` in `src/lib/voucher-seq.ts`) and backfilled for rows that
   /// predate it by migration `20260106000000_voucher_seq`. Nullable because
   /// a voucher id is a u64 in principle and locally-authored fixtures use
   /// label ids (`bulk-0001`); those rows have no numeric id to mirror and
@@ -84,6 +99,14 @@ model Voucher {
   beneficiaryRef  String    // opaque 32-byte hex. Not reversible to an identity.
   serviceCode     Int
   amount          String    // i128 as decimal string
+  /// `amount` zero-padded to 39 digits (`amountKey()` in src/lib/amounts.ts),
+  /// so string order is numeric order and `GET /vouchers?sort=amount` and the
+  /// minAmount/maxAmount band run in the database instead of in memory
+  /// (issue #96). Filled from `amount` on every write through `prisma` in
+  /// src/db.ts; scripts with their own client set it themselves. Backfilled
+  /// by migration `20260110000000_voucher_amount_key`. Never exposed by an
+  /// API response.
+  amountKey       String    @default("")
   status          String    // Funded | Claimed | Attested | Settled | Disputed | Refunded
   createdAt       DateTime
   expiresAt       DateTime
@@ -138,6 +161,8 @@ model Voucher {
   // GET /vouchers?status=... (single or comma-separated) and the
   // `status: 'Settled'` scan behind GET /stats, each sorted by createdAt.
   @@index([status, createdAt])
+  // GET /vouchers?...&sort=amount and the minAmount/maxAmount band (#96).
+  @@index([amountKey])
   @@index([expiresAt])
   @@index([createdAt])
   @@index([refundedAt])
@@ -366,3 +391,20 @@ model WebhookDelivery {
 
   @@index([deliveredAt, abandonedAt, nextAttemptAt])
 }
+
+/// Pre-aggregated daily voucher activity stats for GET /stats/daily.
+///
+/// Maintained by the indexer in the same transaction as each voucher event,
+/// and re-buildable from vouchers and receipts via `npm run stats:backfill`.
+/// Keyed by UTC day (YYYY-MM-DD).
+model DailyStat {
+  date           String   @id // YYYY-MM-DD
+  fundedCount    Int      @default(0)
+  fundedAmount   String   @default("0")
+  settledCount   Int      @default(0)
+  settledAmount  String   @default("0")
+  refundedCount  Int      @default(0)
+  refundedAmount String   @default("0")
+  updatedAt      DateTime @updatedAt
+}
+

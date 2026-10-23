@@ -153,6 +153,8 @@ async function seed() {
       beneficiaryRef: beneficiaryRefAt(i),
       serviceCode: 1 + (i % 4),
       amount: amountAt(i),
+      // Same padding as amountKey() in src/lib/amounts.ts (#96).
+      amountKey: amountAt(i).padStart(39, '0'),
       status,
       createdAt,
       expiresAt,

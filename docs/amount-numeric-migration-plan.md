@@ -26,9 +26,9 @@ Amounts (`Voucher.amount`, `Voucher.settledNet`, `Voucher.settledFee`,
     `spend` result set with `BigInt`;
   - `src/routes/receipts.ts:186-200` — the care-summary route walks every
     receipt accumulating `bigint` per clinic;
-  - `src/routes/vouchers.ts:454-489` — `pageByAmount` fetches **all**
-    candidate ids, filters `min`/`max` with `BigInt`, sorts in JS, then
-    re-fetches the page, because the database cannot order by amount.
+  - ~~`pageByAmount` in `src/routes/vouchers.ts`~~ — retired by #96: amount
+    sorts and the `min`/`max` band now run in the database on
+    `Voucher.amountKey`, the amount zero-padded to 39 digits.
 
 ## What the pending SQL does
 
@@ -130,9 +130,9 @@ bit-for-bit what it was; route tests are untouched.
    with `_sum` for the care summary (currently
    `src/routes/receipts.ts:186-200`). The BigInt accumulation loops go away;
    serialize the Decimal results with `.toString()`.
-5. Native ordering retires `pageByAmount`: `orderBy: { amount: order }` plus
-   `gte`/`lte` filters on the numeric column replace the fetch-all-sort-in-JS
-   path (`src/routes/vouchers.ts:454-489` and its callers at 245/266).
+5. Native ordering can replace `Voucher.amountKey` (#96, which already
+   retired the fetch-all-sort-in-JS `pageByAmount`): `orderBy: { amount: order }`
+   plus `gte`/`lte` filters on the numeric column, then drop the key column.
 6. Tests: route tests assert the same string payloads (AC: route tests
    unchanged); the seed and any fixtures using i128-max values now round-trip
    exactly on Postgres.

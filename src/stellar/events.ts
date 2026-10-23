@@ -16,6 +16,8 @@ import { scValToNative, xdr } from '@stellar/stellar-sdk';
 export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   provider_registered: ['provider'],
   provider_status_changed: ['provider'],
+  // The clinic repointed its off-chain metadata URI (contracts #10).
+  provider_metadata_changed: ['provider'],
   service_upserted: ['provider', 'code'],
   service_removed: ['provider'],
   attester_added: ['attester'],

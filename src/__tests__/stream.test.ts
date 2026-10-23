@@ -222,6 +222,11 @@ describe('GET /stream', () => {
     const shortProvider = await openStream('/v1/stream?provider=too-short');
     expect(shortProvider.status).toBe(400);
     expect(await readJson(shortProvider)).toMatchObject({ error: 'invalid_query' });
+
+    // Right length, bad checksum (#171).
+    const badChecksum = await openStream(`/v1/stream?provider=${CLINIC.slice(0, -1)}${CLINIC.endsWith('A') ? 'B' : 'A'}`);
+    expect(badChecksum.status).toBe(400);
+    expect(await readJson(badChecksum)).toMatchObject({ error: 'invalid_query' });
   });
 
   it('answers with SSE framing and no caching, and carries the request id', async () => {
