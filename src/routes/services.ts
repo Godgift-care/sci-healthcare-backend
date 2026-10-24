@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
 import { ApiError } from '../lib/errors.js';
+import { serviceKey, serviceLabels } from '../lib/services.js';
 
 type CatalogueRow = {
   code: number;
@@ -77,6 +78,50 @@ export async function serviceRoutes(app: FastifyInstance): Promise<void> {
       });
 
     return { code: serviceCode, clinicCount: clinics.length, clinics };
+  });
+
+  app.get('/stats/services', async (req) => {
+    const query = req.query as { limit?: string };
+    const limit = query.limit === undefined ? 10 : Number(query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new ApiError(400, 'invalid_limit', 'limit must be an integer between 1 and 100');
+    }
+
+    const vouchers = await prisma.voucher.findMany({
+      select: { serviceCode: true, providerAddress: true, amount: true },
+    });
+    // Labels live in each clinic's catalog, keyed by (clinic, code).
+    const labelOf = await serviceLabels(vouchers);
+
+    type Agg = { serviceCode: number; labels: Set<string>; count: number; value: bigint };
+    const byCode = new Map<number, Agg>();
+    for (const v of vouchers) {
+      let agg = byCode.get(v.serviceCode);
+      if (!agg) {
+        agg = { serviceCode: v.serviceCode, labels: new Set(), count: 0, value: 0n };
+        byCode.set(v.serviceCode, agg);
+      }
+      const label = labelOf.get(serviceKey(v.providerAddress, v.serviceCode));
+      if (label) agg.labels.add(label);
+      agg.count += 1;
+      agg.value += BigInt(v.amount);
+    }
+
+    const services = [...byCode.values()]
+      .sort((a, b) => (a.value < b.value ? 1 : a.value > b.value ? -1 : a.serviceCode - b.serviceCode))
+      .slice(0, limit)
+      .map((agg) => ({
+        serviceCode: agg.serviceCode,
+        // Clinics may name the same code differently: the first name
+        // alphabetically, and every name in `labels`.
+        label: [...agg.labels].sort()[0] ?? null,
+        labels: [...agg.labels].sort(),
+        count: agg.count,
+        value: agg.value.toString(),
+        valueDisplay: fromBaseUnits(agg.value.toString()),
+      }));
+
+    return { total: byCode.size, limit, services };
   });
 }
 

@@ -2585,3 +2585,26 @@ describe('GET /stats/countries', () => {
     expect(total).toBeGreaterThan(0);
   });
 });
+
+describe('GET /stats/services', () => {
+  it('ranks service codes by settled value, highest first', async () => {
+    const { status, body } = await get('/stats/services');
+    expect(status).toBe(200);
+    expect(Array.isArray(body.services)).toBe(true);
+    const values = body.services.map((s: { value: string }) => BigInt(s.value));
+    for (let i = 1; i < values.length; i += 1) {
+      expect(values[i - 1]! >= values[i]!).toBe(true);
+    }
+  });
+
+  it('reports count and value per service code and label', async () => {
+    const { body } = await get('/stats/services?limit=2');
+    expect(body.services.length).toBeLessThanOrEqual(2);
+    for (const s of body.services) {
+      expect(s).toHaveProperty('serviceCode');
+      expect(s).toHaveProperty('label');
+      expect(s).toHaveProperty('count');
+      expect(s).toHaveProperty('value');
+    }
+  });
+});
