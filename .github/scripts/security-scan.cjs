@@ -103,6 +103,18 @@ function scanAddedLines(file, added, config) {
       findings.push({ severity: BLOCK, rule: 'hidden-unicode', path: file, line,
         message: 'Invisible or bidirectional Unicode characters (Trojan Source): the code may not do what it appears to.' });
     }
+    // A payload pushed off-screen: code, a long run of blanks, more code
+    // (or a line that starts after a wall of blanks). Editors and diff views
+    // show only the visible part. Markdown is not executed, so it is skipped.
+    if (!/\.md$/i.test(file) && (/\S[ \t]{40,}\S/.test(text) || /^[ \t]{60,}\S/.test(text))) {
+      findings.push({ severity: BLOCK, rule: 'hidden-code', path: file, line,
+        message: 'Code hidden after a long run of whitespace, off the visible edge of the line.' });
+    }
+    // Names and arithmetic that javascript-obfuscator and similar tools emit.
+    if (/\b_0x[0-9a-f]{4,}\b/.test(text) || (text.match(/parseInt\(0x/g) || []).length >= 3) {
+      findings.push({ severity: BLOCK, rule: 'obfuscated-javascript', path: file, line,
+        message: 'Machine-obfuscated JavaScript (javascript-obfuscator signatures).' });
+    }
     for (const r of LINE_RULES) {
       if (r.re.test(text) && !(isData && r.severity === REVIEW)) {
         findings.push({ severity: r.severity, rule: r.rule, path: file, line, message: r.message });
@@ -230,7 +242,8 @@ function scanPackageJson(file, baseText, headText) {
   for (const [k, v] of Object.entries(hs)) {
     if (bs[k] !== v) {
       findings.push({ severity: REVIEW, rule: INSTALL_SCRIPTS.includes(k) ? 'install-script' : 'npm-script', path: file,
-        message: INSTALL_SCRIPTS.includes(k) ? `Changes the "${k}" lifecycle script, which runs on every install.` : `Changes the "${k}" npm script.` });
+        message: INSTALL_SCRIPTS.includes(k) ? `Changes the "${k}" lifecycle script, which runs on every install.` : `Changes the "${k}" npm script.`,
+        script: k, command: String(v), existed: k in bs });
     }
   }
   const registry = head.publishConfig && head.publishConfig.registry;
@@ -238,6 +251,32 @@ function scanPackageJson(file, baseText, headText) {
     findings.push({ severity: BLOCK, rule: 'registry-override', path: file, message: `publishConfig points at ${registry}.` });
   }
   return findings;
+}
+
+/**
+ * An *existing* npm script rewritten to also run a file the same pull request
+ * adds (`"build": "next build"` becoming `"build": "node api.js && next
+ * build"`): the new file then runs on every build, in CI, on deploys and on
+ * maintainers' machines, without anyone invoking it.
+ *
+ * A brand-new script name that runs a new file is an ordinary new tool and
+ * only needs the usual review.
+ */
+function scriptsRunningNewFiles(findings, changes) {
+  const addedFiles = new Set(changes.filter((c) => c.status === 'A').map((c) => c.file));
+  const out = [];
+  for (const f of findings) {
+    if (!f.command || !f.existed) continue;
+    const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
+    for (const m of f.command.matchAll(/\b(?:node|bash|sh|tsx|ts-node|deno|bun)\s+(?:\.\/)?([\w./-]+)/g)) {
+      const target = path.posix.normalize(dir + m[1]);
+      if (addedFiles.has(target)) {
+        out.push({ severity: BLOCK, rule: 'script-runs-new-file', path: f.path,
+          message: `The "${f.script}" script runs ${target}, a file this pull request adds.` });
+      }
+    }
+  }
+  return out;
 }
 
 /** Checks package-lock.json: every package from the npm registry, with integrity; new install scripts. */
@@ -458,6 +497,8 @@ async function run({ github, context, core }) {
     if (/(^|\/)Cargo\.lock$/.test(file) && isText) findings.push(...scanCargoLock(file, content.toString('utf8'), config));
   }
 
+  findings.push(...scriptsRunningNewFiles(findings, changes));
+
   // Every lockfile at the head is checked against OSV's malware database,
   // not only changed ones: a newly published advisory should stop merges too.
   for (const name of ['package-lock.json', 'Cargo.lock']) {
@@ -500,6 +541,7 @@ async function run({ github, context, core }) {
 
 module.exports = run;
 Object.assign(module.exports, {
-  scanAddedLines, scanFile, scanPackageJson, scanNpmLock, scanCargoLock, decide, classifyNewDependency, globToRegExp, levenshtein,
+  scanAddedLines, scanFile, scanPackageJson, scanNpmLock, scanCargoLock, decide, classifyNewDependency, scriptsRunningNewFiles,
+  globToRegExp, levenshtein,
   BLOCK, REVIEW, INFO,
 });
