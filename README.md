@@ -129,6 +129,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Liveness |
+| `GET /metrics` | Prometheus metrics. Open when `METRICS_TOKEN` is unset (local dev); when set, requires `Authorization: Bearer <METRICS_TOKEN>` and answers `401` otherwise |
 | `GET /ready` | Readiness; 503 once the indexer trails by more than `READY_MAX_LAG_LEDGERS`, a failed event is dead-lettered, or a webhook delivery is stuck in the outbox |
 | `GET /version` | Build version and commit, network, RPC endpoints, contract ids, indexer start ledger and process start time |
 | `GET /stats` | Protocol counters for the dashboard |
@@ -735,6 +736,7 @@ this table and the schema drift apart.
 | `CORS_ORIGIN` | No | `http://localhost:3000` | `https://sci-healthcare.vercel.app` | Comma-separated origins allowed to call the API |
 | `READY_MAX_LAG_LEDGERS` | No | `120` | `120` | Indexer lag in ledgers at which `/ready` reports degraded (503) |
 | `READY_WEBHOOK_MAX_AGE_MS` | No | `900000` | `900000` | Age at which a pending webhook delivery makes `/ready` report a backlog and answer 503 |
+| `METRICS_TOKEN` | No | — | `a-long-random-string` | Bearer token required on `GET /metrics` (at least 16 characters); unset leaves the route open for local development |
 | `DATABASE_URL` | Yes | — | `file:./dev.db` | Database connection string. SQLite paths resolve **relative to `prisma/`**; production uses a Postgres URL |
 | `DATABASE_POOL_SIZE` | No | — | `5` | Maximum Postgres connection pool size; applied via `connection_limit` parameter on Postgres URLs, ignored on SQLite |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | No | — | `10000` | Maximum Postgres query execution time in milliseconds; applied via `statement_timeout` parameter on Postgres URLs, ignored on SQLite |

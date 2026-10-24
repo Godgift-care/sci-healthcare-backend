@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 
 import compress from '@fastify/compress';
@@ -59,7 +59,23 @@ function genReqId(req: IncomingMessage): string {
 
 export type BuildAppOptions = {
   logger?: FastifyServerOptions['logger'];
+  /** Bearer token for `GET /metrics`; defaults to `METRICS_TOKEN`. */
+  metricsToken?: string;
 };
+
+/**
+ * Compares a presented bearer token with the configured one without leaking
+ * the match position through timing. Both sides are hashed first so the
+ * buffers always have equal length, which `timingSafeEqual` requires.
+ */
+export function bearerTokenMatches(header: string | undefined, expected: string): boolean {
+  if (typeof header !== 'string') return false;
+  const match = /^Bearer (.+)$/.exec(header);
+  if (!match) return false;
+  const presented = createHash('sha256').update(match[1]!).digest();
+  const wanted = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(presented, wanted);
+}
 
 /**
  * The request half of a log line (`incoming request`, `request completed`)
@@ -115,6 +131,7 @@ async function registerRoutes(scope: FastifyInstance): Promise<void> {
 export async function buildApp(
   opts: BuildAppOptions = { logger: { level: env.LOG_LEVEL } },
 ): Promise<FastifyInstance> {
+  const metricsToken = opts.metricsToken ?? env.METRICS_TOKEN;
   const app = Fastify({
     logger: withRedactedLogging(opts.logger),
     trustProxy: true,
@@ -284,7 +301,17 @@ export async function buildApp(
   app.get(
     '/metrics',
     { schema: { hide: true }, config: { rateLimit: false } },
-    async (_req, reply) => {
+    async (req, reply) => {
+      // The series reveal route traffic, indexer lag and error counts, so a
+      // configured token gates them. Unset keeps the route open for local
+      // development.
+      if (metricsToken !== undefined && !bearerTokenMatches(req.headers.authorization, metricsToken)) {
+        reply.header('www-authenticate', 'Bearer');
+        return reply.code(401).send({
+          error: 'unauthorized',
+          message: 'A valid bearer token is required to read metrics',
+        });
+      }
       reply.header('content-type', registry.contentType);
       return registry.metrics();
     },

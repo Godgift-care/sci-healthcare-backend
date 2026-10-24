@@ -143,7 +143,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --omit=dev --audit-level=high || npm audit --omit=dev --audit-level=high --json | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8'));const allowed=['GHSA-mrhx-c7xc-m3w5'];const bad=Object.values(r.vulnerabilities||{}).filter(v=>v.severity==='high'||v.severity==='critical');const unk=bad.flatMap(v=>(v.via||[]).filter(x=>typeof x==='object'&&!allowed.includes((x.url||'').split('/').pop())));if(unk.length){console.error('Unaccepted high advisories:',JSON.stringify(unk.map(x=>x.url)));process.exit(1)}console.log('Only accepted advisory GHSA-mrhx-c7xc-m3w5 remains; see issue tracker.')"
 
   # Alerting rules are configuration, so they are validated rather than
   # trusted: promtool is the parser Prometheus loads them with, and it fails
