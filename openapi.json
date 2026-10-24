@@ -135,18 +135,24 @@
                     },
                     "vouchers": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "byStatus": {
                       "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
                       "additionalProperties": {
                         "type": "integer",
-                        "minimum": 0
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       }
                     },
                     "settledVouchers": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "settledValue": {
                       "type": "string",
@@ -651,18 +657,24 @@
                     },
                     "vouchers": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "byStatus": {
                       "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
                       "additionalProperties": {
                         "type": "integer",
-                        "minimum": 0
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       }
                     },
                     "settledVouchers": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "settledValue": {
                       "type": "string",
