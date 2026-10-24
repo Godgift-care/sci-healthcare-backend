@@ -332,9 +332,19 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
         return { limit, nextCursor, vouchers: project(await serialisePage(page, includes)) };
       }
 
-      const { rows, total } = await pageByWhere(where, sort, order, limit, offset);
+      const { rows, total } = await pageByWhere(where, sort, order, limit + 1, offset);
 
-      return { total, limit, offset, vouchers: project(await serialisePage(rows, includes)) };
+      const hasNext = rows.length > limit;
+      const page = hasNext ? rows.slice(0, limit) : rows;
+      const last = page[page.length - 1];
+      const nextCursor = hasNext && last ? encodeCursor(last.createdAt, last.id) : undefined;
+      return {
+        total,
+        limit,
+        offset,
+        nextCursor,
+        vouchers: project(await serialisePage(page, includes)),
+      };
     },
   );
 

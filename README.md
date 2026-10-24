@@ -82,6 +82,9 @@ against them: each response on those paths carries `Deprecation: true` and a
 `Link: </v1/...>; rel="successor-version"` header. New integrations should
 target `/v1`.
 
+See the [API versioning and lifecycle policy](docs/api-policy.md) for the
+compatibility promise, deprecation headers and notice periods.
+
 Every response carries an `X-Request-Id`. Send one and it is echoed (after
 validation); otherwise the server generates a UUID. The same value appears as
 `reqId` in the log line for the request, so an id from a user is enough to find
