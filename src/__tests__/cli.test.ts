@@ -15,6 +15,15 @@ import { runCli } from '../../packages/client/dist/cli.js';
 
 type CliRun = { code: number; out: string; err: string };
 
+/**
+ * A clinic whose address carries a real StrKey checksum: `GET /vouchers`
+ * validates the `provider` filter (#171), and the seed's `GSEED…` addresses
+ * are realistic-shaped but fake.
+ */
+const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
+const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
+const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
+
 describe('sci CLI', () => {
   let app: FastifyInstance;
   let activeProviderAddress: string;
@@ -70,16 +79,49 @@ describe('sci CLI', () => {
     await prisma.servicePriceChange.deleteMany();
     await seedLocalData(prisma, { vouchers: 24, providers: 3 });
 
-    const provider = await prisma.provider.findFirstOrThrow({
-      where: { status: 'Active' },
-      select: { address: true },
+    await prisma.provider.create({
+      data: {
+        address: CLINIC,
+        name: 'Ikeja General Clinic',
+        country: 'NG',
+        status: 'Active',
+        registeredAt: new Date('2026-09-01T00:00:00Z'),
+        services: {
+          create: [
+            { id: `${CLINIC}:101`, code: 101, label: 'Outpatient consult', price: '30000000' },
+          ],
+        },
+      },
     });
-    activeProviderAddress = provider.address;
-    const voucher = await prisma.voucher.findFirstOrThrow({
-      where: { providerAddress: provider.address },
-      select: { id: true },
+    await prisma.voucher.createMany({
+      data: [
+        {
+          id: 'cli-1',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '30000000',
+          status: 'Funded',
+          createdAt: new Date('2026-10-02T09:00:00Z'),
+          expiresAt: new Date('2026-11-30T00:00:00Z'),
+        },
+        {
+          id: 'cli-2',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '10000000',
+          status: 'Claimed',
+          createdAt: new Date('2026-10-03T09:00:00Z'),
+          expiresAt: new Date('2026-11-30T00:00:00Z'),
+        },
+      ],
     });
-    someVoucherId = voucher.id;
+
+    activeProviderAddress = CLINIC;
+    someVoucherId = 'cli-1';
   });
 
   afterAll(async () => {
@@ -119,8 +161,8 @@ describe('sci CLI', () => {
   });
 
   it('lists vouchers for one provider and fetches one voucher', async () => {
-    // The whole seed for this provider fits in one page, so the assertion
-    // does not depend on the route's default sort order.
+    // One page holds this clinic's whole book, so the assertion does not
+    // depend on the route's default sort order.
     const list = await sci(['vouchers', '--provider', activeProviderAddress, '--limit', '24']);
     expect(list.code).toBe(0);
     expect(list.out).toContain('id');
