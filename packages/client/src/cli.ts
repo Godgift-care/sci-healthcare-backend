@@ -216,7 +216,7 @@ const COMMANDS: Command[] = [
     name: 'provider',
     summary: 'One clinic and its service catalogue (GET /providers/:address)',
     usage: 'sci provider <address>',
-    examples: ['sci provider GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK'],
+    examples: ['sci provider GDOOCN...'],
     run: async ({ client, positionals }) => ({
       data: await client.provider(positional(positionals, 0, 'provider <address>')),
     }),
