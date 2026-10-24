@@ -305,6 +305,15 @@
         }
       }
     },
+    "/v1/stats/services": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/vouchers": {
       "get": {
         "summary": "List vouchers, optionally embedding their receipt and clinic",
@@ -805,6 +814,15 @@
             "required": true
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/stats/services": {
+      "get": {
         "responses": {
           "200": {
             "description": "Default Response"
