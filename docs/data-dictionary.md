@@ -32,20 +32,21 @@ schema does not have. Documentation cannot drift from the schema unnoticed.
 | --- | --- |
 | `provider_registered` | `Provider` (create, or update name and country on re-registration) |
 | `provider_status_changed` | `Provider.status`, `ProviderStatusChange` |
+| `provider_metadata_changed` | `Provider.metadataUri` (the cached `metadata` is dropped with it) |
 | `service_upserted` | `Service`, `ServicePriceChange` (price changes only) |
 | `service_removed` | `Service.active = false` |
 | `admin_proposed` | `GovernanceEvent` (`kind = Proposed`) |
 | `admin_changed` | `GovernanceEvent` (`kind = Changed`) |
 | `attester_added` | `Attester` (create/reactivate) |
 | `attester_removed` | `Attester.active = false` |
-| `voucher_created` | `Voucher` (create), `Provider` stub if unknown, webhook outbox row |
+| `voucher_created` | `Voucher` (create), `Provider` stub if unknown, webhook outbox row, `DailyStat` funded counters |
 | `voucher_claimed` | `Voucher.status`, `Voucher.claimedAt`, webhook outbox row |
 | `voucher_attested` | `Voucher.status`, `attestedAt`, `attestedBy`, `disputeDeadline`, webhook outbox row |
 | `voucher_disputed` | `Voucher.status`, `disputeReason`, webhook outbox row |
 | `voucher_settled` | `Voucher.status`, `settledNet`, `settledFee`, webhook outbox row |
-| `voucher_refunded` | `Voucher.status`, `refundedAt`, webhook outbox row |
+| `voucher_refunded` | `Voucher.status`, `refundedAt`, webhook outbox row, `DailyStat` refunded counters |
 | `dispute_resolved` | `Voucher.disputeResolvedAt/By/Outcome` |
-| `receipt_minted` | `Receipt` |
+| `receipt_minted` | `Receipt`, `DailyStat` settled counters |
 | `dripped` | `FaucetDrip` |
 
 Every event also appends a row to `ContractEvent` before its projection
@@ -87,6 +88,9 @@ state; the history lives in `ProviderStatusChange`.
 | `status` | `String` | No | starts `Pending`, then `provider_status_changed` | `Pending`, `Active` or `Suspended`. Also written as `Active` by the `voucher_created` stub for an unknown provider |
 | `registeredAt` | `DateTime` | No | `provider_registered.registered_at` | From the event payload; the stub uses the epoch |
 | `updatedAt` | `DateTime` | No | Prisma `@updatedAt` | Row write time, not an on-chain time |
+| `metadataUri` | `String?` | Yes | `metadata_uri` on `provider_registered` / `provider_metadata_changed` | Off-chain directory pointer (hours, phone, location). Kept only when it is within `METADATA_URI_MAX_LENGTH` (512); an over-long URI is ignored rather than truncated, and an empty one clears the column |
+| `metadata` | `String?` | Yes | the indexer's metadata refresh, JSON of the fetched document (`src/lib/provider-metadata.ts`) | Validated against a schema before it is stored. Null until the first successful fetch; a later failure keeps the previous document, and any event that repoints or clears `metadataUri` nulls it so stale hours are never shown against a new URI |
+| `metadataFetchedAt` | `DateTime?` | Yes | the same refresh, on success and on rejection | Stamped on a rejected fetch too, so a dead URI is retried once a day instead of on every cycle; this is what the refresh window selects on |
 | `deployment` | `Deployment?` | Yes | relation | Which contract instance registered this provider |
 | `deploymentId` | `Int?` | Yes | `Deployment.id` for the event's contract | `null` when the contract was not in the `Deployment` table at write time |
 | `services` | `Service[]` | — | relation | The clinic's service catalogue |
@@ -120,6 +124,7 @@ refund. Dispute columns stay `null` unless the voucher is disputed.
 | `beneficiaryRef` | `String` | No | `voucher_created.beneficiary_ref` | Opaque 32-byte hex HMAC; not reversible to an identity and never logged |
 | `serviceCode` | `Int` | No | `voucher_created.service_code` | Matches `Service.code` |
 | `amount` | `String` | No | `voucher_created.amount` | `i128` as a decimal string |
+| `amountKey` | `String` | No | derived from `amount` by `amountKey()` (`src/lib/amounts.ts`) | `amount` zero-padded to 39 digits, so string order is numeric order and `?sort=amount` plus the `minAmount`/`maxAmount` band run in the database rather than in memory (issue #96). Written on every pass through the shared `prisma` client; never exposed by an API response |
 | `status` | `String` | No | each voucher event | `Funded`, `Claimed`, `Attested`, `Settled`, `Disputed` or `Refunded` |
 | `createdAt` | `DateTime` | No | `voucher_created.created_at` | From the event payload |
 | `expiresAt` | `DateTime` | No | `voucher_created.expires_at` | From the event payload |
@@ -323,3 +328,27 @@ retries and backs off independently.
 | `abandonedAt` | `DateTime?` | Yes | dispatcher, on a permanent 4xx or the final attempt | Never retried again once set |
 | `lastError` | `String?` | Yes | dispatcher, per attempt | `HTTP <status>` or the network error message |
 | `createdAt` | `DateTime` | No | database default `now()` | When it was enqueued |
+
+## `DailyStat`
+
+One row per UTC day: how much care was funded, settled and refunded on it.
+This is what `GET /stats/daily` reads, so a dashboard does not have to scan
+the whole `Voucher` table. The indexer updates it in the same transaction as
+the voucher event it counts, guarded so a ledger replay never counts twice,
+and `npm run stats:backfill` rebuilds every row from the `Voucher` and
+`Receipt` projections — the table is a cache, and losing it costs a rebuild,
+not data.
+
+| Column | Type | Nullable | Written from | Notes |
+| --- | --- | --- | --- | --- |
+| `date` | `String` | No | the event's own timestamp, as `YYYY-MM-DD` in UTC | Primary key. Funded days bucket on `created_at`, settled on the receipt's `settled_at`, refunded on `refundedAt` (the ledger close time, since a refund carries no contract timestamp) |
+| `fundedCount` | `Int` | No | `voucher_created`, only when the voucher row is new | Database default `0`; untouched by a replay |
+| `fundedAmount` | `String` | No | `voucher_created.amount`, added to the day's total | Decimal string, summed with `BigInt` — never a float |
+| `settledCount` | `Int` | No | `receipt_minted`, only when the receipt row is new | Counted at the receipt rather than at `voucher_settled`, so a settlement without a receipt is not claimed as paid |
+| `settledAmount` | `String` | No | `receipt_minted.amount`, added to the day's total | Gross receipt amount, not `settledNet` |
+| `refundedCount` | `Int` | No | `voucher_refunded`, only when the voucher had no `refundedAt` | |
+| `refundedAmount` | `String` | No | the voucher's stored `amount`, added to the day's total | A refund returns the whole voucher amount, which the event payload does not carry |
+| `updatedAt` | `DateTime` | No | Prisma `@updatedAt` | When the day's row was last touched; useful for spotting a stalled indexer |
+
+`GET /stats/daily` fills any day in the requested window with no row as zero,
+so a gap in this table is not a gap in the API's output.
