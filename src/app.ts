@@ -64,6 +64,20 @@ export type BuildAppOptions = {
 };
 
 /**
+ * Compares a presented bearer token with the configured one without leaking
+ * the match position through timing. Both sides are hashed first so the
+ * buffers always have equal length, which `timingSafeEqual` requires.
+ */
+export function bearerTokenMatches(header: string | undefined, expected: string): boolean {
+  if (typeof header !== 'string') return false;
+  const match = /^Bearer (.+)$/.exec(header);
+  if (!match) return false;
+  const presented = createHash('sha256').update(match[1]!).digest();
+  const wanted = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(presented, wanted);
+}
+
+/**
  * The request half of a log line (`incoming request`, `request completed`)
  * is serialized here instead of by Fastify's default, so the `beneficiaryRef`
  * query parameter is masked before it reaches the log (#55). The shape is
@@ -94,20 +108,6 @@ function withRedactedLogging(logger: FastifyServerOptions['logger']): LoggerOpti
     ...options,
     serializers: { ...options.serializers, req: serializeRequestForLog },
   } as LoggerOption;
-}
-
-/**
- * Compares a presented bearer token with the configured one without leaking
- * the match position through timing. Both sides are hashed first so the
- * buffers always have equal length, which `timingSafeEqual` requires.
- */
-export function bearerTokenMatches(header: string | undefined, expected: string): boolean {
-  if (typeof header !== 'string') return false;
-  const match = /^Bearer (.+)$/.exec(header);
-  if (!match) return false;
-  const presented = createHash('sha256').update(match[1]!).digest();
-  const wanted = createHash('sha256').update(expected).digest();
-  return timingSafeEqual(presented, wanted);
 }
 
 async function registerRoutes(scope: FastifyInstance): Promise<void> {
@@ -297,34 +297,49 @@ export async function buildApp(
   });
 
   // Scraped by a monitoring system on a fixed interval, so it must not share
-  // the public per-IP budget. When METRICS_TOKEN is configured the route is
-  // gated behind a bearer token, since the series reveal route traffic,
-  // indexer lag and error counts; unset keeps it open for local development.
+  // the public per-IP budget.
   app.get(
     '/metrics',
     { schema: { hide: true }, config: { rateLimit: false } },
     async (req, reply) => {
-      if (metricsToken !== undefined) {
-        if (!bearerTokenMatches(req.headers.authorization, metricsToken)) {
-          reply.header('www-authenticate', 'Bearer');
-          return reply.code(401).send({
-            error: 'unauthorized',
-            message: 'A valid bearer token is required for /metrics',
-          });
-        }
+      // The series reveal route traffic, indexer lag and error counts, so a
+      // configured token gates them. Unset keeps the route open for local
+      // development.
+      if (metricsToken !== undefined && !bearerTokenMatches(req.headers.authorization, metricsToken)) {
+        reply.header('www-authenticate', 'Bearer');
+        return reply.code(401).send({
+          error: 'unauthorized',
+          message: 'A valid bearer token is required to read metrics',
+        });
       }
       reply.header('content-type', registry.contentType);
       return registry.metrics();
     },
   );
 
+  // `/v1` is the canonical API. The unversioned paths stay as aliases for
+  // clients already deployed against them, and say so on every response.
   await app.register(
     async (v1) => {
       await registerRoutes(v1);
     },
     { prefix: '/v1' },
   );
-  await registerRoutes(app);
+
+  await app.register(async (legacy) => {
+    legacy.addHook('onSend', async (req, reply, payload) => {
+      reply.header('deprecation', 'true');
+      reply.header('link', `<${v1Path(req.url)}>; rel="successor-version"`);
+      return payload;
+    });
+    await registerRoutes(legacy);
+  });
 
   return app;
+}
+
+function v1Path(url: string): string {
+  const path = url.replace(/[\r\n]/g, '');
+  if (path.startsWith('/v1/') || path === '/v1') return path;
+  return `/v1${path.startsWith('/') ? path : `/${path}`}`;
 }

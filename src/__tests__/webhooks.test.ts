@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../db.js';
-import { env } from '../env.js';
+import { env, WEBHOOK_URLS } from '../env.js';
 import { registry } from '../lib/metrics.js';
 import {
   backoffMs,
@@ -24,7 +24,6 @@ const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
 const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
 const SECRET = 'unit-test-webhook-secret';
-const WEBHOOK_URL = 'https://clinic.example/hooks';
 
 function fakeLog() {
   return {
@@ -45,7 +44,6 @@ function dispatcherWith(fetchImpl: typeof fetch, opts: object = {}) {
   return new WebhookDispatcher(fakeLog(), {
     fetchImpl,
     intervalMs: 60_000,
-    urls: [WEBHOOK_URL],
     ...opts,
   });
 }
@@ -92,7 +90,7 @@ describe('webhook backlog (#130)', () => {
     const staleAgeMs = env.READY_WEBHOOK_MAX_AGE_MS + 60_000;
     const row = (id: string, extra: object = {}) => ({
       id,
-      url: WEBHOOK_URL,
+      url: 'https://clinic.example/hooks',
       event: 'voucher_settled',
       voucherId: '1',
       status: 'Settled',
@@ -150,7 +148,7 @@ describe('WebhookDispatcher delivery', () => {
 
     expect(delivered).toBe(1);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe(WEBHOOK_URL);
+    expect(calls[0]!.url).toBe(WEBHOOK_URLS[0]);
     expect(calls[0]!.init.method).toBe('POST');
 
     const body = calls[0]!.init.body as string;
@@ -276,7 +274,7 @@ describe('webhook outbox and the indexer transaction', () => {
 
     const row = await prisma.webhookDelivery.findFirstOrThrow();
     expect(row).toMatchObject({
-      url: WEBHOOK_URL,
+      url: WEBHOOK_URLS[0],
       event: 'voucher_created',
       voucherId: '5',
       status: 'Funded',
@@ -353,9 +351,62 @@ describe('webhook outbox and the indexer transaction', () => {
 });
 
 describe('WebhookDispatcher lifecycle', () => {
-  it('starts and stops without leaving a timer running', () => {
-    const dispatcher = dispatcherWith(vi.fn() as unknown as typeof fetch);
-    expect(() => dispatcher.start()).not.toThrow();
-    expect(() => dispatcher.stop()).not.toThrow();
+  it('runs a delivery cycle on its interval and stops cleanly', async () => {
+    vi.useFakeTimers();
+    try {
+      const dispatcher = new WebhookDispatcher(fakeLog(), {
+        urls: ['https://clinic.example/hooks'],
+        secret: SECRET,
+        intervalMs: 1_000,
+      });
+      const deliver = vi.spyOn(dispatcher, 'deliverPending').mockResolvedValue(0);
+
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deliver).toHaveBeenCalledTimes(2);
+
+      await dispatcher.stop();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(deliver).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps cycling after a failed delivery cycle', async () => {
+    vi.useFakeTimers();
+    try {
+      const dispatcher = new WebhookDispatcher(fakeLog(), {
+        urls: ['https://clinic.example/hooks'],
+        secret: SECRET,
+        intervalMs: 1_000,
+      });
+      const deliver = vi
+        .spyOn(dispatcher, 'deliverPending')
+        .mockRejectedValueOnce(new Error('database unavailable'))
+        .mockResolvedValue(0);
+
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(deliver).toHaveBeenCalledTimes(2);
+      await dispatcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule anything when no endpoint is configured', async () => {
+    vi.useFakeTimers();
+    try {
+      const dispatcher = new WebhookDispatcher(fakeLog(), { urls: [], secret: SECRET, intervalMs: 1_000 });
+      const deliver = vi.spyOn(dispatcher, 'deliverPending').mockResolvedValue(0);
+      dispatcher.start();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(deliver).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
