@@ -10,7 +10,7 @@ import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { providerMetadataOf } from '../lib/provider-metadata.js';
-import { serialiseProviderDetail } from '../lib/providers.js';
+import { countryActivity, serialiseProviderDetail } from '../lib/providers.js';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
@@ -365,4 +365,7 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
         .sort((a, b) => a.code.localeCompare(b.code)),
     };
   });
+
+  /** Funded and settled vouchers per clinic country (#163). */
+  app.get('/stats/countries', async () => ({ countries: await countryActivity() }));
 }

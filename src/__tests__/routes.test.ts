@@ -2571,6 +2571,21 @@ describe('query parameter length limits', () => {
   });
 });
 
+describe('GET /stats/countries', () => {
+  it('counts and sums vouchers per clinic country, in country order', async () => {
+    const { status, body } = await get('/stats/countries');
+    expect(status).toBe(200);
+    const codes = body.countries.map((c: { country: string }) => c.country);
+    expect(codes).toEqual([...codes].sort());
+    for (const c of body.countries) {
+      expect(c.vouchersSettled).toBeLessThanOrEqual(c.vouchersFunded);
+      expect(BigInt(c.settledValue)).toBeLessThanOrEqual(BigInt(c.fundedValue));
+    }
+    const total = body.countries.reduce((n: number, c: { vouchersFunded: number }) => n + c.vouchersFunded, 0);
+    expect(total).toBeGreaterThan(0);
+  });
+});
+
 describe('GET /stats/services', () => {
   it('ranks service codes by settled value, highest first', async () => {
     const { status, body } = await get('/stats/services');
