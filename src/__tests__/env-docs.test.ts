@@ -17,8 +17,10 @@ const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8')
 type SchemaVar = { name: string; required: boolean; defaultValue: string | null };
 
 function schemaVars(): SchemaVar[] {
-  const start = envSource.indexOf('const schema = z.object({');
-  const body = envSource.slice(start, envSource.indexOf('});', start));
+  const start = envSource.indexOf('z.object({');
+  // Line-anchored: the shape closes at a `});` in column 0, so a `});` that
+  // sits inside a validator further down the file cannot end the body early.
+  const body = envSource.slice(start, envSource.indexOf('\n});', start));
 
   const keys: { name: string; at: number }[] = [];
   for (const match of body.matchAll(/^ {2}([A-Z][A-Z0-9_]*):/gm)) {
