@@ -42,7 +42,8 @@ export async function governanceRoutes(app: FastifyInstance): Promise<void> {
 
     // Every contract is reported, even one that has never had an admin
     // event, so the absence itself is visible.
-    const contracts = CONTRACTS.map(({ contract }) => {
+    const contracts = CONTRACTS.map((c: { contract: string }) => {
+      const { contract } = c;
       const history = byContract.get(contract) ?? [];
       byContract.delete(contract);
       return summarise(contract, history);

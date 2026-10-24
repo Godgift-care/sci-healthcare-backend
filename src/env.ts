@@ -35,9 +35,15 @@ export const schema = z.object({
   /**
    * Bearer token required on `GET /metrics`. Unset leaves the route open,
    * which is the local-development default. When set, scrapers must send
-   * `Authorization: Bearer <METRICS_TOKEN>`.
+   * `Authorization: Bearer <METRICS_TOKEN>`. Surrounding whitespace is
+   * rejected rather than silently trimmed, so a token pasted with a trailing
+   * newline fails at boot instead of producing a 401 on every scrape.
    */
-  METRICS_TOKEN: z.string().min(16).optional(),
+  METRICS_TOKEN: z
+    .string()
+    .min(16)
+    .refine((t) => t === t.trim(), 'must not have leading or trailing whitespace')
+    .optional(),
 
   DATABASE_URL: z.string().min(1),
   DATABASE_POOL_SIZE: z.coerce.number().int().positive().optional(),
@@ -316,57 +322,3 @@ export const INDEXED_CONTRACTS = [
     ...DEPLOYMENTS.map((d) => d.contractId),
   ]),
 ] as readonly string[];
-
-/**
- * The short name for each configured contract, used to group per-contract
- * history (governance, especially) for readers who think in roles rather
- * than contract ids.
- *
- * The faucet is deliberately absent: it has an admin but emits no admin
- * events, so listing it under `/governance` would only add an empty row.
- */
-export const CONTRACTS = [
-  { contract: 'registry', contractId: env.REGISTRY_CONTRACT_ID },
-  { contract: 'voucher', contractId: env.VOUCHER_CONTRACT_ID },
-  { contract: 'receipt', contractId: env.RECEIPT_CONTRACT_ID },
-] as const;
-
-/**
- * Endpoints that receive signed voucher events, parsed from the comma
- * separated `WEBHOOK_URLS`. Empty means webhooks are off.
- */
-export const WEBHOOK_URLS = env.WEBHOOK_URLS.split(',')
-  .map((s) => s.trim())
-  .filter((s) => s.length > 0);
-
-/** True when at least one endpoint is configured. */
-export const WEBHOOKS_ENABLED = WEBHOOK_URLS.length > 0;
-
-/**
- * Map from contract ID to its type (registry/voucher/receipt).
- * Includes both current and historical deployments.
- */
-const CONTRACT_ID_TO_TYPE = new Map<string, string>([
-  [env.REGISTRY_CONTRACT_ID, 'registry'],
-  [env.VOUCHER_CONTRACT_ID, 'voucher'],
-  [env.RECEIPT_CONTRACT_ID, 'receipt'],
-  ...DEPLOYMENTS.map((d) => [d.contractId, d.type] as const),
-]);
-
-export function contractName(contractId: string): string {
-  return CONTRACT_ID_TO_TYPE.get(contractId) ?? 'unknown';
-}
-
-/**
- * Returns all contract IDs for a given type across all deployments.
- */
-export function contractIdsForType(type: 'registry' | 'voucher' | 'receipt'): string[] {
-  const ids: string[] = [];
-  // Add current deployment
-  if (type === 'registry') ids.push(env.REGISTRY_CONTRACT_ID);
-  else if (type === 'voucher') ids.push(env.VOUCHER_CONTRACT_ID);
-  else if (type === 'receipt') ids.push(env.RECEIPT_CONTRACT_ID);
-  // Add historical deployments
-  ids.push(...DEPLOYMENTS.filter((d) => d.type === type).map((d) => d.contractId));
-  return [...new Set(ids)];
-}

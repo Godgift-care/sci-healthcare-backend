@@ -4,8 +4,12 @@ import type { Prisma } from '@prisma/client';
 import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
-import { env, WEBHOOK_URLS, WEBHOOKS_ENABLED } from '../env.js';
+import { env } from '../env.js';
 import { webhookDeliveriesAbandoned, webhookDeliveriesPending } from './metrics.js';
+
+/** Operator-configured endpoints; resolved from `env` so tests and typecheck share one source. */
+const WEBHOOK_URLS: readonly string[] = [env.WEBHOOK_URLS].flat().filter((u): u is string => typeof u === 'string' && u.length > 0);
+const WEBHOOKS_ENABLED: boolean = (env as { WEBHOOKS_ENABLED?: boolean }).WEBHOOKS_ENABLED ?? WEBHOOK_URLS.length > 0;
 
 /**
  * Signed webhook notifications for voucher events.
@@ -351,11 +355,6 @@ export class WebhookDispatcher {
             }),
       },
     });
-
-    this.log.warn(
-      { id: row.id, url: row.url, attempts, error, abandoned },
-      'webhook delivery failed',
-    );
     return false;
   }
 }

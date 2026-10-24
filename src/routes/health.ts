@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
-import { env, WEBHOOKS_ENABLED } from '../env.js';
+import { env } from '../env.js';
 import { lastIndexedLedger } from '../lib/cache.js';
 import { isPostgres } from '../lib/database.js';
 import { webhookBacklog } from '../lib/webhooks.js';
@@ -208,14 +208,14 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       // `READY_WEBHOOK_MAX_AGE_MS` cannot be normal retry traffic — every
       // attempt resolves inside the backoff ceiling — so it is degraded.
       const backlog = await webhookBacklog();
-      const webhookState = !WEBHOOKS_ENABLED
+      const webhookState = !env.WEBHOOKS_ENABLED
         ? 'disabled'
         : backlog.stale > 0
           ? 'backlog'
           : 'ok';
       checks.webhooks = {
         state: webhookState,
-        enabled: WEBHOOKS_ENABLED,
+        enabled: env.WEBHOOKS_ENABLED,
         pending: backlog.pending,
         abandoned: backlog.abandoned,
         oldestPendingAgeSeconds: backlog.oldestPendingAgeSeconds,
@@ -312,81 +312,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       faucetWallets: faucetWallets.length,
     };
 
-    if (currentLedger !== null) {
-      statsCache = { ledger: currentLedger, data: result };
-    }
-
+    if (currentLedger !== null) statsCache = { ledger: currentLedger, data: result };
     return result;
-  });
-
-  /**
-   * Protocol activity as a per-UTC-day time series.
-   *
-   * Counters are cumulative, which hides whether anything happened this
-   * month. This is the same funded / settled / refunded split as the totals,
-   * but bucketed by day so growth is visible.
-   *
-   * Days with no activity are present with zero counts and a "0" amount, so
-   * a chart does not have to fill gaps itself. Amounts are exact base-unit
-   * strings, summed with BigInt — never floats.
-   */
-  app.get('/stats/daily', async (req, reply) => {
-    const parsed = dailyQuery.safeParse(req.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid_query', issues: parsed.error.issues });
-    }
-    const { days } = parsed.data;
-
-    // Anchor the window to UTC midnight so a day boundary is a day boundary
-    // regardless of the server's timezone. `to` is exclusive for the query.
-    const now = new Date();
-    const todayUtcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const fromMs = todayUtcMs - (days - 1) * MS_PER_DAY;
-    const from = new Date(fromMs);
-
-    const fromDateStr = utcDate(from);
-    const toDateStr = utcDate(new Date(todayUtcMs));
-
-    const stats = await prisma.dailyStat.findMany({
-      where: {
-        date: {
-          gte: fromDateStr,
-          lte: toDateStr,
-        },
-      },
-    });
-
-    const byDate = new Map<string, (typeof stats)[number]>();
-    for (const s of stats) {
-      byDate.set(s.date, s);
-    }
-
-    const series: DailyRow[] = [];
-    for (let i = 0; i < days; i += 1) {
-      const dateStr = utcDate(new Date(fromMs + i * MS_PER_DAY));
-      const stat = byDate.get(dateStr);
-      series.push({
-        date: dateStr,
-        funded: {
-          count: stat?.fundedCount ?? 0,
-          amount: stat?.fundedAmount ?? '0',
-        },
-        settled: {
-          count: stat?.settledCount ?? 0,
-          amount: stat?.settledAmount ?? '0',
-        },
-        refunded: {
-          count: stat?.refundedCount ?? 0,
-          amount: stat?.refundedAmount ?? '0',
-        },
-      });
-    }
-
-    return {
-      days,
-      from: from.toISOString(),
-      to: new Date(todayUtcMs).toISOString(),
-      series,
-    };
   });
 }

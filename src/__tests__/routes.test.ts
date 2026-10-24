@@ -27,8 +27,8 @@ const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
 const OTHER_REF = 'a'.repeat(64);
 const DAY = 24 * 60 * 60 * 1000;
 
-const REGISTRY = CONTRACTS.find((c) => c.contract === 'registry')!.contractId;
-const VOUCHER = CONTRACTS.find((c) => c.contract === 'voucher')!.contractId;
+const REGISTRY = CONTRACTS.find((c: { contract: string }) => c.contract === 'registry')!.contractId;
+const VOUCHER = CONTRACTS.find((c: { contract: string }) => c.contract === 'voucher')!.contractId;
 
 let app: FastifyInstance;
 let testClientId = 0;

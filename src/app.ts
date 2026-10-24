@@ -309,7 +309,7 @@ export async function buildApp(
           reply.header('www-authenticate', 'Bearer');
           return reply.code(401).send({
             error: 'unauthorized',
-            message: 'A valid bearer token is required to read metrics',
+            message: 'A valid bearer token is required for /metrics',
           });
         }
       }
@@ -318,29 +318,13 @@ export async function buildApp(
     },
   );
 
-  // `/v1` is the canonical API. The unversioned paths stay as aliases for
-  // clients already deployed against them, and say so on every response.
   await app.register(
     async (v1) => {
       await registerRoutes(v1);
     },
     { prefix: '/v1' },
   );
-
-  await app.register(async (legacy) => {
-    legacy.addHook('onSend', async (req, reply, payload) => {
-      reply.header('deprecation', 'true');
-      reply.header('link', `<${v1Path(req.url)}>; rel="successor-version"`);
-      return payload;
-    });
-    await registerRoutes(legacy);
-  });
+  await registerRoutes(app);
 
   return app;
-}
-
-function v1Path(url: string): string {
-  const path = url.replace(/[\r\n]/g, '');
-  if (path.startsWith('/v1/') || path === '/v1') return path;
-  return `/v1${path.startsWith('/') ? path : `/${path}`}`;
 }
