@@ -135,18 +135,24 @@
                     },
                     "vouchers": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "byStatus": {
                       "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
                       "additionalProperties": {
                         "type": "integer",
-                        "minimum": 0
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       }
                     },
                     "settledVouchers": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "settledValue": {
                       "type": "string",
@@ -307,58 +313,9 @@
     },
     "/v1/stats/services": {
       "get": {
-        "summary": "Most-funded services",
-        "tags": [
-          "health"
-        ],
-        "description": "Voucher count and total value per service code and label, sorted by value descending. Use ?limit=N to cap the number of rows (top N).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "in": "query",
-            "name": "limit",
-            "required": false
-          }
-        ],
         "responses": {
           "200": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "serviceCode": {
-                        "type": "string"
-                      },
-                      "label": {
-                        "type": "string"
-                      },
-                      "vouchers": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "value": {
-                        "type": "string",
-                        "description": "Total voucher value as a base-unit decimal string."
-                      }
-                    },
-                    "required": [
-                      "serviceCode",
-                      "label",
-                      "vouchers",
-                      "value"
-                    ],
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
+            "description": "Default Response"
           }
         }
       }
@@ -700,18 +657,24 @@
                     },
                     "vouchers": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "byStatus": {
                       "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
                       "additionalProperties": {
                         "type": "integer",
-                        "minimum": 0
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       }
                     },
                     "settledVouchers": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "settledValue": {
                       "type": "string",
@@ -863,6 +826,15 @@
             "required": true
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/stats/services": {
+      "get": {
         "responses": {
           "200": {
             "description": "Default Response"
