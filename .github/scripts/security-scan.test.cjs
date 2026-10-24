@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   scanAddedLines, scanFile, scanPackageJson, scanNpmLock, scanCargoLock, decide, classifyNewDependency, levenshtein,
+  scriptsRunningNewFiles,
 } = require('./security-scan.cjs');
 
 const config = {
@@ -152,4 +153,36 @@ test('decision: blocks always fail; review findings pass only when reviewed', ()
 test('edit distance', () => {
   assert.equal(levenshtein('fastify', 'fastfiy'), 2);
   assert.equal(levenshtein('zod', 'zod'), 0);
+});
+
+test('code hidden behind a wall of whitespace blocks', () => {
+  const padded = 'export default config;' + '\t'.repeat(300) + 'eval(atob(payload))';
+  assert.ok(rules(scanAddedLines('postcss.config.mjs', lines(padded), config)).includes('block:hidden-code'));
+  assert.ok(rules(scanAddedLines('api.js', lines(' '.repeat(500) + 'var a=1'), config)).includes('block:hidden-code'));
+  // Ordinary indentation and Markdown tables are fine.
+  assert.ok(!rules(scanAddedLines('src/a.ts', lines('        return value;'), config)).includes('block:hidden-code'));
+  assert.ok(!rules(scanAddedLines('README.md', lines('| a |' + ' '.repeat(60) + '| b |'), config)).includes('block:hidden-code'));
+});
+
+test('javascript-obfuscator output blocks', () => {
+  assert.ok(rules(scanAddedLines('a.js', lines('var _0x3f2a1b=["x"];'), config)).includes('block:obfuscated-javascript'));
+  const arith = 'x=parseInt(0x6f5)+parseInt(0x2)*parseInt(0xb2b)';
+  assert.ok(rules(scanAddedLines('a.js', lines(arith), config)).includes('block:obfuscated-javascript'));
+  assert.ok(!rules(scanAddedLines('a.ts', lines('const n = parseInt(0x10);'), config)).includes('block:obfuscated-javascript'));
+});
+
+test('an npm script that runs a file the pull request adds blocks', () => {
+  const base = JSON.stringify({ scripts: { build: 'next build' } });
+  const head = JSON.stringify({ scripts: { build: 'node api.js && next build' } });
+  const findings = scanPackageJson('package.json', base, head);
+  const added = [{ status: 'A', file: 'api.js' }, { status: 'M', file: 'package.json' }];
+  assert.deepEqual(rules(scriptsRunningNewFiles(findings, added)), ['block:script-runs-new-file']);
+  // An existing file is a normal script change, left for review.
+  assert.deepEqual(scriptsRunningNewFiles(findings, [{ status: 'M', file: 'api.js' }]), []);
+  // A brand-new script name running a new file is an ordinary new tool.
+  const newScript = scanPackageJson('package.json', base, JSON.stringify({ scripts: { build: 'next build', seed: 'tsx src/seed.ts' } }));
+  assert.deepEqual(scriptsRunningNewFiles(newScript, [{ status: 'A', file: 'src/seed.ts' }]), []);
+  // Paths resolve relative to the package.json that declares the script.
+  const nested = scanPackageJson('examples/x/package.json', base, JSON.stringify({ scripts: { build: 'node ./run.js' } }));
+  assert.equal(scriptsRunningNewFiles(nested, [{ status: 'A', file: 'examples/x/run.js' }]).length, 1);
 });
