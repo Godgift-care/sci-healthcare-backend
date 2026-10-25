@@ -133,6 +133,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /version` | Build version and commit, network, RPC endpoints, contract ids, indexer start ledger and process start time |
 | `GET /stats` | Protocol counters for the dashboard |
 | `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day (`days` 1–365, max 365) |
+| `GET /stats/funnel` | Voucher counts and median hours between funded, claimed, attested and settled stages; optionally filter by `country` or clinic address |
 | `GET /providers` | Verified clinics, filterable by `status`, `country`, `q`; each carries the clinic's cached off-chain `metadata` (`null` until fetched) |
 | `GET /providers/:address` | One clinic and its service catalogue, plus its cached off-chain `metadata` |
 | `GET /providers/:address/stats` | A clinic's vouchers by status, total settled value, and median claim/attestation times |
@@ -635,6 +636,13 @@ with no activity as zeros so a chart never has to fill gaps. Each row is
 `{ date, funded, settled, refunded }`, where each bucket is `{ count, amount }`
 and `amount` is exact base units. Funded is bucketed by voucher `createdAt`,
 settled by receipt `settledAt`, and refunded by a voucher's `refundedAt`.
+
+`GET /stats/funnel` returns `counts` for funded, claimed, attested and settled
+vouchers plus `medianHours` for `fundedToClaimed`, `claimedToAttested` and
+`attestedToSettled`. Pass a two-letter `country` code or a clinic's `clinic`
+address to scope the results; both filters can be combined. Medians exclude
+missing or reversed timestamps and are `null` when a stage has no complete
+intervals. Settlement times come from receipt records.
 
 ## Webhooks
 

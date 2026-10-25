@@ -63,6 +63,145 @@
         }
       }
     },
+    "/v1/stats/funnel": {
+      "get": {
+        "summary": "Voucher funnel counts and median stage times",
+        "tags": [
+          "health"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 2
+            },
+            "in": "query",
+            "name": "country",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 56
+            },
+            "in": "query",
+            "name": "clinic",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "country": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "clinic": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "funded": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "claimed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "attested": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "settled": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "funded",
+                        "claimed",
+                        "attested",
+                        "settled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "medianHours": {
+                      "type": "object",
+                      "properties": {
+                        "fundedToClaimed": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "claimedToAttested": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "attestedToSettled": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "fundedToClaimed",
+                        "claimedToAttested",
+                        "attestedToSettled"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "country",
+                    "clinic",
+                    "counts",
+                    "medianHours"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/stats/daily": {
       "get": {
         "responses": {
@@ -581,6 +720,145 @@
         "responses": {
           "200": {
             "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/stats/funnel": {
+      "get": {
+        "summary": "Voucher funnel counts and median stage times",
+        "tags": [
+          "health"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 2
+            },
+            "in": "query",
+            "name": "country",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 56
+            },
+            "in": "query",
+            "name": "clinic",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "country": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "clinic": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "funded": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "claimed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "attested": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "settled": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "funded",
+                        "claimed",
+                        "attested",
+                        "settled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "medianHours": {
+                      "type": "object",
+                      "properties": {
+                        "fundedToClaimed": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "claimedToAttested": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "attestedToSettled": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "fundedToClaimed",
+                        "claimedToAttested",
+                        "attestedToSettled"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "country",
+                    "clinic",
+                    "counts",
+                    "medianHours"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           }
         }
       }
