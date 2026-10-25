@@ -66,13 +66,17 @@ export type RetryResult = { retried: number; recovered: number; remaining: numbe
 
 /**
  * Re-decodes and re-applies every stored failed event. Rows that now succeed
- * are deleted; rows that still fail keep their place with a bumped attempt
- * count and the latest error.
+ * have their `resolvedAt` stamped so they are marked resolved (and eventually
+ * pruned by operational data retention); rows that still fail keep their place
+ * with a bumped attempt count and the latest error.
  */
 export async function retryFailed(
   apply: (e: DecodedEvent) => Promise<void>,
 ): Promise<RetryResult> {
-  const rows = await prisma.failedEvent.findMany({ orderBy: [{ ledger: 'asc' }, { id: 'asc' }] });
+  const rows = await prisma.failedEvent.findMany({
+    where: { resolvedAt: null },
+    orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
+  });
   let recovered = 0;
 
   for (const row of rows) {
@@ -80,7 +84,10 @@ export async function retryFailed(
       const decoded = decodeEvent(JSON.parse(row.raw) as RawEvent);
       if (!decoded) throw new Error('event no longer decodes');
       await apply(decoded);
-      await prisma.failedEvent.delete({ where: { id: row.id } });
+      await prisma.failedEvent.update({
+        where: { id: row.id },
+        data: { resolvedAt: new Date(), lastSeen: new Date() },
+      });
       recovered += 1;
     } catch (err) {
       await prisma.failedEvent.update({

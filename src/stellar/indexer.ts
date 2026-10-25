@@ -50,6 +50,8 @@ import { recordFailure } from './failed.js';
 import { IndexerLease } from './lease.js';
 import { collectEvents } from './paging.js';
 import { withSpan } from '../tracing.js';
+import { purgeExpiredOperationalData } from '../lib/retention.js';
+import type { rpc } from '@stellar/stellar-sdk';
 
 type Db = Prisma.TransactionClient;
 
@@ -204,6 +206,10 @@ export type IndexerOptions = {
    * production bound.
    */
   shutdownTimeoutMs?: number;
+  /** Optional RPC server interface (for fake RPC testing or custom RPC endpoints). */
+  rpcServer?: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
+  /** Batch page size passed to collectEvents (default: 200). */
+  pageSize?: number;
 };
 
 export class Indexer {
@@ -224,8 +230,12 @@ export class Indexer {
   private failures = 0;
   /** Wall-clock ms of the last provider-metadata due-check (#159). */
   private lastMetadataCheckAt = 0;
+  /** Wall-clock ms of the last operational data retention check (#142). */
+  private lastRetentionCheckAt = 0;
   private readonly lease: IndexerLease;
   private readonly shutdownTimeoutMs: number;
+  private readonly rpcServer: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
+  private readonly pageSize: number;
 
   constructor(
     private readonly log: FastifyBaseLogger,
@@ -233,6 +243,8 @@ export class Indexer {
   ) {
     this.lease = opts.lease ?? new IndexerLease();
     this.shutdownTimeoutMs = opts.shutdownTimeoutMs ?? env.SHUTDOWN_TIMEOUT_MS;
+    this.rpcServer = opts.rpcServer ?? server;
+    this.pageSize = opts.pageSize ?? 200;
   }
 
   async start(): Promise<void> {
@@ -244,7 +256,7 @@ export class Indexer {
       const from =
         env.INDEXER_START_LEDGER > 0
           ? env.INDEXER_START_LEDGER
-          : (await withSpan('rpc.getLatestLedger', () => server.getLatestLedger())).sequence;
+          : (await withSpan('rpc.getLatestLedger', () => this.rpcServer.getLatestLedger())).sequence;
       // upsert, not create: two instances booting together must not race to
       // insert the one row.
       await prisma.indexerState.upsert({
@@ -555,7 +567,7 @@ export class Indexer {
     const state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
     const startLedger = state.lastLedger + 1;
 
-    const health = await withSpan('rpc.getHealth', () => server.getHealth());
+    const health = await withSpan('rpc.getHealth', () => this.rpcServer.getHealth());
     if (startLedger < health.oldestLedger) {
       if (!state.gap) {
         await prisma.indexerState.update({
@@ -588,9 +600,10 @@ export class Indexer {
     const { events, throughLedger, hasMore } = await withSpan(
       'rpc.getContractEvents',
       () =>
-        collectEvents(server, {
+        collectEvents(this.rpcServer, {
           startLedger,
           contractIds: INDEXED_CONTRACTS,
+          pageSize: this.pageSize,
         }),
     );
     this.hasMore = hasMore;
@@ -672,6 +685,7 @@ export class Indexer {
     // must not hold the cursor's transaction open, and a rejected document
     // must not fail the cycle (the read model is already current).
     await this.refreshMetadataIfDue();
+    await this.purgeRetentionIfDue();
 
     if (applied > 0) {
       this.log.info({ applied, throughLedger: advanceTo }, 'indexed events');
@@ -708,6 +722,21 @@ export class Indexer {
       await refreshDueProviderMetadata({ log: this.log });
     } catch (err) {
       this.log.warn({ err }, 'provider metadata refresh failed');
+    }
+  }
+
+  /**
+   * Purges delivered webhooks and resolved failed events older than RETENTION_DAYS.
+   * Runs at most once an hour while this instance holds the single-writer lease.
+   */
+  private async purgeRetentionIfDue(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastRetentionCheckAt < 60 * 60 * 1000) return;
+    this.lastRetentionCheckAt = now;
+    try {
+      await purgeExpiredOperationalData();
+    } catch (err) {
+      this.log.warn({ err }, 'operational data retention cleanup failed');
     }
   }
 

@@ -254,6 +254,7 @@ visible.
 | `attempts` | `Int` | No | database default `1` | Incremented by `npm run indexer:retry-failed` |
 | `firstSeen` | `DateTime` | No | first failure time | |
 | `lastSeen` | `DateTime` | No | most recent failure time | |
+| `resolvedAt` | `DateTime?` | Yes | `npm run indexer:retry-failed` | When the event was successfully re-projected; purged after retention window |
 
 `/ready` reports degraded while this table is non-empty;
 `npm run indexer:reconcile` and `npm run indexer:retry-failed` are the
