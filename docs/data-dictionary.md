@@ -270,6 +270,7 @@ ledger, and which process is currently allowed to advance it.
 | `id` | `Int` | No | constant `1` | Single-row table; upserted, never raced |
 | `lastLedger` | `Int` | No | `INDEXER_START_LEDGER` at first boot, then the last committed batch | The cursor: only advanced after a batch commits, so a crash replays rather than skips |
 | `updatedAt` | `DateTime` | No | Prisma `@updatedAt` | |
+| `paused` | `Boolean` | No | `npm run indexer:pause` / `npm run indexer:resume` | When true, the cursor is retained and no events are applied; `/ready` reports `paused` and 503 |
 | `leaseOwner` | `String?` | Yes | indexer lease (`src/stellar/lease.ts`) | Instance currently allowed to advance the cursor; null when nobody is indexing |
 | `leaseExpiresAt` | `DateTime?` | Yes | lease acquisition/renewal | After this instant the lease is free for another instance |
 | `gap` | `Boolean` | No | database default `false`, set on retention-gap detection | True when the cursor fell outside the RPC retention window; `/ready` returns 503 |
