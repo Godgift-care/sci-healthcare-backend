@@ -150,7 +150,7 @@ describe('failed events', () => {
     expect(JSON.parse(rows[0]!.raw)).toMatchObject({ id: 'bad-1', ledger: 101 });
   });
 
-  it('retry applies a fixed event and clears its row', async () => {
+  it('retry applies a fixed event and marks it resolved', async () => {
     stub([failing()]);
     await new Indexer(fakeLog()).tick();
 
@@ -159,7 +159,9 @@ describe('failed events', () => {
     });
 
     expect(result).toEqual({ retried: 1, recovered: 1, remaining: 0 });
-    expect(await prisma.failedEvent.count()).toBe(0);
+    expect(await prisma.failedEvent.count({ where: { resolvedAt: null } })).toBe(0);
+    const resolved = await prisma.failedEvent.findUnique({ where: { id: 'bad-1' } });
+    expect(resolved?.resolvedAt).toBeInstanceOf(Date);
   });
 
   it('retry keeps an event that still fails and bumps its attempts', async () => {
