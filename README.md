@@ -855,6 +855,26 @@ Set `INDEXER_START_LEDGER` to the deployment ledger. Leaving it at `0` starts at
 
 `READY_MAX_LAG_LEDGERS` (default `120`, about ten minutes at five seconds a ledger) is where `/ready` flips from 200 to 503. A free-tier demo can tolerate a much larger window than production, so tune it per deployment. `GET /ready` echoes it as `checks.maxLagLedgers`.
 
+Pause and resume the indexer without changing environment variables or
+redeploying:
+
+```bash
+npm run indexer:pause
+npm run indexer:resume
+```
+
+Pausing preserves the cursor and applies no events. `/ready` returns `503`
+with `checks.indexer: "paused"` until indexing resumes. A read-model snapshot
+can be moved to a new, empty migrated database with:
+
+```bash
+npm run snapshot:export -- --out sci-healthcare-snapshot.json.gz
+npm run snapshot:import -- --file sci-healthcare-snapshot.json.gz
+```
+
+Snapshots include every table and the cursor, restore dates and 64-bit voucher
+sequence values, and refuse to write into a non-empty database.
+
 `READY_WEBHOOK_MAX_AGE_MS` (default `900000`, fifteen minutes) is the same idea for the webhook outbox: a delivery that has been pending longer than that makes `/ready` answer 503 with `checks.webhooks.state: "backlog"`. Every retry of a reachable endpoint resolves inside the backoff ceiling (six attempts within a few minutes), so an older row means the delivery loop is not draining, not that a clinic's endpoint is slow. With `WEBHOOK_URLS` unset the check reports `state: "disabled"` and never degrades.
 
 `SOROBAN_RPC_URLS` is the failover list. Set it to two endpoints and an outage at the first one costs a few failed reads rather than an indexing stall; with one endpoint (or only `SOROBAN_RPC_URL` set) the behaviour is exactly as before. `GET /version` reports every configured endpoint and `GET /ready` reports the active one, both with any credentials redacted.

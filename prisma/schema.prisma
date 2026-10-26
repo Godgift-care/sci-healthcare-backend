@@ -309,6 +309,8 @@ model IndexerState {
   id             Int       @id @default(1)
   lastLedger     Int
   updatedAt      DateTime  @updatedAt
+  /// Operator-controlled pause flag. The cursor is retained while paused.
+  paused         Boolean   @default(false)
   /// Instance holding the lease; null when no one is indexing.
   leaseOwner     String?
   /// After this instant the lease is free for another instance to take.

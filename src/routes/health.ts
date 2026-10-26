@@ -275,8 +275,12 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       checks.indexedLedger = state?.lastLedger ?? null;
       checks.lagLedgers = lag;
       checks.maxLagLedgers = env.READY_MAX_LAG_LEDGERS;
+      checks.paused = state?.paused ?? false;
 
-      if (state?.gap) {
+      if (state?.paused) {
+        healthy = false;
+        checks.indexer = 'paused';
+      } else if (state?.gap) {
         healthy = false;
         checks.indexer = 'gap';
         checks.gap = {
