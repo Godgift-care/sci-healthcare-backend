@@ -10,7 +10,7 @@ import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { providerMetadataOf } from '../lib/provider-metadata.js';
-import { countryActivity, serialiseProviderDetail } from '../lib/providers.js';
+import { serialiseProviderDetail } from '../lib/providers.js';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
@@ -320,52 +320,4 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       })),
     };
   });
-
-  /** Every observed price for one service, oldest first. */
-  app.get('/providers/:address/services/:code/history', async (req) => {
-    const { address, code } = req.params as { address: string; code: string };
-    const serviceCode = Number(code);
-    if (!Number.isInteger(serviceCode) || serviceCode < 0) {
-      throw new ApiError(400, 'invalid_code', 'code must be a non-negative integer');
-    }
-
-    const provider = await prisma.provider.findUnique({
-      where: { address },
-      select: { address: true },
-    });
-    if (!provider) throw new ApiError(404, 'provider_not_found', 'Provider not found');
-
-    const changes = await prisma.servicePriceChange.findMany({
-      where: { providerAddress: address, code: serviceCode },
-      orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
-    });
-
-    return {
-      providerAddress: address,
-      code: serviceCode,
-      history: changes.map((c) => ({
-        price: c.price,
-        priceDisplay: fromBaseUnits(c.price),
-        ledger: c.ledger,
-        changedAt: c.changedAt,
-      })),
-    };
-  });
-
-  app.get('/countries', async () => {
-    const grouped = await prisma.provider.groupBy({
-      by: ['country'],
-      where: { status: 'Active' },
-      _count: { _all: true },
-    });
-
-    return {
-      countries: grouped
-        .map((g) => ({ code: g.country, clinicCount: g._count._all }))
-        .sort((a, b) => a.code.localeCompare(b.code)),
-    };
-  });
-
-  /** Funded and settled vouchers per clinic country (#163). */
-  app.get('/stats/countries', async () => ({ countries: await countryActivity() }));
 }

@@ -133,6 +133,9 @@ jobs:
   # printed in the job log but do not fail it. `--omit=dev` keeps the gate on
   # what actually ships; npm audit reads package-lock.json, so it checks
   # exactly the dependency set this CI builds.
+  # Known open finding: zod <4.6.6 (GHSA-mrhx-c7xc-m3w5, high). The only
+  # available fix is a breaking major bump via `npm audit fix --force`, which
+  # needs a human decision; this gate intentionally stays red until it is made.
   audit:
     name: audit
     runs-on: ubuntu-latest

@@ -391,6 +391,8 @@ describe('OpenAPI spec', () => {
     expect(spec.paths['/providers']).toBeDefined();
     expect(spec.paths['/receipts']).toBeDefined();
     expect(spec.paths['/governance']).toBeDefined();
+    expect(spec.paths['/countries']).toBeDefined();
+    expect(spec.paths['/providers/{address}/history']).toBeDefined();
   });
 
   it('serves Swagger UI at /docs', async () => {
