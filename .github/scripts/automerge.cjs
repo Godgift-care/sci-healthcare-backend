@@ -140,6 +140,33 @@ function isWorkflowPermissionError(err) {
   return err && err.status === 403 && /not accessible by integration|workflow/i.test(err.message || '');
 }
 
+/** True when the GitHub API reports a rate-limit exhaustion (403 or 429). */
+function isRateLimitError(err) {
+  if (!err) return false;
+  if (err.status === 429) return true;
+  return err.status === 403 && /rate limit/i.test(err.message || '');
+}
+
+/**
+ * Runs a GitHub API call, retrying with backoff while the rate limit is hit,
+ * so one exhausted window does not abort the whole evaluation pass.
+ */
+async function withRateLimitRetry(fn, { attempts = 5, baseDelayMs = 2000, core } = {}) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isRateLimitError(err) || i === attempts - 1) throw err;
+      const delay = baseDelayMs * 2 ** i;
+      if (core) core.warning(`rate limited, retrying in ${delay}ms`);
+      await sleep(delay);
+    }
+  }
+  throw lastErr;
+}
+
 const MESSAGES = {
   conflicts: () =>
     'This pull request has merge conflicts with `main`. Please rebase or merge `main` into your branch; it will be merged automatically once CI passes again.',
@@ -159,7 +186,7 @@ const MESSAGES = {
 };
 
 async function paginate(github, fn, params) {
-  return github.paginate(fn, { ...params, per_page: 100 });
+  return withRateLimitRetry(() => github.paginate(fn, { ...params, per_page: 100 }));
 }
 
 /**

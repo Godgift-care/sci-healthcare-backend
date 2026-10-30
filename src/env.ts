@@ -49,6 +49,19 @@ const envShape = z.object({
    */
   READY_WEBHOOK_MAX_AGE_MS: z.coerce.number().int().positive().default(900_000),
 
+  /**
+   * Bearer token required on `GET /metrics`. Unset leaves the route open,
+   * which is the local-development default. When set, scrapers must send
+   * `Authorization: Bearer <METRICS_TOKEN>`. Surrounding whitespace is
+   * rejected rather than silently trimmed, so a token pasted with a trailing
+   * newline fails at boot instead of producing a 401 on every scrape.
+   */
+  METRICS_TOKEN: z
+    .string()
+    .min(16)
+    .refine((t) => t === t.trim(), 'must not have leading or trailing whitespace')
+    .optional(),
+
   DATABASE_URL: z.string().min(1),
   DATABASE_POOL_SIZE: z.coerce.number().int().positive().optional(),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
