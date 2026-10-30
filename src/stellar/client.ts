@@ -1,7 +1,7 @@
 import { Address, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
 import pino from 'pino';
 
-import { env, RPC_URLS } from '../env.js';
+import { env, redactRpcUrl, RPC_URLS } from '../env.js';
 import { FailoverRpcServer, RpcPool } from './rpc-pool.js';
 
 /**
@@ -21,6 +21,28 @@ export const pool = new RpcPool(RPC_URLS, {
  * endpoint is healthy (see `rpc-pool.ts`).
  */
 export const server = new FailoverRpcServer(pool);
+
+export type ContractInstanceReader = Pick<rpc.Server, 'getContractInstance'>;
+
+/** Fails boot when a configured contract is absent from the selected network. */
+export async function validateContractIds(
+  contractIds: readonly string[],
+  reader: ContractInstanceReader = server,
+): Promise<void> {
+  for (const contractId of [...new Set(contractIds)]) {
+    try {
+      await reader.getContractInstance(contractId);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Configured contract ${contractId} was not found on ${env.STELLAR_NETWORK} ` +
+          `via ${redactRpcUrl(server.activeUrl)}. ` +
+          `Check the contract id and STELLAR_NETWORK. RPC error: ${detail}`,
+        { cause: err },
+      );
+    }
+  }
+}
 
 /**
  * Reads a contract view function without submitting a transaction.

@@ -15,7 +15,24 @@ function isValidHttpUrl(val: string): boolean {
   }
 }
 
-export const schema = z.object({
+/** The two parsed fields the CORS rule reads. */
+type CorsConfig = { NODE_ENV: string; CORS_ORIGIN: string };
+
+/** The CORS_ORIGIN rule, as the message it fails with, or null when it holds. */
+function corsViolation(cfg: CorsConfig): string | null {
+  const origins = cfg.CORS_ORIGIN.split(',').map((s) => s.trim());
+  if (cfg.NODE_ENV === 'production' && origins.some((o) => o === '*')) {
+    return 'Wildcard CORS origin "*" is not allowed in production';
+  }
+  const ok = origins.every((o) => {
+    if (o === '*' && cfg.NODE_ENV !== 'production') return true;
+    return isValidHttpUrl(o);
+  });
+  return ok ? null : 'CORS_ORIGIN must contain valid http(s) URLs';
+}
+
+/** The parsed environment shape, before the CORS rule is layered on. */
+const envShape = z.object({
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
   HOST: z.string().default('0.0.0.0'),
@@ -110,31 +127,20 @@ export const schema = z.object({
    * answers 503 and the client retries later.
    */
   SSE_MAX_CONNECTIONS: z.coerce.number().int().positive().default(64),
-}).refine(
-    (cfg) => {
-      const origins = cfg.CORS_ORIGIN.split(',').map((s) => s.trim());
-      if (cfg.NODE_ENV === 'production' && origins.some((o) => o === '*')) {
-        return false;
-      }
-      return origins.every((o) => {
-        if (o === '*' && cfg.NODE_ENV !== 'production') return true;
-        return isValidHttpUrl(o);
-      });
-    },
-    (cfg) => {
-      const origins = cfg.CORS_ORIGIN.split(',').map((s) => s.trim());
-      if (cfg.NODE_ENV === 'production' && origins.some((o) => o === '*')) {
-        return {
-          message: 'Wildcard CORS origin "*" is not allowed in production',
-          path: ['CORS_ORIGIN'],
-        };
-      }
-      return {
-        message: 'CORS_ORIGIN must contain valid http(s) URLs',
-        path: ['CORS_ORIGIN'],
-      };
-    },
-  );
+});
+
+/**
+ * The CORS rule, applied after the shape parses. Kept off the object literal
+ * so `env-docs.test.ts`, which reads the shape as text, stops at its closing
+ * brace.
+ */
+export const schema = envShape.refine((cfg) => corsViolation(cfg) === null, {
+  error: (issue) => ({
+    message:
+      corsViolation(issue.input as CorsConfig) ?? 'CORS_ORIGIN must contain valid http(s) URLs',
+  }),
+  path: ['CORS_ORIGIN'],
+});
 
 /**
  * Expected network passphrases for each STELLAR_NETWORK value.
