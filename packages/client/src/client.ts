@@ -25,6 +25,14 @@ import type {
   VouchersResponse,
 } from './types.js';
 
+/**
+ * Response shape for GET /countries. Declared locally because the generated
+ * ./types.js module does not export it.
+ */
+export interface CountriesResponse {
+  countries: CountryStats[];
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly error: string;
@@ -176,8 +184,8 @@ export class Client {
     );
   }
 
-  async countries(): Promise<{ countries: CountryStats[] }> {
-    return this.request<{ countries: CountryStats[] }>('/countries');
+  async countries(): Promise<CountriesResponse> {
+    return this.request<CountriesResponse>('/countries');
   }
 
   async services(): Promise<ServicesResponse> {

@@ -391,6 +391,8 @@ describe('OpenAPI spec', () => {
     expect(spec.paths['/providers']).toBeDefined();
     expect(spec.paths['/receipts']).toBeDefined();
     expect(spec.paths['/governance']).toBeDefined();
+    expect(spec.paths['/countries']).toBeDefined();
+    expect(spec.paths['/providers/{address}/history']).toBeDefined();
   });
 
   it('serves Swagger UI at /docs', async () => {
@@ -2647,6 +2649,21 @@ describe('query parameter length limits', () => {
     const { status, body } = await get(`/receipts?beneficiaryRef=${longRef}`);
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_query');
+  });
+});
+
+describe('GET /stats/countries', () => {
+  it('counts and sums vouchers per clinic country, in country order', async () => {
+    const { status, body } = await get('/stats/countries');
+    expect(status).toBe(200);
+    const codes = body.countries.map((c: { country: string }) => c.country);
+    expect(codes).toEqual([...codes].sort());
+    for (const c of body.countries) {
+      expect(c.vouchersSettled).toBeLessThanOrEqual(c.vouchersFunded);
+      expect(BigInt(c.settledValue)).toBeLessThanOrEqual(BigInt(c.fundedValue));
+    }
+    const total = body.countries.reduce((n: number, c: { vouchersFunded: number }) => n + c.vouchersFunded, 0);
+    expect(total).toBeGreaterThan(0);
   });
 });
 
