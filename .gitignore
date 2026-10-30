@@ -1,9 +1,9 @@
 node_modules/
 dist/
-.env
 *.db
 *.db-journal
 prisma/dev.db*
 reports/
 .stryker-tmp/
 .DS_Store
+config.bat

@@ -1,0 +1,56 @@
+{
+  "_provenance": {
+    "recordedAt": "2026-10-25T10:00:00Z",
+    "networkPassphrase": "Test SDF Network ; September 2015",
+    "source": "soroban-rpc.getEvents",
+    "startLedger": 100,
+    "page": 1
+  },
+  "response": {
+    "events": [
+      {
+        "type": "contract",
+        "ledger": 100,
+        "ledgerClosedAt": "2026-10-25T10:00:00Z",
+        "id": "0000000100-0000000001",
+        "txHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "contractId": "CREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "topic": [
+          "AAAADwAAABNwcm92aWRlcl9yZWdpc3RlcmVkAA==",
+          "AAAAEgAAAAAAAAAA3OE1Wjr9MOsfKPDWsNw02ae1+OXFOxtIaV+MVB7xRPw="
+        ],
+        "value": "AAAAEQAAAAEAAAADAAAADgAAAAdjb3VudHJ5AAAAAA4AAAACTkcAAAAAAA4AAAAEbmFtZQAAAA4AAAAUSWtlamEgR2VuZXJhbCBDbGluaWMAAAAOAAAADXJlZ2lzdGVyZWRfYXQAAAAAAAAFAAAAAGjcbwA="
+      },
+      {
+        "type": "contract",
+        "ledger": 101,
+        "ledgerClosedAt": "2026-10-25T10:01:00Z",
+        "id": "0000000101-0000000001",
+        "txHash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "contractId": "CVOUCHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "topic": [
+          "AAAADwAAAA92b3VjaGVyX2NyZWF0ZWQA",
+          "AAAAEgAAAAAAAAAA6PTMu3tlhP92sts8LN6l2/OcKhGKQjBlZZVjR3RkJ7Q=",
+          "AAAAEgAAAAAAAAAA3OE1Wjr9MOsfKPDWsNw02ae1+OXFOxtIaV+MVB7xRPw=",
+          "AAAADQAAACABAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=="
+        ],
+        "value": "AAAAEQAAAAEAAAAFAAAADgAAAAZhbW91bnQAAAAAAAUAAAAAAvrwgAAAAA4AAAAKY3JlYXRlZF9hdAAAAAAABQAAAABo3G8AAAAADgAAAApleHBpcmVzX2F0AAAAAAAFAAAAAGq/pXgAAAAOAAAADHNlcnZpY2VfY29kZQAAAAUAAAAAAAAAZQAAAA4AAAAKdm91Y2hlcl9pZAAAAAAABQAAAAAADYzB"
+      },
+      {
+        "type": "contract",
+        "ledger": 102,
+        "ledgerClosedAt": "2026-10-25T10:02:00Z",
+        "id": "0000000102-0000000001",
+        "txHash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "contractId": "CVOUCHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "topic": [
+          "AAAADwAAAA92b3VjaGVyX2NsYWltZWQA",
+          "AAAAEgAAAAAAAAAA3OE1Wjr9MOsfKPDWsNw02ae1+OXFOxtIaV+MVB7xRPw="
+        ],
+        "value": "AAAAEQAAAAEAAAACAAAADgAAAApjbGFpbWVkX2F0AAAAAAAFAAAAAGjdwIAAAAAOAAAACnZvdWNoZXJfaWQAAAAAAAUAAAAAAA2MwQ=="
+      }
+    ],
+    "latestLedger": 105,
+    "cursor": "cursor-page-1"
+  }
+}

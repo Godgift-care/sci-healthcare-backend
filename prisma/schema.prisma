@@ -36,6 +36,7 @@ model Provider {
   address      String   @id
   name         String
   country      String
+  /// Postgres enforces status IN ('Pending', 'Active', 'Suspended') via CHECK constraint (SQLite skips it).
   status       String   // Pending | Active | Suspended
   registeredAt DateTime
   updatedAt    DateTime @updatedAt
@@ -70,6 +71,7 @@ model Service {
   id       String  @id // "{providerAddress}:{code}"
   code     Int
   label    String
+  /// Postgres enforces non-negative price via CHECK constraint (SQLite skips it).
   price    String  // i128 as decimal string; JS numbers cannot hold these
   active   Boolean @default(true)
 
@@ -98,6 +100,7 @@ model Voucher {
   funder          String
   beneficiaryRef  String    // opaque 32-byte hex. Not reversible to an identity.
   serviceCode     Int
+  /// Postgres enforces non-negative amounts via CHECK constraint (SQLite skips it).
   amount          String    // i128 as decimal string
   /// `amount` zero-padded to 39 digits (`amountKey()` in src/lib/amounts.ts),
   /// so string order is numeric order and `GET /vouchers?sort=amount` and the
@@ -107,6 +110,7 @@ model Voucher {
   /// by migration `20260110000000_voucher_amount_key`. Never exposed by an
   /// API response.
   amountKey       String    @default("")
+  /// Postgres enforces status IN ('Funded', 'Claimed', 'Attested', 'Settled', 'Disputed', 'Refunded') via CHECK constraint (SQLite skips it).
   status          String    // Funded | Claimed | Attested | Settled | Disputed | Refunded
   createdAt       DateTime
   expiresAt       DateTime
@@ -190,6 +194,7 @@ model Receipt {
   beneficiaryRef  String
   providerAddress String
   serviceCode     Int
+  /// Postgres enforces non-negative amounts via CHECK constraint (SQLite skips it).
   amount          String
   settledAt       DateTime
 
@@ -294,8 +299,12 @@ model FailedEvent {
   attempts  Int      @default(1)
   firstSeen DateTime
   lastSeen  DateTime
+  /// Stamped when the failure has been successfully retried or resolved.
+  /// Operational data retention cleans up resolved failures older than RETENTION_DAYS.
+  resolvedAt DateTime?
 
   @@index([ledger])
+  @@index([resolvedAt])
 }
 
 /// Single-row table tracking how far the indexer has replayed the ledger,
@@ -309,6 +318,8 @@ model IndexerState {
   id             Int       @id @default(1)
   lastLedger     Int
   updatedAt      DateTime  @updatedAt
+  /// Operator-controlled pause flag. The cursor is retained while paused.
+  paused         Boolean   @default(false)
   /// Instance holding the lease; null when no one is indexing.
   leaseOwner     String?
   /// After this instant the lease is free for another instance to take.

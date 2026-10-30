@@ -155,4 +155,10 @@ export class FailoverRpcServer {
   ): ReturnType<rpc.Server['simulateTransaction']> {
     return this.pool.run((s) => s.simulateTransaction(...args));
   }
+
+  getContractInstance(
+    ...args: Parameters<rpc.Server['getContractInstance']>
+  ): ReturnType<rpc.Server['getContractInstance']> {
+    return this.pool.run((s) => s.getContractInstance(...args));
+  }
 }

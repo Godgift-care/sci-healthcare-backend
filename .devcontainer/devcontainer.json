@@ -1,0 +1,21 @@
+{
+  // Pins Codespaces to the Node version in .nvmrc. Without this the default
+  // image picks its own Node, which is the usual reason `npm ci` fails here
+  // but passes in CI.
+  "name": "sci-healthcare-backend",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+
+  // Mirrors the CI install order: dependencies, then the Prisma client that
+  // typecheck and the test suites import.
+  "postCreateCommand": "npm ci && npx prisma generate",
+
+  // PORT from .env.example; DATABASE_URL defaults to SQLite, so no database
+  // service is needed for a plain `npm run dev`.
+  "forwardPorts": [8080],
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "Prisma.prisma"]
+    }
+  }
+}

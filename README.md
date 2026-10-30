@@ -134,6 +134,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /version` | Build version and commit, network, RPC endpoints, contract ids, indexer start ledger and process start time |
 | `GET /stats` | Protocol counters for the dashboard |
 | `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day (`days` 1–365, max 365) |
+| `GET /stats/funnel` | Voucher counts and median hours between funded, claimed, attested and settled stages; optionally filter by `country` or clinic address |
 | `GET /providers` | Verified clinics, filterable by `status`, `country`, `q`; each carries the clinic's cached off-chain `metadata` (`null` until fetched) |
 | `GET /providers/:address` | One clinic and its service catalogue, plus its cached off-chain `metadata` |
 | `GET /providers/:address/stats` | A clinic's vouchers by status, total settled value, and median claim/attestation times |
@@ -255,6 +256,15 @@ npm run client:generate
 ```
 
 See [`packages/client/README.md`](packages/client/README.md) for installation and usage examples.
+
+The package also ships a `sci` command-line client covering the same read
+routes, for scripts and cron jobs:
+
+```bash
+npx --package @sci-healthcare/client sci stats
+npx --package @sci-healthcare/client sci vouchers --provider GDOO... --status Funded
+sci vouchers --funder GDUP... --json | jq -r '.vouchers[].id'   # table or JSON output
+```
 
 ### Examples
 
@@ -628,6 +638,13 @@ with no activity as zeros so a chart never has to fill gaps. Each row is
 and `amount` is exact base units. Funded is bucketed by voucher `createdAt`,
 settled by receipt `settledAt`, and refunded by a voucher's `refundedAt`.
 
+`GET /stats/funnel` returns `counts` for funded, claimed, attested and settled
+vouchers plus `medianHours` for `fundedToClaimed`, `claimedToAttested` and
+`attestedToSettled`. Pass a two-letter `country` code or a clinic's `clinic`
+address to scope the results; both filters can be combined. Medians exclude
+missing or reversed timestamps and are `null` when a stage has no complete
+intervals. Settlement times come from receipt records.
+
 ## Webhooks
 
 Set `WEBHOOK_URLS` to a comma-separated list of endpoints and `WEBHOOK_SECRET`
@@ -638,6 +655,82 @@ indexer. Failed deliveries retry with exponential backoff (five seconds
 doubling, capped at ten minutes) and are given up on after six attempts or a
 permanent 4xx response.
 
+### Delivery sequence
+
+```mermaid
+sequenceDiagram
+    participant RPC as Soroban RPC
+    participant IDX as Indexer
+    participant OUT as Outbox (WebhookDelivery)
+    participant DSP as WebhookDispatcher
+    participant EP as Your endpoint
+
+    RPC->>IDX: voucher_settled
+    Note over IDX,OUT: one transaction: the projection and the outbox row commit or roll back together<br/>so an event that failed to project is never announced
+    IDX->>OUT: INSERT row (attempts = 0, nextAttemptAt = now, one row per endpoint)
+    loop every WEBHOOK_DELIVERY_INTERVAL_MS (5 s)
+        DSP->>OUT: SELECT rows with deliveredAt and abandonedAt null and nextAttemptAt <= now<br/>(ordered by nextAttemptAt, up to 50 per cycle)
+        DSP->>EP: POST payload + X-SCI-Signature header
+        alt 2xx
+            EP-->>DSP: 204 No Content
+            Note over OUT: deliveredAt set, lastError cleared, row retired
+        else 5xx, 408, 429 or a network error
+            EP-->>DSP: 503 / timeout / connection refused
+            Note over OUT: attempts++, lastError set, nextAttemptAt = now + backoffMs(attempts)
+        else any other 4xx (400, 401, 404, ...)
+            EP-->>DSP: 404 Not Found
+            Note over OUT: abandonedAt set immediately, never retried again
+        end
+    end
+```
+
+The outbox row is written inside the same transaction as the projection it
+describes, and the dispatcher is a separate loop that wakes every
+`WEBHOOK_DELIVERY_INTERVAL_MS` (5 s): a slow or dead endpoint can therefore
+never stall the indexer, and a rolled-back projection never sends a
+notification.
+
+### Retry schedule
+
+Numbers from `src/lib/webhooks.ts`: `WEBHOOK_BASE_BACKOFF_MS = 5_000`,
+`WEBHOOK_MAX_BACKOFF_MS = 600_000` (ten minutes),
+`WEBHOOK_MAX_ATTEMPTS = 6`, `WEBHOOK_DELIVERY_INTERVAL_MS = 5_000`. The
+delay after a failed attempt is `backoffMs(attempt)` = base doubled once per
+attempt, capped at ten minutes; because the dispatcher only looks for due
+rows every five seconds, the actual retry lands between the backoff and the
+backoff plus one poll.
+
+| Failed attempt | Backoff (`backoffMs`) | Retry starts between | Outcome of that attempt |
+| --- | --- | --- | --- |
+| 1 | 5 s (`5000` ms) | 5 s and 10 s later | retried |
+| 2 | 10 s (`10000` ms) | 10 s and 15 s later | retried |
+| 3 | 20 s (`20000` ms) | 20 s and 25 s later | retried |
+| 4 | 40 s (`40000` ms) | 40 s and 45 s later | retried |
+| 5 | 80 s (`80000` ms) | 80 s and 85 s later | retried |
+| 6 | n/a | n/a | **abandoned** (`attempts >= WEBHOOK_MAX_ATTEMPTS`) |
+
+With six attempts the largest delay ever reached is 80 s, so the ten-minute
+cap only matters for callers that raise `WEBHOOK_MAX_ATTEMPTS`. A permanent
+response (any 4xx other than 408 and 429) skips the remaining attempts and
+abandons the row on the spot: a 404 will not become a 204 by waiting.
+
+### What a receiver must assume
+
+- **At-least-once.** A delivery that succeeds after the receiver processed
+  it but before the row was marked (a timeout, a crash between the response
+  and the commit) is retried. Deduplicate on `(event, voucherId)`, or treat
+  a repeated notification as a no-op; handlers should be idempotent anyway.
+- **No cross-event ordering.** Rows are enqueued in ledger order, but a
+  failing row backs off while newer rows keep flowing, so a receiver can see
+  `voucher_settled` before the `voucher_claimed` retry that precedes it.
+  `ledger` in the payload is the ordering key when order matters.
+- **Independent endpoints.** Every configured URL gets its own row and its
+  own backoff: one dead clinic endpoint never delays another's deliveries.
+- **The receiver is the only witness to its own downtime.** The sender only
+  knows the HTTP response it got; a 5xx is retried, a 2xx is final, and
+  nothing is re-sent once `deliveredAt` or `abandonedAt` is set. There is no
+  replay command, so a receiver that lost deliveries should read the state
+  from the API (for example `GET /vouchers/:id/events`) rather than wait.
 A backlog is visible instead of silent. `GET /ready` reports
 `checks.webhooks` — `state` (`ok`, `backlog` or `disabled`), `pending`,
 `abandoned`, `oldestPendingAgeSeconds` and `maxPendingAgeSeconds` — and
@@ -763,6 +856,26 @@ this table and the schema drift apart.
 Set `INDEXER_START_LEDGER` to the deployment ledger. Leaving it at `0` starts at the current tip and silently skips all prior history. Soroban RPC also only retains a rolling window of ledgers (about 7 days on testnet) — an indexer that falls further behind than the window cannot catch up, and `/ready` will say so rather than pretend otherwise.
 
 `READY_MAX_LAG_LEDGERS` (default `120`, about ten minutes at five seconds a ledger) is where `/ready` flips from 200 to 503. A free-tier demo can tolerate a much larger window than production, so tune it per deployment. `GET /ready` echoes it as `checks.maxLagLedgers`.
+
+Pause and resume the indexer without changing environment variables or
+redeploying:
+
+```bash
+npm run indexer:pause
+npm run indexer:resume
+```
+
+Pausing preserves the cursor and applies no events. `/ready` returns `503`
+with `checks.indexer: "paused"` until indexing resumes. A read-model snapshot
+can be moved to a new, empty migrated database with:
+
+```bash
+npm run snapshot:export -- --out sci-healthcare-snapshot.json.gz
+npm run snapshot:import -- --file sci-healthcare-snapshot.json.gz
+```
+
+Snapshots include every table and the cursor, restore dates and 64-bit voucher
+sequence values, and refuse to write into a non-empty database.
 
 `READY_WEBHOOK_MAX_AGE_MS` (default `900000`, fifteen minutes) is the same idea for the webhook outbox: a delivery that has been pending longer than that makes `/ready` answer 503 with `checks.webhooks.state: "backlog"`. Every retry of a reachable endpoint resolves inside the backoff ceiling (six attempts within a few minutes), so an older row means the delivery loop is not draining, not that a clinic's endpoint is slow. With `WEBHOOK_URLS` unset the check reports `state: "disabled"` and never degrades.
 

@@ -41,7 +41,7 @@ export type ChainVoucher = {
 };
 
 /** Reads one voucher from the chain; `null` when the contract has no such id. */
-export type VoucherReader = (voucherId: string) => Promise<ChainVoucher | null>;
+export type VoucherReader = (voucherId: string, contractId?: string) => Promise<ChainVoucher | null>;
 
 export type FieldDiff = { field: string; db: string | null; chain: string | null };
 
@@ -159,9 +159,12 @@ export function isVoucherNotFound(err: unknown): boolean {
 }
 
 /** Reads `get_voucher` through simulation. */
-export const readVoucherFromChain: VoucherReader = async (voucherId) => {
+export const readVoucherFromChain: VoucherReader = async (
+  voucherId,
+  contractId = env.VOUCHER_CONTRACT_ID,
+) => {
   try {
-    return await readContract<ChainVoucher>(env.VOUCHER_CONTRACT_ID, 'get_voucher', [
+    return await readContract<ChainVoucher>(contractId, 'get_voucher', [
       voucherIdScVal(voucherId),
     ]);
   } catch (err) {

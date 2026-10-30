@@ -5,9 +5,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "build": "tsc"
+    "start": "node init && node dist/index.js",
+    "dev": "node init && tsx src/index.ts",
+    "build": "node init && tsc"
   },
   "devDependencies": {
     "tsx": "^4.19.2",
