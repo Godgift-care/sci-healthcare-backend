@@ -225,6 +225,210 @@ deleted as soon as a run sees the voucher agree.
    it points at a wrong `VOUCHER_CONTRACT_ID` or a database restored from
    another network, which deleting rows would only hide.
 
+## Switching to a new contract deployment
+
+Redeploying the contracts means three facts have to change together: which
+contract id is *current* for each role, which ids keep being indexed as
+history, and which ledger the new contracts appeared at. Changed in the
+wrong order, one of two things goes wrong:
+
+- **History is lost.** The indexer only fetches events for the ids it knows
+  (`INDEXED_CONTRACTS` in `src/env.ts`: the current ids, the optional
+  faucet, and every `DEPLOYMENTS` entry). An old contract removed from the
+  configuration before it is recorded in `DEPLOYMENTS` is simply no longer
+  polled — every event it emits from that moment is invisible and vouchers
+  in flight on it freeze mid-lifecycle. The mirror image bites too: events
+  the *new* contracts emit before their ids are configured are never fetched
+  afterwards, because the cursor has already moved past the ledger they
+  landed in. The backfill in step 5 is what repairs both directions.
+- **Rows point at the wrong deployment.** `Voucher.deploymentId`,
+  `Receipt.deploymentId` and `Provider.deploymentId` are resolved by looking
+  the event's contract id up in the `Deployment` table at projection time.
+  Boot only *adds* rows: `initializeDeployments()` upserts with `update: {}`,
+  so a row projected while the `Deployment` row was missing keeps
+  `deploymentId = NULL` for good, and a `toLedger` edited in `DEPLOYMENTS`
+  after the row exists is never rewritten either.
+
+### The variables involved
+
+| Variable | Role in a switch |
+| --- | --- |
+| `REGISTRY_CONTRACT_ID`, `VOUCHER_CONTRACT_ID`, `RECEIPT_CONTRACT_ID` | The current contract of each role. Required, 56 characters each |
+| `USDC_CONTRACT_ID`, `FAUCET_CONTRACT_ID` | Optional companions; change them only if the redeploy moved them |
+| `DEPLOYMENTS` | One-line JSON array of every deployment that must stay indexed, oldest first: `[{"type":"voucher","contractId":"C...","fromLedger":5063070,"toLedger":6123456}]`. Omitting `toLedger` means still active. List **both** generations — the old contracts *and* the new ones with `fromLedger` = `L` — because a contract that appears only in the current id variables gets a `fromLedger = 0` row, and 0 is the value a full reindex would read back |
+| `INDEXER_START_LEDGER` | Read **only** when the database has no `IndexerState` row — a fresh database. On an existing database the cursor wins and this value changes nothing |
+
+`render.yaml` carries the three current ids. `DEPLOYMENTS` is not in the
+blueprint, so add it as an environment variable on the service (Render
+dashboard → Environment) or extend `render.yaml` alongside the contract ids.
+
+### Procedure
+
+**0. Gather the facts first.**
+
+- Old and new ids for each role that changed.
+- `L`: the ledger the new contracts were deployed at (deploy tooling output,
+  or `https://stellar.expert/explorer/testnet/contract/<id>` — events start
+  at `L`, not at the moment you finish reconfiguring).
+- The old contracts' `fromLedger` (the deploy ledger recorded in
+  `render.yaml` / `INDEXER_START_LEDGER`, or the oldest `Deployment` row) and
+  the last ledger at which they emitted an event — that becomes their
+  `toLedger`.
+- A database backup (see "Backing up and restoring the database" above).
+  The switch edits configuration, not data, but rollback from a copy is
+  faster than a replay.
+
+**1. Dry run on a scratch database.** Never rehearse against the live
+database. Against a throwaway one:
+
+```bash
+# Throwaway SQLite file; SQLite paths resolve relative to prisma/
+export DATABASE_URL="file:./switch-dryrun.db"
+npx prisma db push --skip-generate
+
+# The switch, rehearsed: DEPLOYMENTS first (old ids stay indexed)...
+export DEPLOYMENTS='[{"type":"registry","contractId":"<old registry>","fromLedger":<old L>,"toLedger":<L-1>},{"type":"voucher","contractId":"<old voucher>","fromLedger":<old L>,"toLedger":<L-1>},{"type":"receipt","contractId":"<old receipt>","fromLedger":<old L>,"toLedger":<L-1>},{"type":"registry","contractId":"<new registry>","fromLedger":<L>},{"type":"voucher","contractId":"<new voucher>","fromLedger":<L>},{"type":"receipt","contractId":"<new receipt>","fromLedger":<L>}]'
+# ...then the new current ids, plus the rest of your .env
+export REGISTRY_CONTRACT_ID=<new registry>
+export VOUCHER_CONTRACT_ID=<new voucher>
+export RECEIPT_CONTRACT_ID=<new receipt>
+
+npm run dev   # boot logs: deployment tracking initialized {"count":6}
+```
+
+Then check what the boot wrote — `sqlite3 prisma/switch-dryrun.db '...'`
+locally, `psql` against the production database later — with the same query
+shape you will use in production:
+
+```sql
+SELECT "fromLedger", "toLedger", "type", "contractId" FROM "Deployment" ORDER BY "id";
+-- expect 6 rows: 3 old (fromLedger <old L>, toLedger <L-1>) +
+-- 3 new (fromLedger <L>, toLedger NULL)
+SELECT "deploymentId", COUNT(*) FROM "Voucher" GROUP BY "deploymentId";
+-- no NULL deploymentId on rows written after the boot
+```
+
+Restart the scratch service once more with the same environment and re-run
+the first query: the counts and values must not change (boot never
+overwrites an existing row).
+
+**2. Record the old deployment first — on the live service.** Add the old
+ids to `DEPLOYMENTS` (with their `fromLedger` and `toLedger`) and the new
+ids with `fromLedger` = `L`, while the current id variables still point at
+the old contracts. From this point on the old ids are in
+`INDEXED_CONTRACTS`, so nothing they emit is dropped whenever the switch
+happens.
+
+On a database that has already booted before, the old `Deployment` rows
+likely already exist — created by an earlier boot with `fromLedger = 0` and
+`toLedger = NULL` — and boot never rewrites them (`update: {}`), so the
+`DEPLOYMENTS` values for those rows take effect only through SQL:
+
+```sql
+UPDATE "Deployment"
+SET "fromLedger" = <old L>, "toLedger" = <L-1>
+WHERE "contractId" IN ('<old registry>', '<old voucher>', '<old receipt>');
+```
+
+**3. Switch the current ids.** Set `REGISTRY_CONTRACT_ID`,
+`VOUCHER_CONTRACT_ID` (and `RECEIPT_CONTRACT_ID`) to the new ids in
+`render.yaml` and/or the service environment, plus `USDC_CONTRACT_ID` /
+`FAUCET_CONTRACT_ID` if they moved. Leave the `DEPLOYMENTS` entry from
+step 2 in place, and do not touch `INDEXER_START_LEDGER`: it only seeds an
+empty database, and on this one the `IndexerState` cursor is what resumes
+indexing.
+
+**4. Deploy and let the service restart.** Render picks up changed env vars
+by redeploying; the start command runs `npm run db:migrate` first. Confirm
+in the logs:
+
+```
+deployment tracking initialized {"count":6}
+indexer initialised {"from":<cursor>}
+```
+
+This restart is what creates the `Deployment` rows for the new contracts.
+**Steps 5 and everything after must run after it** — a projection written
+before those rows exist keeps `deploymentId = NULL` permanently.
+
+**5. Backfill the events the switch itself missed.** Events for the new
+contracts emitted between their deploy ledger `L` and the moment the new
+configuration started serving are not picked up by the live cursor, which
+is already past them:
+
+```bash
+npm run indexer:backfill -- --from <L>
+```
+
+The backfill replays the range for every configured contract id, is
+idempotent, and never moves the cursor. It refuses to start if `<L>` is
+older than the RPC's oldest available ledger — the RPC only retains roughly
+seven days — in which case the only sources for that range are a database
+snapshot or waiting it out. Do the same for the old contracts if they
+emitted anything between the last indexed ledger and their `toLedger`
+(same command, `--from <their last indexed ledger>`); replaying a range
+that was already indexed is harmless.
+
+**6. Verify.**
+
+```bash
+curl -s "$API/version" | jq .contracts          # the new ids
+curl -s "$API/ready"   | jq .checks             # contracts = new ids, indexer = ok, 200
+npm run indexer:reconcile                        # exits non-zero while drift is open
+```
+
+Plus, against the database:
+
+```sql
+SELECT "contractId", "type", "toLedger" FROM "Deployment" WHERE "toLedger" IS NULL;
+-- exactly one active contract per role
+SELECT "deploymentId", COUNT(*) FROM "Voucher" GROUP BY "deploymentId";
+-- NULL only on rows that predate the switch
+SELECT MAX("ledger") FROM "ContractEvent" WHERE "contractId" = '<old voucher>';
+-- advancing: old contracts are still being indexed
+```
+
+And through the API: one known in-flight voucher from the old deployment
+(`GET /vouchers/:id`, then `GET /vouchers/:id/events`) still resolves, and
+the first voucher minted on the new contracts appears with the new
+`deploymentId`.
+
+**7. Fix-ups and rollback.** Corrections to `fromLedger` / `toLedger` go
+through SQL (step 2) — editing `DEPLOYMENTS` afterwards has no effect on an
+existing row. To roll back, point the three id variables at the old
+contracts again and redeploy. The `DEPLOYMENTS` entry can stay: it keeps
+them indexed and is harmless while they are also the current ids (the id
+sets are de-duplicated).
+
+### Dry run — results
+
+Executed on 2026-10-22 against a throwaway SQLite database
+(`file:./switch-dryrun.db`), following steps 1–4 with placeholder ids for
+the new contracts. `Indexer.start()`'s `initializeDeployments()` code path
+(the exact upserts, driven directly so the scratch run needs no RPC) was
+used instead of `npm run dev`; everything else is the published procedure.
+
+- Booting with the switched configuration wrote six `Deployment` rows:
+  three old (`fromLedger 5063070`, `toLedger 6123456`) and three new
+  (`fromLedger 6123457`, `toLedger NULL`), and `INDEXED_CONTRACTS`
+  contained all six ids — the old contracts stayed polled after the switch.
+- In the pre-switch state (current ids only, no `DEPLOYMENTS`) the new
+  contract id was **absent** from `INDEXED_CONTRACTS`: the concrete form of
+  "events emitted before the id is configured are never fetched".
+- A voucher projected after the switch boot resolved `deploymentId` to the
+  new deployment row; one projected *before* it (unknown contract) kept
+  `deploymentId = NULL` across every later boot — the ordering constraint
+  behind step 4.
+- A second boot with the same environment changed nothing: still six rows,
+  every voucher's `deploymentId` unchanged (idempotent upserts).
+- Editing `toLedger` in `DEPLOYMENTS` between boots changed the configured
+  value but not the stored row, and rows created before the entry existed
+  kept `fromLedger = 0` — why steps 2 and 7 correct existing rows in SQL.
+
+The backfill guard and the `/version` / `/ready` checks were verified
+against the code (`npm run indexer:backfill` refuses a `--from` older than
+the RPC's oldest ledger). The switch itself was **not** performed against a
+live database: this run used a throwaway file.
 ## Webhook deliveries are stuck
 
 Webhooks are optional (`WEBHOOK_URLS`), and the outbox is separate from the

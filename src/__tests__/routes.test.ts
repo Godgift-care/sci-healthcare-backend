@@ -541,6 +541,85 @@ describe('GET /health and /stats', () => {
   });
 });
 
+describe('GET /stats/funnel', () => {
+  const funnelClinic = `G${'C'.repeat(55)}`;
+  const createdAt = new Date('2026-01-01T00:00:00Z');
+  const hoursAfterCreation = (hours: number) => new Date(createdAt.getTime() + hours * 3_600_000);
+
+  beforeEach(async () => {
+    await prisma.provider.create({
+      data: {
+        address: funnelClinic,
+        name: 'Funnel Clinic',
+        country: 'ZZ',
+        status: 'Active',
+        registeredAt: createdAt,
+      },
+    });
+
+    await prisma.voucher.createMany({
+      data: [
+        { id: 'funnel-funded', status: 'Funded', claimedAt: null, attestedAt: null },
+        { id: 'funnel-claimed', status: 'Claimed', claimedAt: hoursAfterCreation(2), attestedAt: null },
+        { id: 'funnel-attested', status: 'Attested', claimedAt: hoursAfterCreation(4), attestedAt: hoursAfterCreation(7) },
+        { id: 'funnel-settled-a', status: 'Settled', claimedAt: hoursAfterCreation(6), attestedAt: hoursAfterCreation(11) },
+        { id: 'funnel-settled-b', status: 'Settled', claimedAt: hoursAfterCreation(8), attestedAt: hoursAfterCreation(11) },
+      ].map((voucher) => ({
+        ...voucher,
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: funnelClinic,
+        serviceCode: 101,
+        amount: '1000000',
+        createdAt,
+        expiresAt: new Date(createdAt.getTime() + DAY),
+      })),
+    });
+
+    await prisma.receipt.createMany({
+      data: [
+        { voucherId: 'funnel-settled-a', settledAt: hoursAfterCreation(17) },
+        { voucherId: 'funnel-settled-b', settledAt: hoursAfterCreation(15) },
+      ].map((receipt) => ({
+        ...receipt,
+        beneficiaryRef: REF,
+        providerAddress: funnelClinic,
+        serviceCode: 101,
+        amount: '1000000',
+      })),
+    });
+  });
+
+  it('returns stage counts and fixed-time medians filtered by country or clinic', async () => {
+    const expected = {
+      counts: { funded: 5, claimed: 4, attested: 3, settled: 2 },
+      medianHours: { fundedToClaimed: 5, claimedToAttested: 3, attestedToSettled: 5 },
+    };
+
+    const byCountry = await get('/stats/funnel?country=zz');
+    expect(byCountry.status).toBe(200);
+    expect(byCountry.body).toMatchObject({ country: 'ZZ', clinic: null, ...expected });
+
+    const byClinic = await get(`/stats/funnel?clinic=${funnelClinic}`);
+    expect(byClinic.status).toBe(200);
+    expect(byClinic.body).toMatchObject({ country: null, clinic: funnelClinic, ...expected });
+
+    const combined = await get(`/stats/funnel?country=NG&clinic=${funnelClinic}`);
+    expect(combined.body.counts).toEqual({ funded: 0, claimed: 0, attested: 0, settled: 0 });
+    expect(combined.body.medianHours).toEqual({
+      fundedToClaimed: null,
+      claimedToAttested: null,
+      attestedToSettled: null,
+    });
+  });
+
+  it('rejects a country filter that is not a two-letter code', async () => {
+    const { status, body } = await get('/stats/funnel?country=ZZZ');
+    expect(status).toBe(400);
+    expect(body.error).toBe('bad_request');
+  });
+});
+
 describe('GET /version', () => {
   it('returns network and contract metadata', async () => {
     const { status, body } = await get('/version');

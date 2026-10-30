@@ -32,7 +32,7 @@ import {
   markIndexerSuccess,
   recordEventLatency,
 } from '../lib/metrics.js';
-import { server } from './client.js';
+import { server, validateContractIds } from './client.js';
 import {
   asAddress,
   asAmount,
@@ -50,6 +50,9 @@ import { recordFailure } from './failed.js';
 import { IndexerLease } from './lease.js';
 import { collectEvents } from './paging.js';
 import { withSpan } from '../tracing.js';
+import { normaliseChainVoucher, readVoucherFromChain, type VoucherReader } from './reconcile.js';
+import { purgeExpiredOperationalData } from '../lib/retention.js';
+import type { rpc } from '@stellar/stellar-sdk';
 
 type Db = Prisma.TransactionClient;
 
@@ -204,6 +207,12 @@ export type IndexerOptions = {
    * production bound.
    */
   shutdownTimeoutMs?: number;
+  /** Chain reader used to repair a voucher whose creation event was missed. */
+  voucherReader?: VoucherReader;
+  /** Optional RPC server interface (for fake RPC testing or custom RPC endpoints). */
+  rpcServer?: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
+  /** Batch page size passed to collectEvents (default: 200). */
+  pageSize?: number;
 };
 
 export class Indexer {
@@ -224,8 +233,15 @@ export class Indexer {
   private failures = 0;
   /** Wall-clock ms of the last provider-metadata due-check (#159). */
   private lastMetadataCheckAt = 0;
+  /** Wall-clock ms of the last operational data retention check (#142). */
+  private lastRetentionCheckAt = 0;
   private readonly lease: IndexerLease;
   private readonly shutdownTimeoutMs: number;
+  private readonly voucherReader: VoucherReader;
+  /** Vouchers repaired during this process, so the repair log is one-per-voucher. */
+  private readonly repairedVouchers = new Set<string>();
+  private readonly rpcServer: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
+  private readonly pageSize: number;
 
   constructor(
     private readonly log: FastifyBaseLogger,
@@ -233,9 +249,15 @@ export class Indexer {
   ) {
     this.lease = opts.lease ?? new IndexerLease();
     this.shutdownTimeoutMs = opts.shutdownTimeoutMs ?? env.SHUTDOWN_TIMEOUT_MS;
+    this.voucherReader = opts.voucherReader ?? readVoucherFromChain;
+    this.rpcServer = opts.rpcServer ?? server;
+    this.pageSize = opts.pageSize ?? 200;
   }
 
   async start(): Promise<void> {
+    // Keep the normal test suite network-free; production starts always use
+    // the RPC facade and fail before the indexer can silently do nothing.
+    if (env.NODE_ENV !== 'test') await validateContractIds(INDEXED_CONTRACTS);
     // Initialize deployment tracking table from DEPLOYMENTS config.
     await this.initializeDeployments();
 
@@ -244,7 +266,7 @@ export class Indexer {
       const from =
         env.INDEXER_START_LEDGER > 0
           ? env.INDEXER_START_LEDGER
-          : (await withSpan('rpc.getLatestLedger', () => server.getLatestLedger())).sequence;
+          : (await withSpan('rpc.getLatestLedger', () => this.rpcServer.getLatestLedger())).sequence;
       // upsert, not create: two instances booting together must not race to
       // insert the one row.
       await prisma.indexerState.upsert({
@@ -553,9 +575,13 @@ export class Indexer {
     this.hasMore = false;
 
     const state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
+    if (state.paused) {
+      this.hasMore = false;
+      return 0;
+    }
     const startLedger = state.lastLedger + 1;
 
-    const health = await withSpan('rpc.getHealth', () => server.getHealth());
+    const health = await withSpan('rpc.getHealth', () => this.rpcServer.getHealth());
     if (startLedger < health.oldestLedger) {
       if (!state.gap) {
         await prisma.indexerState.update({
@@ -588,9 +614,10 @@ export class Indexer {
     const { events, throughLedger, hasMore } = await withSpan(
       'rpc.getContractEvents',
       () =>
-        collectEvents(server, {
+        collectEvents(this.rpcServer, {
           startLedger,
           contractIds: INDEXED_CONTRACTS,
+          pageSize: this.pageSize,
         }),
     );
     this.hasMore = hasMore;
@@ -672,6 +699,7 @@ export class Indexer {
     // must not hold the cursor's transaction open, and a rejected document
     // must not fail the cycle (the read model is already current).
     await this.refreshMetadataIfDue();
+    await this.purgeRetentionIfDue();
 
     if (applied > 0) {
       this.log.info({ applied, throughLedger: advanceTo }, 'indexed events');
@@ -708,6 +736,21 @@ export class Indexer {
       await refreshDueProviderMetadata({ log: this.log });
     } catch (err) {
       this.log.warn({ err }, 'provider metadata refresh failed');
+    }
+  }
+
+  /**
+   * Purges delivered webhooks and resolved failed events older than RETENTION_DAYS.
+   * Runs at most once an hour while this instance holds the single-writer lease.
+   */
+  private async purgeRetentionIfDue(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastRetentionCheckAt < 60 * 60 * 1000) return;
+    this.lastRetentionCheckAt = now;
+    try {
+      await purgeExpiredOperationalData();
+    } catch (err) {
+      this.log.warn({ err }, 'operational data retention cleanup failed');
     }
   }
 
@@ -868,7 +911,7 @@ export class Indexer {
     extra: Record<string, unknown>,
     providerAddress: string | null,
   ): Promise<PendingSignal> {
-    await this.onVoucherStatus(db, e.fields, status, extra);
+    await this.onVoucherStatus(db, e.fields, status, extra, e.contractId);
     // Queued in the same transaction, so nothing is announced that did not
     // land in the read model. Delivery happens on its own loop.
     await enqueueWebhook(db, {
@@ -1200,8 +1243,10 @@ export class Indexer {
     d: Record<string, unknown>,
     status: string,
     extra: Record<string, unknown>,
+    contractId: string,
   ): Promise<void> {
     const id = asId(d.voucher_id);
+    await this.repairMissingVoucher(db, id, contractId);
     if (status === 'Refunded') {
       const existing = await db.voucher.findUnique({
         where: { id },
@@ -1216,6 +1261,54 @@ export class Indexer {
       where: { id },
       data: { status, ...extra },
     });
+  }
+
+  /** Rebuilds a voucher whose creation event predates the indexer's cursor. */
+  private async repairMissingVoucher(db: Db, id: string, contractId: string): Promise<void> {
+    const existing = await db.voucher.findUnique({ where: { id }, select: { id: true } });
+    if (existing) return;
+
+    const chain = await this.voucherReader(id, contractId);
+    if (!chain) throw new Error(`Cannot repair missing voucher ${id}: voucher is not on chain`);
+    const voucher = normaliseChainVoucher(chain);
+
+    await db.provider.upsert({
+      where: { address: voucher.providerAddress },
+      create: {
+        address: voucher.providerAddress,
+        name: 'Unknown provider',
+        country: '??',
+        status: 'Active',
+        registeredAt: new Date(0),
+      },
+      update: {},
+    });
+
+    const deploymentId = await this.lookupDeploymentId(contractId, db);
+    await recordDailyStatFunded(db, voucher.createdAt, voucher.amount);
+    await db.voucher.create({
+      data: {
+        id,
+        seq: voucherSeq(id),
+        funder: voucher.funder,
+        beneficiaryRef: voucher.beneficiaryRef,
+        providerAddress: voucher.providerAddress,
+        serviceCode: voucher.serviceCode,
+        amount: voucher.amount,
+        status: voucher.status,
+        createdAt: voucher.createdAt,
+        expiresAt: voucher.expiresAt,
+        claimedAt: voucher.claimedAt,
+        attestedAt: voucher.attestedAt,
+        disputeDeadline: voucher.disputeDeadline,
+        deploymentId,
+      },
+    });
+
+    if (!this.repairedVouchers.has(id)) {
+      this.repairedVouchers.add(id);
+      this.log.warn({ voucherId: id }, 'repaired voucher missing its creation event');
+    }
   }
   /**
    * Records one testnet faucet drip.

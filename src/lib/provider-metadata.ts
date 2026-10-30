@@ -54,7 +54,7 @@ const geoSchema = z.object({
 
 const hoursSchema = z.union([
   z.string().max(200),
-  z.record(z.string().max(200)),
+  z.record(z.string(), z.string().max(200)),
 ]);
 
 /**
