@@ -15,6 +15,27 @@ const dailyQuery = z.object({
   days: z.coerce.number().int().min(1).max(365).default(30),
 });
 
+const funnelQuery = z.object({
+  country: z.string().length(2).transform((country) => country.toUpperCase()).optional(),
+  clinic: z.string().min(1).max(56).optional(),
+});
+
+const funnelResponse = z.object({
+  country: z.string().nullable(),
+  clinic: z.string().nullable(),
+  counts: z.object({
+    funded: z.number().int().nonnegative(),
+    claimed: z.number().int().nonnegative(),
+    attested: z.number().int().nonnegative(),
+    settled: z.number().int().nonnegative(),
+  }),
+  medianHours: z.object({
+    fundedToClaimed: z.number().nonnegative().nullable(),
+    claimedToAttested: z.number().nonnegative().nullable(),
+    attestedToSettled: z.number().nonnegative().nullable(),
+  }),
+});
+
 /** Count and summed base units for one activity type on one day. */
 type DailyBucket = { count: number; amount: string };
 
@@ -28,6 +49,21 @@ type DailyRow = {
 /** The `YYYY-MM-DD` UTC day a timestamp falls on. */
 function utcDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+/** Median elapsed hours; incomplete and reversed timestamps are excluded. */
+function medianHours(values: number[]): number | null {
+  if (values.length === 0) return null;
+  values.sort((a, b) => a - b);
+  const middle = Math.floor(values.length / 2);
+  return values.length % 2 === 1
+    ? values[middle]!
+    : (values[middle - 1]! + values[middle]!) / 2;
+}
+
+function elapsedHours(from: Date, to: Date): number | null {
+  const hours = (to.getTime() - from.getTime()) / 3_600_000;
+  return hours >= 0 ? hours : null;
 }
 
 /** Settled-voucher totals for `GET /stats` (issue #60). */
@@ -190,7 +226,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       checks.database = 'ok';
       // A failed event is missing data in the read model, so it is a
       // degradation until someone retries or investigates it.
-      const failedEvents = await prisma.failedEvent.count();
+      const failedEvents = await prisma.failedEvent.count({ where: { resolvedAt: null } });
       checks.failedEvents = failedEvents;
       if (failedEvents > 0) healthy = false;
 
@@ -239,8 +275,12 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       checks.indexedLedger = state?.lastLedger ?? null;
       checks.lagLedgers = lag;
       checks.maxLagLedgers = env.READY_MAX_LAG_LEDGERS;
+      checks.paused = state?.paused ?? false;
 
-      if (state?.gap) {
+      if (state?.paused) {
+        healthy = false;
+        checks.indexer = 'paused';
+      } else if (state?.gap) {
         healthy = false;
         checks.indexer = 'gap';
         checks.gap = {
@@ -317,6 +357,74 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
     }
 
     return result;
+  });
+
+  /** Voucher stages and median time between them, optionally scoped to a country or clinic. */
+  app.get('/stats/funnel', {
+    schema: {
+      tags: ['health'],
+      summary: 'Voucher funnel counts and median stage times',
+      querystring: funnelQuery,
+      response: { 200: funnelResponse },
+    },
+  }, async (req) => {
+    const { country, clinic } = funnelQuery.parse(req.query);
+    const providerAddresses = country !== undefined || clinic !== undefined
+      ? (await prisma.provider.findMany({
+          where: { ...(country ? { country } : {}), ...(clinic ? { address: clinic } : {}) },
+          select: { address: true },
+        })).map((provider) => provider.address)
+      : undefined;
+    const providerFilter = providerAddresses === undefined
+      ? {}
+      : { providerAddress: { in: providerAddresses } };
+
+    const [vouchers, receipts] = await Promise.all([
+      prisma.voucher.findMany({
+        where: providerFilter,
+        select: { id: true, createdAt: true, claimedAt: true, attestedAt: true },
+      }),
+      prisma.receipt.findMany({
+        where: providerAddresses === undefined
+          ? {}
+          : { providerAddress: { in: providerAddresses } },
+        select: { voucherId: true, settledAt: true },
+      }),
+    ]);
+
+    const byVoucherId = new Map(vouchers.map((voucher) => [voucher.id, voucher]));
+    const claimTimes = vouchers.flatMap((voucher) => {
+      if (!voucher.claimedAt) return [];
+      const hours = elapsedHours(voucher.createdAt, voucher.claimedAt);
+      return hours === null ? [] : [hours];
+    });
+    const attestationTimes = vouchers.flatMap((voucher) => {
+      if (!voucher.claimedAt || !voucher.attestedAt) return [];
+      const hours = elapsedHours(voucher.claimedAt, voucher.attestedAt);
+      return hours === null ? [] : [hours];
+    });
+    const settlementTimes = receipts.flatMap((receipt) => {
+      const voucher = byVoucherId.get(receipt.voucherId);
+      if (!voucher?.attestedAt) return [];
+      const hours = elapsedHours(voucher.attestedAt, receipt.settledAt);
+      return hours === null ? [] : [hours];
+    });
+
+    return {
+      country: country ?? null,
+      clinic: clinic ?? null,
+      counts: {
+        funded: vouchers.length,
+        claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
+        attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
+        settled: receipts.length,
+      },
+      medianHours: {
+        fundedToClaimed: medianHours(claimTimes),
+        claimedToAttested: medianHours(attestationTimes),
+        attestedToSettled: medianHours(settlementTimes),
+      },
+    };
   });
 
   /**

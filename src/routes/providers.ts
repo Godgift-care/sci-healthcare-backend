@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
@@ -51,7 +50,7 @@ const providerStatsResponse = z.object({
   name: z.string(),
   status: z.string(),
   vouchers: z.number().int().nonnegative(),
-  byStatus: z.record(z.number().int().nonnegative()),
+  byStatus: z.record(z.string(), z.number().int().nonnegative()),
   settledVouchers: z.number().int().nonnegative(),
   settledValue: z.string().describe('Total settled amount as a base-unit decimal string.'),
   settledValueDisplay: z.string(),
@@ -215,10 +214,7 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
         schema: {
           ...schema,
           response: Object.fromEntries(Object.entries(providerStatsResponses).map(
-            ([status, response]) => [status, zodToJsonSchema(response, {
-              target: 'jsonSchema7',
-              $refStrategy: 'none',
-            })],
+            ([status, response]) => [status, z.toJSONSchema(response, { target: 'draft-7' })],
           )),
         },
         url,
