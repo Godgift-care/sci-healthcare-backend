@@ -3,6 +3,8 @@
 This service indexes Soroban contract events into a queryable read model and
 serves them over a read-only HTTP API.
 
+By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Setup
 
 Use Node 22 (`nvm use` reads `.nvmrc`). Its bundled npm 10 is what CI runs;
@@ -119,6 +121,33 @@ a case to `src/__tests__/events.test.ts`.
 The full pipeline — paging, the cursor and lease model, idempotency rules and
 failure modes — is in [docs/architecture.md](docs/architecture.md). Read it
 before changing anything under `src/stellar/`.
+
+## Forking, Codespaces and pushing
+
+Only maintainers can push to this repository, and `main` takes changes through
+pull requests only. If `git push` answers `403` or `Permission denied`, the
+push is going to `Godgift-care/sci-healthcare-backend` instead of your fork.
+
+1. Fork the repository, then clone **your fork**
+   (`gh repo fork Godgift-care/sci-healthcare-backend --clone` does both).
+2. Create a branch, commit, and `git push -u origin <branch>`.
+3. Open a pull request against `main`.
+
+**GitHub Codespaces.** The repository has a [dev container](.devcontainer/), so
+a codespace starts with the toolchain CI uses and the dependencies installed.
+Create it from your fork (**Code → Codespaces** on your fork's page) and
+`git push` works as usual. A codespace created from this repository without
+write access cannot push here; GitHub offers to fork it for you on the first
+push, or run `gh repo fork --remote` and push to the new `origin`.
+
+A codespace cannot push changes to `.github/workflows/`: its token has no
+workflow permission. Make those changes from a local clone.
+
+Never commit a `.env` file, and never commit files you did not write. If
+`git status` shows changes you do not recognise (an `init` file, edited
+`package.json` scripts, a changed `.gitignore`, config files with one very long
+line), stop and check your machine before pushing: see
+[Security scan](#security-scan).
 
 ## Commits and PRs
 

@@ -1,0 +1,6 @@
+# Text is stored and checked out with LF on every platform. Without this, a
+# Windows clone with core.autocrlf rewrites every line of a file it touches,
+# which buries the real change in the diff, conflicts with every other pull
+# request, and breaks the shell scripts when they run in Linux (CI, Docker,
+# Codespaces).
+* text=auto eol=lf

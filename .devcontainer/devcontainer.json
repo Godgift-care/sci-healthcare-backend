@@ -5,9 +5,15 @@
   "name": "sci-healthcare-backend",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
 
+  // The GitHub CLI, for `gh repo fork` and `gh pr create` from a codespace.
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
   // Mirrors the CI install order: dependencies, then the Prisma client that
-  // typecheck and the test suites import.
-  "postCreateCommand": "npm ci && npx prisma generate",
+  // typecheck and the test suites import. Then .env from the example, so
+  // `npm run dev` starts without setup.
+  "postCreateCommand": "npm ci && npx prisma generate && ([ -f .env ] || cp .env.example .env)",
 
   // PORT from .env.example; DATABASE_URL defaults to SQLite, so no database
   // service is needed for a plain `npm run dev`.

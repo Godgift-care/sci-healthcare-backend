@@ -38,6 +38,19 @@ test('miners, reverse shells and pipe-to-shell block', () => {
   assert.ok(rules(scanAddedLines('x.js', lines("fs.readFileSync(home + '/.npmrc')"), config)).includes('block:credential-file'));
 });
 
+test('the remote-code loader blocks: decoded env values, base64 URLs and a committed .env', () => {
+  assert.ok(rules(scanAddedLines('examples/a.ts', lines('const src = atob(process.env.AUTH_API_KEY);'), config)).includes('block:encoded-loader'));
+  assert.ok(rules(scanAddedLines('examples/a.ts', lines("const src = Buffer.from(process.env.KEY, 'base64').toString();"), config)).includes('block:encoded-loader'));
+  // base64 of "https://example.com/payload.js"
+  assert.ok(rules(scanAddedLines('.env', lines('AUTH_API_KEY="aHR0cHM6Ly9leGFtcGxlLmNvbS9wYXlsb2FkLmpz"'), config)).includes('block:encoded-loader'));
+  assert.ok(rules(scanFile('.env', 'A', Buffer.from('A=1'), config)).includes('block:env-file'));
+  assert.ok(rules(scanFile('examples/bot/.env.local', 'A', Buffer.from('A=1'), config)).includes('block:env-file'));
+  assert.deepEqual(rules(scanFile('.env.example', 'M', Buffer.from('A='), config)), []);
+  assert.deepEqual(rules(scanFile('deployments/testnet.env', 'M', Buffer.from('A=1'), config)), []);
+  // Decoding ordinary data is still only a review finding.
+  assert.ok(!rules(scanAddedLines('src/a.ts', lines('const id = atob(storedId);'), config)).includes('block:encoded-loader'));
+});
+
 test('dynamic code, process spawning, obfuscation and env collection need review', () => {
   assert.ok(rules(scanAddedLines('src/a.ts', lines('eval(payload)'), config)).includes('review:dynamic-code'));
   assert.ok(rules(scanAddedLines('src/a.ts', lines("const f = new Function('return 1')"), config)).includes('review:dynamic-code'));
