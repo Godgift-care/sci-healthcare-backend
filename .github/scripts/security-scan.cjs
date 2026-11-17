@@ -41,6 +41,12 @@ const LINE_RULES = [
     message: 'Downloads a script and pipes it into a shell.' },
   { severity: BLOCK, rule: 'credential-file', re: /(\.npmrc|\.ssh\/id_[a-z0-9]+|\.aws\/credentials|\.config\/gh\/hosts\.yml|\.git-credentials)\b/,
     message: 'Reads or references a credentials file.' },
+  // The loader found in infected pull requests: a base64 URL kept in a
+  // committed .env, decoded at runtime, fetched and passed to eval. Decoding
+  // an environment variable, or carrying a base64-encoded http(s) URL, has no
+  // ordinary use here, so neither can be waved through with the review label.
+  { severity: BLOCK, rule: 'encoded-loader', re: /\batob\s*\(\s*process\.env\b|Buffer\.from\s*\(\s*process\.env\.\w+\s*,\s*['"]base64['"]|\baHR0c(HM6Ly|DovL)[A-Za-z0-9+/=_-]{8,}/,
+    message: 'Decodes a hidden value at runtime (an environment variable or a base64-encoded URL): the pattern used to download and run remote code.' },
   { severity: REVIEW, rule: 'dynamic-code', re: /\beval\s*\(|\bnew\s+Function\s*\(|\bvm\.(runIn\w+|Script)\b|\bsetTimeout\s*\(\s*['"`]|\bsetInterval\s*\(\s*['"`]/,
     message: 'Executes code built at runtime (eval, new Function, vm).' },
   { severity: REVIEW, rule: 'process-spawn', re: /\bchild_process\b|\bexecSync\s*\(|\bspawnSync?\s*\(|\bexecFile(Sync)?\s*\(|std::process::Command|\bCommand::new\s*\(/,
@@ -155,6 +161,12 @@ function scanFile(file, status, content, config) {
     // SVGs are served as images but can carry script.
     if (e === '.svg' && content && /<script\b|javascript:|\son[a-z]+\s*=/i.test(content.toString('utf8'))) {
       findings.push({ severity: REVIEW, rule: 'svg-script', path: file, message: 'SVG with script or event handlers.' });
+    }
+    // A real .env holds secrets and is gitignored; .env.example is the
+    // committed one. The infected pull requests committed a .env (after
+    // removing it from .gitignore) to carry their download URL.
+    if (/(^|\/)\.env(\.(local|development|production|test))?$/.test(file)) {
+      findings.push({ severity: BLOCK, rule: 'env-file', path: file, message: 'Commits an environment file; only .env.example belongs in the repository.' });
     }
     if (/(^|\/)build\.rs$/.test(file)) {
       findings.push({ severity: REVIEW, rule: 'cargo-build-script', path: file, message: 'Cargo build script: runs arbitrary code at compile time.' });
