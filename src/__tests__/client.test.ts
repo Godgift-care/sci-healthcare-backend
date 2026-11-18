@@ -265,6 +265,29 @@ describe('@sci-healthcare/client retry backoff (#285)', () => {
     expect(scripted.calls()).toBe(2);
   });
 
+  it('releases the body of every response it discards', async () => {
+    const discarded: Response[] = [];
+    const scripted = scriptedFetch((attempt) => {
+      const res =
+        attempt === 1 ? jsonResponse(503, { message: 'cold start' }) : jsonResponse(200, HEALTH_OK);
+      if (attempt === 1) discarded.push(res);
+      return res;
+    });
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      random: () => 0.5,
+    });
+
+    const pending = client.health();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(pending).resolves.toEqual(HEALTH_OK);
+
+    // A body nobody reads keeps its connection out of the pool, which is the
+    // last thing a client retrying through an outage wants.
+    expect(discarded[0]!.bodyUsed).toBe(true);
+  });
+
   it('retries a network error and reports it only once the attempts run out', async () => {
     const scripted = scriptedFetch(() => {
       throw new TypeError('fetch failed');

@@ -123,7 +123,6 @@ async function sleep(ms: number, signal: AbortSignal | null): Promise<void> {
   });
 }
 
-
 /**
  * Validates and extracts coordinates a clinic has published, or null.
  */
@@ -226,6 +225,10 @@ export class Client {
         if (attempt > this.retries || !isRetryableStatus(res.status)) return res;
         // The server's own wait beats our guess at one.
         const wait = retryAfterMs(res.headers.get('retry-after'), this.now()) ?? backoffMs(attempt, this.random);
+        // Nobody reads a response we are throwing away, so release its
+        // stream: an unread body pins the connection until it is collected,
+        // which is the opposite of what a retry during an outage needs.
+        await res.body?.cancel();
         await sleep(wait, signal);
       } catch (cause) {
         // A cancelled fetch is the caller's decision, not a failure to retry.
