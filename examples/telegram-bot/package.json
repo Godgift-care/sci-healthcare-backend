@@ -9,9 +9,6 @@
     "dev": "tsx src/index.ts",
     "build": "tsc"
   },
-  "dependencies": {
-    "@sci-healthcare/client": "file:../../packages/client"
-  },
   "devDependencies": {
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
