@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, GovernanceResponse, HealthStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
+import type { ApiErrorEnvelope, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, VoucherDetail, VouchersResponse } from './types.js';
 import { type StreamFilters, type StreamHandle, type StreamHandlers, type StreamOptions } from './stream.js';
 export declare class ApiError extends Error {
     readonly status: number;
@@ -45,12 +45,10 @@ export declare class Client {
         countries: CountryStats[];
     }>;
     services(): Promise<ServicesResponse>;
-    service(code: number): Promise<ServiceCatalogueItem>;
+    service(code: number): Promise<ServiceClinics>;
     vouchers(params?: ListVouchersParams): Promise<VouchersResponse>;
     voucher(id: string): Promise<VoucherDetail>;
-    vouchersDue(params: DueVouchersParams): Promise<{
-        vouchers: Voucher[];
-    }>;
+    vouchersDue(params: DueVouchersParams): Promise<DueVouchersResponse>;
     vouchersCsv(params?: CsvVouchersParams): Promise<string>;
     receipts(params: ListReceiptsParams): Promise<ReceiptsResponse>;
     receipt(voucherId: string): Promise<Receipt>;

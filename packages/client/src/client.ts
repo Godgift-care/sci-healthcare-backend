@@ -4,6 +4,7 @@ import type {
   CsvVouchersParams,
   DailyStats,
   DueVouchersParams,
+  DueVouchersResponse,
   GovernanceResponse,
   HealthStatus,
   ListProvidersParams,
@@ -16,12 +17,11 @@ import type {
   Receipt,
   ReceiptsResponse,
   ReadyStatus,
-  ServiceCatalogueItem,
+  ServiceClinics,
   ServicePriceChangeHistory,
   ServicesResponse,
   Stats,
   VersionInfo,
-  Voucher,
   VoucherDetail,
   VouchersResponse,
 } from './types.js';
@@ -217,8 +217,8 @@ export class Client {
     return this.request<ServicesResponse>('/services');
   }
 
-  async service(code: number): Promise<ServiceCatalogueItem> {
-    return this.request<ServiceCatalogueItem>(`/services/${code}`);
+  async service(code: number): Promise<ServiceClinics> {
+    return this.request<ServiceClinics>(`/services/${code}`);
   }
 
   async vouchers(params?: ListVouchersParams): Promise<VouchersResponse> {
@@ -229,11 +229,8 @@ export class Client {
     return this.request<VoucherDetail>(`/vouchers/${encodeURIComponent(id)}`);
   }
 
-  async vouchersDue(params: DueVouchersParams): Promise<{ vouchers: Voucher[] }> {
-    return this.request<{ vouchers: Voucher[] }>(
-      '/vouchers/due',
-      params as Record<string, unknown>,
-    );
+  async vouchersDue(params: DueVouchersParams): Promise<DueVouchersResponse> {
+    return this.request<DueVouchersResponse>('/vouchers/due', params as Record<string, unknown>);
   }
 
   async vouchersCsv(params?: CsvVouchersParams): Promise<string> {
