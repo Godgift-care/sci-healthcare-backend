@@ -1,10 +1,21 @@
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../app.js';
 import { prisma } from '../db.js';
 import { seedLocalData } from '../scripts/seed.js';
-import { ApiError, createClient, providerLocation, type Provider } from '../../packages/client/dist/index.js';
+import {
+  ApiError,
+  backoffMs,
+  createClient,
+  isAbortError,
+  isRetryableStatus,
+  providerLocation,
+  retryAfterMs,
+  RETRY_BASE_DELAY_MS,
+  RETRY_MAX_DELAY_MS,
+  type Provider,
+} from '../../packages/client/dist/index.js';
 
 describe('@sci-healthcare/client', () => {
   let app: FastifyInstance;
@@ -199,3 +210,258 @@ describe('@sci-healthcare/client', () => {
     expect(providerLocation(noLocation)).toBeNull();
   });
 });
+
+type ResponseFactory = (attempt: number) => Response | Promise<Response>;
+
+/**
+ * A fetch that counts its calls and records when each one started, so the
+ * retry loop can be judged on how many requests it made and when — none of
+ * this needs the API, the database, or a socket.
+ */
+function scriptedFetch(make: ResponseFactory) {
+  const times: number[] = [];
+  let calls = 0;
+  const fetchImpl: typeof fetch = async () => {
+    calls += 1;
+    times.push(Date.now());
+    return make(calls);
+  };
+  return { fetch: fetchImpl, calls: () => calls, times };
+}
+
+function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    statusText: status === 200 ? 'OK' : 'Unavailable',
+    headers: { 'content-type': 'application/json', ...headers },
+  });
+}
+
+const HEALTH_OK = { status: 'ok' };
+
+describe('@sci-healthcare/client retry backoff (#285)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('retries a 503 and resolves with the response that finally worked', async () => {
+    const scripted = scriptedFetch((attempt) =>
+      attempt === 1 ? jsonResponse(503, { message: 'cold start' }) : jsonResponse(200, HEALTH_OK),
+    );
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      random: () => 0.5,
+    });
+
+    const pending = client.health();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(pending).resolves.toEqual(HEALTH_OK);
+    expect(scripted.calls()).toBe(2);
+  });
+
+  it('retries a network error and reports it only once the attempts run out', async () => {
+    const scripted = scriptedFetch(() => {
+      throw new TypeError('fetch failed');
+    });
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      retries: 1,
+      random: () => 1,
+    });
+
+    // The expectation is attached before the timers move, so the rejection
+    // is handled the moment it happens rather than reported as unhandled.
+    const pending = client.health();
+    const assertion = expect(pending).rejects.toMatchObject({ status: 0, error: 'network_error' });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await assertion;
+    expect(scripted.calls()).toBe(2);
+  });
+
+  it('never retries a 4xx other than 408 and 429 (#285)', async () => {
+    for (const status of [400, 401, 403, 404, 405, 409, 422]) {
+      const scripted = scriptedFetch(() => jsonResponse(status, { error: 'invalid_query' }));
+      const client = createClient({ baseUrl: 'http://api.invalid', fetch: scripted.fetch });
+
+      await expect(client.health()).rejects.toBeInstanceOf(ApiError);
+      expect(scripted.calls()).toBe(1);
+    }
+  });
+
+  it('retries 408 and 429, the two 4xx that say "ask again"', async () => {
+    for (const status of [408, 429]) {
+      const scripted = scriptedFetch(() => jsonResponse(status, { message: 'slow down' }));
+      const client = createClient({
+        baseUrl: 'http://api.invalid',
+        fetch: scripted.fetch,
+        retries: 2,
+        random: () => 0,
+      });
+
+      const pending = client.health();
+      const assertion = expect(pending).rejects.toBeInstanceOf(ApiError);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      await assertion;
+      expect(scripted.calls()).toBe(3);
+    }
+  });
+
+  it('waits exactly the Retry-After seconds the server asked for', async () => {
+    const scripted = scriptedFetch((attempt) =>
+      attempt === 1
+        ? jsonResponse(503, { message: 'wake me up' }, { 'retry-after': '2' })
+        : jsonResponse(200, HEALTH_OK),
+    );
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      // The jitter source cannot shorten a wait the server dictated.
+      random: () => 1,
+    });
+
+    const pending = client.health();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(scripted.calls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(pending).resolves.toEqual(HEALTH_OK);
+    expect(scripted.times[1]! - scripted.times[0]!).toBe(2_000);
+  });
+
+  it('reads an HTTP-date Retry-After against its own clock', async () => {
+    const scripted = scriptedFetch((attempt) =>
+      attempt === 1
+        ? jsonResponse(429, { message: 'later' }, {
+            'retry-after': new Date('2026-01-01T00:00:05Z').toUTCString(),
+          })
+        : jsonResponse(200, HEALTH_OK),
+    );
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      retries: 1,
+      now: () => Date.parse('2026-01-01T00:00:00Z'),
+    });
+
+    const pending = client.health();
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(scripted.calls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(pending).resolves.toEqual(HEALTH_OK);
+  });
+
+  it('retries a CSV export too, and still hands back the text', async () => {
+    const scripted = scriptedFetch((attempt) =>
+      attempt === 1 ? jsonResponse(503, { message: 'cold start' }) : new Response('id,status\n', { status: 200 }),
+    );
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      random: () => 0,
+    });
+
+    const pending = client.vouchersCsv();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(pending).resolves.toBe('id,status\n');
+    expect(scripted.calls()).toBe(2);
+  });
+
+  it('stops on an abort that happened before the request was made', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const scripted = scriptedFetch(() => jsonResponse(200, HEALTH_OK));
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      signal: controller.signal,
+    });
+
+    const outcome = await client.health().catch((err: unknown) => err);
+    expect(isAbortError(outcome)).toBe(true);
+    expect(scripted.calls()).toBe(0);
+  });
+
+  it('stops on an abort raised while waiting between attempts (#285)', async () => {
+    const controller = new AbortController();
+    const scripted = scriptedFetch((attempt) =>
+      attempt === 1 ? jsonResponse(503, { message: 'cold start' }) : jsonResponse(200, HEALTH_OK),
+    );
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      signal: controller.signal,
+      random: () => 1,
+    });
+
+    const pending = client.health().catch((err: unknown) => err);
+    // Halfway through the first backoff, the caller gives up.
+    await vi.advanceTimersByTimeAsync(100);
+    controller.abort();
+
+    expect(isAbortError(await pending)).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(scripted.calls()).toBe(1);
+  });
+
+  it('never retries a fetch that was cancelled mid-request', async () => {
+    const scripted = scriptedFetch(() => {
+      throw Object.assign(new Error('This operation was aborted'), { name: 'AbortError' });
+    });
+    const client = createClient({
+      baseUrl: 'http://api.invalid',
+      fetch: scripted.fetch,
+      retries: 3,
+    });
+
+    const outcome = await client.health().catch((err: unknown) => err);
+    expect(isAbortError(outcome)).toBe(true);
+    expect(scripted.calls()).toBe(1);
+  });
+});
+
+describe('@sci-healthcare/client retry helpers (#285)', () => {
+  it('treats only 408, 429 and 5xx as worth another attempt', () => {
+    for (const status of [408, 429, 500, 502, 503, 504]) {
+      expect(isRetryableStatus(status)).toBe(true);
+    }
+    for (const status of [200, 204, 400, 401, 403, 404, 409, 422, 451]) {
+      expect(isRetryableStatus(status)).toBe(false);
+    }
+  });
+
+  it('doubles a capped backoff and keeps half of it fixed', () => {
+    expect(backoffMs(1, () => 0)).toBe(RETRY_BASE_DELAY_MS / 2);
+    expect(backoffMs(1, () => 1)).toBe(RETRY_BASE_DELAY_MS);
+    expect(backoffMs(2, () => 1)).toBe(RETRY_BASE_DELAY_MS * 2);
+    expect(backoffMs(3, () => 1)).toBe(RETRY_BASE_DELAY_MS * 4);
+    // The ceiling stops the doubling; the jitter never falls below half of it.
+    for (const value of [0, 0.5, 1]) {
+      expect(backoffMs(40, () => value)).toBeGreaterThanOrEqual(RETRY_MAX_DELAY_MS / 2);
+      expect(backoffMs(40, () => value)).toBeLessThanOrEqual(RETRY_MAX_DELAY_MS);
+    }
+  });
+
+  it('parses both Retry-After forms and never a negative wait', () => {
+    expect(retryAfterMs(null, 0)).toBeNull();
+    expect(retryAfterMs('   ', 0)).toBeNull();
+    expect(retryAfterMs('nonsense', 0)).toBeNull();
+    expect(retryAfterMs(' 7 ', 0)).toBe(7_000);
+
+    const stamp = 'Wed, 21 Oct 2015 07:28:00 GMT';
+    expect(retryAfterMs(stamp, Date.parse(stamp))).toBe(0);
+    // A date already in the past means "retry now", not "sleep backwards".
+    expect(retryAfterMs(stamp, Date.parse(stamp) + 60_000)).toBe(0);
+  });
+});
+

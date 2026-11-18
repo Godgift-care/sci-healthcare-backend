@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -7,9 +7,75 @@ import { describe, expect, it } from 'vitest';
  * that the triggers, permissions and actions each file was written with are
  * still there. Nothing here executes GitHub Actions.
  */
+const workflowsDir = new URL('../../.github/workflows/', import.meta.url);
+
 function workflow(name: string): string {
-  return readFileSync(new URL(`../../.github/workflows/${name}`, import.meta.url), 'utf8');
+  return readFileSync(new URL(name, workflowsDir), 'utf8');
 }
+
+function workflowNames(): string[] {
+  return readdirSync(workflowsDir)
+    .filter((name) => name.endsWith('.yml'))
+    .sort();
+}
+
+type ActionUsage = { file: string; ref: string; comment: string };
+
+/** Every `uses:` reference in every workflow, with its trailing comment. */
+function actionUsages(): ActionUsage[] {
+  const usages: ActionUsage[] = [];
+  for (const file of workflowNames()) {
+    for (const line of workflow(file).split('\n')) {
+      const match = /^\s*(?:-\s+)?uses:\s*([^\s#]+)\s*(?:#\s*(.*))?$/.exec(line);
+      const ref = match?.[1];
+      if (ref === undefined) continue;
+      usages.push({ file, ref, comment: match?.[2] ?? '' });
+    }
+  }
+  return usages;
+}
+
+describe('every workflow', () => {
+  const usages = actionUsages();
+
+  it('pins each action to a full commit SHA, never a tag or branch (#283)', () => {
+    // A tag or branch ref can be retargeted after the fact; a commit cannot.
+    // 40 hex characters is what GitHub accepts for a pinned `uses:` line.
+    expect(usages.length).toBeGreaterThan(0);
+    const unpinned = usages
+      .filter(({ ref }) => !/^[^\s@/]+\/[^\s@/]+(?:\/[^\s@]+)?@[0-9a-f]{40}$/.test(ref))
+      .map(({ file, ref }) => `${file}: ${ref}`);
+    expect(unpinned).toEqual([]);
+  });
+
+  it('names the release each pinned action resolves to (#283)', () => {
+    // The comment is how a reviewer tells 9418214 from 11d5960 without
+    // looking anything up, and how Dependabot's PR titles stay readable.
+    const uncommented = usages
+      .filter(({ comment }) => !/^v?\d+(\.\d+)*$/.test(comment.trim()))
+      .map(({ file, ref }) => `${file}: ${ref}`);
+    expect(uncommented).toEqual([]);
+  });
+
+  it('declares permissions explicitly (#284)', () => {
+    // Without a top-level block, a job inherits the repository default, which
+    // GitHub has historically widened. Each workflow states what it needs.
+    const missing = workflowNames().filter((name) => !/^permissions:/m.test(workflow(name)));
+    expect(missing).toEqual([]);
+  });
+
+  it('keeps repository contents read-only for the workflows that only read it (#284)', () => {
+    // These never push, comment or upload artifacts, so `contents: write`
+    // would only widen what a compromised action could do to the repository.
+    // automerge.yml and security.yml are excluded on purpose: they merge and
+    // post statuses, which is the write they exist for.
+    for (const name of ['ci.yml', 'quickstart-integration.yml', 'codeql.yml', 'dependency-review.yml', 'monitor.yml']) {
+      const yml = workflow(name);
+      expect(yml).toMatch(/contents: read/);
+      expect(yml).not.toMatch(/contents: write/);
+    }
+  });
+});
 
 describe('codeql.yml', () => {
   const yml = workflow('codeql.yml');
@@ -31,8 +97,8 @@ describe('codeql.yml', () => {
   });
 
   it('uses the CodeQL init and analyze actions', () => {
-    expect(yml).toMatch(/github\/codeql-action\/init@v\d+/);
-    expect(yml).toMatch(/github\/codeql-action\/analyze@v\d+/);
+    expect(yml).toMatch(/github\/codeql-action\/init@[0-9a-f]{40} # v\d+/);
+    expect(yml).toMatch(/github\/codeql-action\/analyze@[0-9a-f]{40} # v\d+/);
   });
 });
 
@@ -46,7 +112,7 @@ describe('dependency-review.yml', () => {
   });
 
   it('uses the dependency review action and fails on high severity (#127)', () => {
-    expect(yml).toMatch(/actions\/dependency-review-action@v\d+/);
+    expect(yml).toMatch(/actions\/dependency-review-action@[0-9a-f]{40} # v\d+/);
     expect(yml).toMatch(/fail-on-severity: high/);
   });
 
