@@ -121,7 +121,9 @@ export function serialiseProviderDetail(
  * addresses in one grouped query so a provider page never becomes one count
  * per row.
  */
-export async function openVoucherCounts(addresses: readonly string[]): Promise<Map<string, number>> {
+export async function openVoucherCounts(
+  addresses: readonly string[],
+): Promise<Map<string, number>> {
   if (addresses.length === 0) return new Map();
   const grouped = await prisma.voucher.groupBy({
     by: ['providerAddress'],

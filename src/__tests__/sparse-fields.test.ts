@@ -36,7 +36,9 @@ async function seed() {
       status: 'Active',
       registeredAt: new Date('2026-09-01T00:00:00Z'),
       services: {
-        create: [{ id: `${CLINIC}:101`, code: 101, label: 'Outpatient consult', price: '30000000' }],
+        create: [
+          { id: `${CLINIC}:101`, code: 101, label: 'Outpatient consult', price: '30000000' },
+        ],
       },
     },
   });

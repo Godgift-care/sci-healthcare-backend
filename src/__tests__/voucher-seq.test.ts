@@ -36,7 +36,9 @@ async function get(url: string) {
   const res = await app.inject({
     method: 'GET',
     url,
-    headers: { 'x-forwarded-for': `10.9.${(LIST_ROUTE_RATE_LIMIT.max >> 8) & 255}.${++testClientId}` },
+    headers: {
+      'x-forwarded-for': `10.9.${(LIST_ROUTE_RATE_LIMIT.max >> 8) & 255}.${++testClientId}`,
+    },
   });
   return { status: res.statusCode, body: res.json() };
 }
@@ -45,7 +47,9 @@ async function getCsv(url: string) {
   const res = await app.inject({
     method: 'GET',
     url,
-    headers: { 'x-forwarded-for': `10.9.${(LIST_ROUTE_RATE_LIMIT.max >> 8) & 255}.${++testClientId}` },
+    headers: {
+      'x-forwarded-for': `10.9.${(LIST_ROUTE_RATE_LIMIT.max >> 8) & 255}.${++testClientId}`,
+    },
   });
   return { status: res.statusCode, body: res.body };
 }

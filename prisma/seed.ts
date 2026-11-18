@@ -15,7 +15,9 @@ import { assertLocalDatabase, seedLocalData } from '../src/scripts/seed.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
-  console.error('DATABASE_URL is not set. Copy .env.example to .env first (prisma loads it for the seed script).');
+  console.error(
+    'DATABASE_URL is not set. Copy .env.example to .env first (prisma loads it for the seed script).',
+  );
   process.exit(1);
 }
 

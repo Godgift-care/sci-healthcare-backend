@@ -61,13 +61,15 @@ describe('Indexer replay through recorded RPC responses (#145)', () => {
 
     // Fake RPC server serving the recorded fixture pages across page boundaries
     const fakeRpc: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'> = {
-      getHealth: async () => ({
-        oldestLedger: 1,
-        latestLedger: 105,
-      } as never),
-      getLatestLedger: async () => ({
-        sequence: 105,
-      } as never),
+      getHealth: async () =>
+        ({
+          oldestLedger: 1,
+          latestLedger: 105,
+        }) as never,
+      getLatestLedger: async () =>
+        ({
+          sequence: 105,
+        }) as never,
       getEvents: async (opts) => {
         if (opts.cursor === 'cursor-page-2') {
           return { events: [], latestLedger: 105 } as never;

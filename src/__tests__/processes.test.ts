@@ -37,10 +37,7 @@ describe('separate API and indexer processes', () => {
 
     const indexer = await startWorker({ logger: log });
     try {
-      expect(info).toHaveBeenCalledWith(
-        { network: 'testnet' },
-        'sci-healthcare indexer running',
-      );
+      expect(info).toHaveBeenCalledWith({ network: 'testnet' }, 'sci-healthcare indexer running');
     } finally {
       await indexer.stop();
     }

@@ -19,10 +19,7 @@ export type WebhookVoucherPayload = {
 };
 
 function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**
@@ -47,7 +44,8 @@ export function formatEmailMessage(payload: WebhookVoucherPayload): string {
     : payload.amount
       ? `${payload.amount} stroops`
       : null;
-  const service = payload.serviceLabel ?? (payload.serviceCode ? `Service #${payload.serviceCode}` : null);
+  const service =
+    payload.serviceLabel ?? (payload.serviceCode ? `Service #${payload.serviceCode}` : null);
   const ledger = payload.ledger ? `(Ledger #${payload.ledger})` : '';
 
   let subjectLabel = 'Voucher Notification';
@@ -112,7 +110,8 @@ export function formatTelegramMessage(payload: WebhookVoucherPayload): string {
     : payload.amount
       ? `${payload.amount} stroops`
       : null;
-  const service = payload.serviceLabel ?? (payload.serviceCode ? `Service #${payload.serviceCode}` : null);
+  const service =
+    payload.serviceLabel ?? (payload.serviceCode ? `Service #${payload.serviceCode}` : null);
   const ledger = payload.ledger ? `(Ledger #${payload.ledger})` : '';
 
   let header = '🔔 <b>Voucher Notification</b>';

@@ -2,12 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
-import {
-  contractName,
-  env,
-  getAllDeployments,
-  INDEXED_CONTRACTS,
-} from '../env.js';
+import { contractName, env, getAllDeployments, INDEXED_CONTRACTS } from '../env.js';
 import { voucherSeq } from '../lib/voucher-seq.js';
 import { enqueueWebhook } from '../lib/webhooks.js';
 import {
@@ -15,11 +10,7 @@ import {
   METADATA_URI_MAX_LENGTH,
   refreshDueProviderMetadata,
 } from '../lib/provider-metadata.js';
-import {
-  hasStreamListeners,
-  publishVoucherSignals,
-  type VoucherSignal,
-} from '../lib/event-bus.js';
+import { hasStreamListeners, publishVoucherSignals, type VoucherSignal } from '../lib/event-bus.js';
 import {
   recordDailyStatFunded,
   recordDailyStatRefunded,
@@ -266,7 +257,8 @@ export class Indexer {
       const from =
         env.INDEXER_START_LEDGER > 0
           ? env.INDEXER_START_LEDGER
-          : (await withSpan('rpc.getLatestLedger', () => this.rpcServer.getLatestLedger())).sequence;
+          : (await withSpan('rpc.getLatestLedger', () => this.rpcServer.getLatestLedger()))
+              .sequence;
       // upsert, not create: two instances booting together must not race to
       // insert the one row.
       await prisma.indexerState.upsert({
@@ -298,10 +290,7 @@ export class Indexer {
         update: {}, // Don't overwrite existing rows
       });
     }
-    this.log.info(
-      { count: deployments.length },
-      'deployment tracking initialized',
-    );
+    this.log.info({ count: deployments.length }, 'deployment tracking initialized');
   }
 
   /**
@@ -373,10 +362,7 @@ export class Indexer {
    * Look up the deployment ID for a given contract ID.
    * Returns null if the contract is not tracked in the Deployment table.
    */
-  private async lookupDeploymentId(
-    contractId: string,
-    db: Db = prisma,
-  ): Promise<number | null> {
+  private async lookupDeploymentId(contractId: string, db: Db = prisma): Promise<number | null> {
     const deployment = await db.deployment.findUnique({
       where: { contractId },
       select: { id: true },
@@ -432,10 +418,7 @@ export class Indexer {
       );
       return true;
     }
-    this.log.info(
-      { owner: this.lease.owner },
-      'another indexer holds the lease; standing by',
-    );
+    this.log.info({ owner: this.lease.owner }, 'another indexer holds the lease; standing by');
     return false;
   }
 
@@ -488,14 +471,11 @@ export class Indexer {
     if (this.running) return 0;
     this.running = true;
     try {
-      const applied = await withSpan(
-        'indexer.cycle',
-        async (span) => {
-          const n = await this.poll();
-          span.setAttribute('indexer.events_applied', n);
-          return n;
-        },
-      );
+      const applied = await withSpan('indexer.cycle', async (span) => {
+        const n = await this.poll();
+        span.setAttribute('indexer.events_applied', n);
+        return n;
+      });
       this.noteSuccess();
       return applied;
     } catch (err) {
@@ -611,14 +591,12 @@ export class Indexer {
       return 0;
     }
 
-    const { events, throughLedger, hasMore } = await withSpan(
-      'rpc.getContractEvents',
-      () =>
-        collectEvents(this.rpcServer, {
-          startLedger,
-          contractIds: INDEXED_CONTRACTS,
-          pageSize: this.pageSize,
-        }),
+    const { events, throughLedger, hasMore } = await withSpan('rpc.getContractEvents', () =>
+      collectEvents(this.rpcServer, {
+        startLedger,
+        contractIds: INDEXED_CONTRACTS,
+        pageSize: this.pageSize,
+      }),
     );
     this.hasMore = hasMore;
 
@@ -636,55 +614,52 @@ export class Indexer {
     // The span around it is the honest "database queries" half of the cycle:
     // it is bounded by the commit itself, so a slow transaction is visible
     // even before per-query Prisma instrumentation is considered (#54).
-    await withSpan(
-      'db.transaction',
-      async (span) => {
-        span.setAttribute('indexer.ledger.start', state.lastLedger);
-        span.setAttribute('indexer.ledger.through', advanceTo);
-        return prisma.$transaction(
-          async (tx) => {
-            for (const raw of events) {
-              const decoded = decodeEvent(raw as never);
-              if (!decoded) continue;
-              await tx.$executeRawUnsafe('SAVEPOINT event');
-              try {
-                const signal = await this.project(decoded, tx);
-                await tx.$executeRawUnsafe('RELEASE SAVEPOINT event');
-                applied += 1;
-                recordEventLatency(decoded.ledgerClosedAt);
-                if (signal) pending.push(signal);
-                appliedByName.set(decoded.name, (appliedByName.get(decoded.name) ?? 0) + 1);
-              } catch (err) {
-                await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT event');
-                await tx.$executeRawUnsafe('RELEASE SAVEPOINT event');
-                // One malformed event must not wedge the whole pipeline. It is
-                // kept in FailedEvent so the gap in the read model is durable,
-                // and the tx hash and ledger make it reproducible.
-                await recordFailure(tx, raw as never, decoded, err);
-                skippedByName.set(decoded.name, (skippedByName.get(decoded.name) ?? 0) + 1);
-                this.log.warn(
-                  {
-                    err,
-                    event: decoded.name,
-                    id: decoded.id,
-                    txHash: decoded.txHash,
-                    ledger: decoded.ledger,
-                  },
-                  'event skipped',
-                );
-              }
+    await withSpan('db.transaction', async (span) => {
+      span.setAttribute('indexer.ledger.start', state.lastLedger);
+      span.setAttribute('indexer.ledger.through', advanceTo);
+      return prisma.$transaction(
+        async (tx) => {
+          for (const raw of events) {
+            const decoded = decodeEvent(raw as never);
+            if (!decoded) continue;
+            await tx.$executeRawUnsafe('SAVEPOINT event');
+            try {
+              const signal = await this.project(decoded, tx);
+              await tx.$executeRawUnsafe('RELEASE SAVEPOINT event');
+              applied += 1;
+              recordEventLatency(decoded.ledgerClosedAt);
+              if (signal) pending.push(signal);
+              appliedByName.set(decoded.name, (appliedByName.get(decoded.name) ?? 0) + 1);
+            } catch (err) {
+              await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT event');
+              await tx.$executeRawUnsafe('RELEASE SAVEPOINT event');
+              // One malformed event must not wedge the whole pipeline. It is
+              // kept in FailedEvent so the gap in the read model is durable,
+              // and the tx hash and ledger make it reproducible.
+              await recordFailure(tx, raw as never, decoded, err);
+              skippedByName.set(decoded.name, (skippedByName.get(decoded.name) ?? 0) + 1);
+              this.log.warn(
+                {
+                  err,
+                  event: decoded.name,
+                  id: decoded.id,
+                  txHash: decoded.txHash,
+                  ledger: decoded.ledger,
+                },
+                'event skipped',
+              );
             }
+          }
 
-            await tx.indexerState.update({
-              where: { id: 1 },
-              data: { lastLedger: advanceTo },
-            });
-          },
-          // Sized for a busy range on a remote database, not the 5s default.
-          { timeout: 120_000, maxWait: 10_000 },
-        );
-      },
-    );
+          await tx.indexerState.update({
+            where: { id: 1 },
+            data: { lastLedger: advanceTo },
+          });
+        },
+        // Sized for a busy range on a remote database, not the 5s default.
+        { timeout: 120_000, maxWait: 10_000 },
+      );
+    });
 
     // Counted after the commit so a rolled-back cycle is not double counted
     // when it replays.

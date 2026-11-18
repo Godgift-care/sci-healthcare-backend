@@ -70,7 +70,10 @@ function dictRows(section: string): Map<string, DictRow> {
   const rows = new Map<string, DictRow>();
   for (const line of section.split('\n')) {
     if (!line.startsWith('| `')) continue;
-    const cells = line.split('|').slice(1, -1).map((c) => c.trim().replaceAll('`', ''));
+    const cells = line
+      .split('|')
+      .slice(1, -1)
+      .map((c) => c.trim().replaceAll('`', ''));
     const [column, type, nullable, source] = cells;
     if (column === undefined || column === 'Column') continue;
     rows.set(column, {

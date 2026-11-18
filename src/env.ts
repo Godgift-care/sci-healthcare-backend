@@ -36,9 +36,7 @@ const envShape = z.object({
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
   HOST: z.string().default('0.0.0.0'),
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
-    .default('info'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   READY_MAX_LAG_LEDGERS: z.coerce.number().int().nonnegative().default(120),
   /**
@@ -188,9 +186,7 @@ const validated = schema.superRefine((value, ctx) => {
 function load(): Env {
   const parsed = validated.safeParse(process.env);
   if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((i) => `  ${i.path.join('.')}: ${i.message}`)
-      .join('\n');
+    const issues = parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(
       `Invalid environment configuration:\n${issues}\n\n` +
         'Copy .env.example to .env and fill in the contract ids printed by scripts/deploy.sh.',
@@ -291,7 +287,6 @@ const CONTRACT_TO_DEPLOYMENT_INDEX = new Map<string, number>();
 getAllDeployments().forEach((d, i) => {
   CONTRACT_TO_DEPLOYMENT_INDEX.set(d.contractId, i);
 });
-
 
 /**
  * Returns the deployment index for a given contract ID, or undefined if not found.

@@ -11,7 +11,7 @@ describe('Database constraints for statuses and amounts (#143)', () => {
     if (isPostgres) {
       const statements = [
         'ALTER TABLE "Voucher" DROP CONSTRAINT IF EXISTS "voucher_status_check"',
-        'ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_status_check" CHECK ("status" IN (\'Funded\', \'Claimed\', \'Attested\', \'Settled\', \'Disputed\', \'Refunded\'))',
+        "ALTER TABLE \"Voucher\" ADD CONSTRAINT \"voucher_status_check\" CHECK (\"status\" IN ('Funded', 'Claimed', 'Attested', 'Settled', 'Disputed', 'Refunded'))",
         'ALTER TABLE "Provider" DROP CONSTRAINT IF EXISTS "provider_status_check"',
         'ALTER TABLE "Provider" ADD CONSTRAINT "provider_status_check" CHECK ("status" IN (\'Pending\', \'Active\', \'Suspended\'))',
         'ALTER TABLE "Voucher" DROP CONSTRAINT IF EXISTS "voucher_amount_non_negative"',
@@ -109,9 +109,7 @@ describe('Database constraints for statuses and amounts (#143)', () => {
     ).rejects.toThrow();
   });
 
-  it(
-    'allows all valid status values and non-negative amount strings',
-    async () => {
+  it('allows all valid status values and non-negative amount strings', async () => {
     await prisma.provider.create({
       data: {
         address: PROVIDER,

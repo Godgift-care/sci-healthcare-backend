@@ -52,7 +52,10 @@ function readmeVars(): Map<string, ReadmeVar> {
   const vars = new Map<string, ReadmeVar>();
   for (const line of section.split('\n')) {
     if (!/^\| `[A-Z][A-Z0-9_]*` \|/.test(line)) continue;
-    const cells = line.split('|').slice(1, -1).map((cell) => cell.replaceAll('`', '').trim());
+    const cells = line
+      .split('|')
+      .slice(1, -1)
+      .map((cell) => cell.replaceAll('`', '').trim());
     const [name, required, defaultValue, , purpose] = cells;
     if (name === undefined) continue;
     vars.set(name, {

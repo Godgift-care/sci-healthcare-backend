@@ -19,7 +19,11 @@ const pkg = JSON.parse(
 ) as { scripts: Record<string, string> };
 
 /** The maintenance scripts this issue moves onto `dist/`. */
-const PRODUCTION_SCRIPTS = ['indexer:backfill', 'indexer:retry-failed', 'indexer:reconcile'] as const;
+const PRODUCTION_SCRIPTS = [
+  'indexer:backfill',
+  'indexer:retry-failed',
+  'indexer:reconcile',
+] as const;
 
 describe('production maintenance scripts run compiled JavaScript (#161)', () => {
   for (const name of PRODUCTION_SCRIPTS) {
@@ -37,9 +41,9 @@ describe('production maintenance scripts run compiled JavaScript (#161)', () => 
       // tsconfig.json includes src/**/*.ts with outDir dist and rootDir src,
       // so the presence of the source file is what guarantees the compiled
       // entry point the production script names.
-      expect(
-        existsSync(fileURLToPath(new URL(`../scripts/${entry}.ts`, import.meta.url))),
-      ).toBe(true);
+      expect(existsSync(fileURLToPath(new URL(`../scripts/${entry}.ts`, import.meta.url)))).toBe(
+        true,
+      );
     });
   }
 

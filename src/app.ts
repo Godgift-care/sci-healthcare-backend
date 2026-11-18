@@ -224,8 +224,7 @@ export async function buildApp(
   // cannot arrive before that is finished, so the lookup table is collapsed on
   // demand and kept from then on.
   let routePatternList: RoutePattern[] | null = null;
-  const knownPaths = (): RoutePattern[] =>
-    (routePatternList ??= routePatterns(registeredRoutes));
+  const knownPaths = (): RoutePattern[] => (routePatternList ??= routePatterns(registeredRoutes));
 
   app.setNotFoundHandler((req, reply) => {
     const language = negotiateLanguage(req.headers['accept-language']);
@@ -236,15 +235,18 @@ export async function buildApp(
     const allowed = allowedMethods(knownPaths(), req.method, req.url);
     if (allowed) {
       const list = allowed.join(', ');
-      return reply.code(405).header('allow', list).send({
-        error: 'method_not_allowed',
-        message: errorMessage(
-          'method_not_allowed',
-          language,
-          `Method ${req.method} not allowed for ${path}; allowed: ${list}`,
-          { method: req.method, path, allowed: list },
-        ),
-      });
+      return reply
+        .code(405)
+        .header('allow', list)
+        .send({
+          error: 'method_not_allowed',
+          message: errorMessage(
+            'method_not_allowed',
+            language,
+            `Method ${req.method} not allowed for ${path}; allowed: ${list}`,
+            { method: req.method, path, allowed: list },
+          ),
+        });
     }
 
     // Same envelope and code as everything else; only the wording follows

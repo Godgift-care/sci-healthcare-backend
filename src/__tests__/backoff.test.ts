@@ -61,9 +61,7 @@ describe('nextDelay', () => {
   });
 
   it('spreads retries out rather than returning one fixed delay', () => {
-    const delays = new Set(
-      [0.1, 0.3, 0.6, 0.9].map((r) => nextDelay(3, BASE, MAX, () => r)),
-    );
+    const delays = new Set([0.1, 0.3, 0.6, 0.9].map((r) => nextDelay(3, BASE, MAX, () => r)));
     expect(delays.size).toBeGreaterThan(1);
   });
 });

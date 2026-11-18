@@ -59,16 +59,24 @@ const providerStatsResponse = z.object({
   settledVouchers: z.number().int().nonnegative(),
   settledValue: z.string().describe('Total settled amount as a base-unit decimal string.'),
   settledValueDisplay: z.string(),
-  medianClaimSeconds: z.number().nonnegative().nullable().describe(
-    'Median seconds from voucher creation to claim (claimedAt - createdAt). ' +
-    'Only complete, non-negative intervals for this provider are included, regardless of current status. ' +
-    'Null when none exist; even sample counts average the middle two without rounding.',
-  ),
-  medianAttestationSeconds: z.number().nonnegative().nullable().describe(
-    'Median seconds from claim to attestation (attestedAt - claimedAt). ' +
-    'Only complete, non-negative intervals for this provider are included, regardless of current status. ' +
-    'Null when none exist; even sample counts average the middle two without rounding.',
-  ),
+  medianClaimSeconds: z
+    .number()
+    .nonnegative()
+    .nullable()
+    .describe(
+      'Median seconds from voucher creation to claim (claimedAt - createdAt). ' +
+        'Only complete, non-negative intervals for this provider are included, regardless of current status. ' +
+        'Null when none exist; even sample counts average the middle two without rounding.',
+    ),
+  medianAttestationSeconds: z
+    .number()
+    .nonnegative()
+    .nullable()
+    .describe(
+      'Median seconds from claim to attestation (attestedAt - claimedAt). ' +
+        'Only complete, non-negative intervals for this provider are included, regardless of current status. ' +
+        'Null when none exist; even sample counts average the middle two without rounding.',
+    ),
 });
 
 const providerStatsResponses = {
@@ -81,9 +89,7 @@ function median(values: number[]): number | null {
   if (values.length === 0) return null;
   values.sort((a, b) => a - b);
   const middle = Math.floor(values.length / 2);
-  return values.length % 2 === 1
-    ? values[middle]!
-    : (values[middle - 1]! + values[middle]!) / 2;
+  return values.length % 2 === 1 ? values[middle]! : (values[middle - 1]! + values[middle]!) / 2;
 }
 
 /** Case-insensitive on Postgres; SQLite's LIKE is already case-insensitive for ASCII. */
@@ -105,16 +111,19 @@ export function providerRoutes(app: FastifyInstance): void {
     const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
       fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
 
-    const formatProvider = (p: {
-      address: string;
-      name: string;
-      country: string;
-      status: string;
-      registeredAt: Date;
-      metadata: string | null;
-      capacity: number | null;
-      services: { code: number; label: string; price: string }[];
-    }, openVouchers: number) => ({
+    const formatProvider = (
+      p: {
+        address: string;
+        name: string;
+        country: string;
+        status: string;
+        registeredAt: Date;
+        metadata: string | null;
+        capacity: number | null;
+        services: { code: number; label: string; price: string }[];
+      },
+      openVouchers: number,
+    ) => ({
       address: p.address,
       name: p.name,
       country: p.country,
@@ -220,92 +229,97 @@ export function providerRoutes(app: FastifyInstance): void {
    * care, and a clinic desk wants its own numbers. Amounts are summed with
    * BigInt and returned as base-unit decimal strings, like everywhere else.
    */
-  app.get('/providers/:address/stats', {
-    schema: {
-      tags: ['providers'],
-      summary: 'Clinic throughput and response times',
-      response: providerStatsResponses,
+  app.get(
+    '/providers/:address/stats',
+    {
+      schema: {
+        tags: ['providers'],
+        summary: 'Clinic throughput and response times',
+        response: providerStatsResponses,
+      },
+      config: {
+        // The global Zod transform targets OpenAPI 3.0, where nullable is a
+        // keyword. This API advertises 3.1, so describe null as a schema type.
+        swaggerTransform: ({ schema, url }) => ({
+          schema: {
+            ...schema,
+            response: Object.fromEntries(
+              Object.entries(providerStatsResponses).map(([status, response]) => [
+                status,
+                z.toJSONSchema(response, { target: 'draft-7' }),
+              ]),
+            ),
+          },
+          url,
+        }),
+      },
     },
-    config: {
-      // The global Zod transform targets OpenAPI 3.0, where nullable is a
-      // keyword. This API advertises 3.1, so describe null as a schema type.
-      swaggerTransform: ({ schema, url }) => ({
-        schema: {
-          ...schema,
-          response: Object.fromEntries(Object.entries(providerStatsResponses).map(
-            ([status, response]) => [status, z.toJSONSchema(response, { target: 'draft-7' })],
-          )),
-        },
-        url,
-      }),
-    },
-  }, async (req, reply) => {
-    const { address } = req.params as { address: string };
-    const provider = await prisma.provider.findUnique({
-      where: { address },
-      select: { address: true, name: true, status: true },
-    });
-    if (!provider) return reply.code(404).send({ error: 'provider_not_found' });
+    async (req, reply) => {
+      const { address } = req.params as { address: string };
+      const provider = await prisma.provider.findUnique({
+        where: { address },
+        select: { address: true, name: true, status: true },
+      });
+      if (!provider) return reply.code(404).send({ error: 'provider_not_found' });
 
-    const [grouped, settled, timings] = await Promise.all([
-      prisma.voucher.groupBy({
-        by: ['status'],
-        where: { providerAddress: address },
-        _count: { _all: true },
-      }),
-      prisma.voucher.findMany({
-        where: { providerAddress: address, status: 'Settled' },
-        select: { amount: true },
-      }),
-      prisma.voucher.findMany({
-        where: { providerAddress: address, claimedAt: { not: null } },
-        select: { createdAt: true, claimedAt: true, attestedAt: true },
-      }),
-    ]);
+      const [grouped, settled, timings] = await Promise.all([
+        prisma.voucher.groupBy({
+          by: ['status'],
+          where: { providerAddress: address },
+          _count: { _all: true },
+        }),
+        prisma.voucher.findMany({
+          where: { providerAddress: address, status: 'Settled' },
+          select: { amount: true },
+        }),
+        prisma.voucher.findMany({
+          where: { providerAddress: address, claimedAt: { not: null } },
+          select: { createdAt: true, claimedAt: true, attestedAt: true },
+        }),
+      ]);
 
-    // Every status is present, zero included, so a client can render the
-    // full breakdown without filling gaps itself.
-    const byStatus: Record<string, number> = Object.fromEntries(
-      VOUCHER_STATUSES.map((status) => [status, 0]),
-    );
-    let vouchers = 0;
-    for (const row of grouped) {
-      byStatus[row.status] = (byStatus[row.status] ?? 0) + row._count._all;
-      vouchers += row._count._all;
-    }
-
-    const settledValue = settled
-      .reduce((acc, v) => acc + BigInt(v.amount), 0n)
-      .toString();
-
-    // Measure each completed stage independently, including vouchers that
-    // have since settled, been disputed or refunded. A missing timestamp
-    // is not zero; reversed timestamps are not valid response times.
-    const claimSeconds: number[] = [];
-    const attestationSeconds: number[] = [];
-    for (const v of timings) {
-      const claimedAt = v.claimedAt!.getTime(); // guaranteed by the query
-      const claim = (claimedAt - v.createdAt.getTime()) / 1000;
-      if (claim >= 0) claimSeconds.push(claim);
-      if (v.attestedAt !== null) {
-        const attestation = (v.attestedAt.getTime() - claimedAt) / 1000;
-        if (attestation >= 0) attestationSeconds.push(attestation);
+      // Every status is present, zero included, so a client can render the
+      // full breakdown without filling gaps itself.
+      const byStatus: Record<string, number> = Object.fromEntries(
+        VOUCHER_STATUSES.map((status) => [status, 0]),
+      );
+      let vouchers = 0;
+      for (const row of grouped) {
+        byStatus[row.status] = (byStatus[row.status] ?? 0) + row._count._all;
+        vouchers += row._count._all;
       }
-    }
 
-    return {
-      address: provider.address,
-      name: provider.name,
-      status: provider.status,
-      vouchers,
-      byStatus,
-      settledVouchers: settled.length,
-      settledValue,
-      settledValueDisplay: fromBaseUnits(settledValue),
-      medianClaimSeconds: median(claimSeconds),
-      medianAttestationSeconds: median(attestationSeconds),
-    };
-  });
+      const settledValue = settled.reduce((acc, v) => acc + BigInt(v.amount), 0n).toString();
+
+      // Measure each completed stage independently, including vouchers that
+      // have since settled, been disputed or refunded. A missing timestamp
+      // is not zero; reversed timestamps are not valid response times.
+      const claimSeconds: number[] = [];
+      const attestationSeconds: number[] = [];
+      for (const v of timings) {
+        const claimedAt = v.claimedAt!.getTime(); // guaranteed by the query
+        const claim = (claimedAt - v.createdAt.getTime()) / 1000;
+        if (claim >= 0) claimSeconds.push(claim);
+        if (v.attestedAt !== null) {
+          const attestation = (v.attestedAt.getTime() - claimedAt) / 1000;
+          if (attestation >= 0) attestationSeconds.push(attestation);
+        }
+      }
+
+      return {
+        address: provider.address,
+        name: provider.name,
+        status: provider.status,
+        vouchers,
+        byStatus,
+        settledVouchers: settled.length,
+        settledValue,
+        settledValueDisplay: fromBaseUnits(settledValue),
+        medianClaimSeconds: median(claimSeconds),
+        medianAttestationSeconds: median(attestationSeconds),
+      };
+    },
+  );
 
   /**
    * Every status transition observed for a clinic, oldest first.

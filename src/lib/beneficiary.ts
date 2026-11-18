@@ -19,9 +19,7 @@ export function beneficiaryRef(identifier: string, key: string): string {
   if (key.length < 32) {
     throw new Error('Beneficiary key must be at least 32 characters');
   }
-  return createHmac('sha256', key)
-    .update(identifier.trim().toLowerCase())
-    .digest('hex');
+  return createHmac('sha256', key).update(identifier.trim().toLowerCase()).digest('hex');
 }
 
 /** Constant-time comparison, so verification cannot be timed. */

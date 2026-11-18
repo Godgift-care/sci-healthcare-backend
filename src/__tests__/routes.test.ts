@@ -140,7 +140,12 @@ async function seed() {
       registeredAt: new Date('2026-08-15T00:00:00Z'),
       services: {
         create: [
-          { id: `${SECOND_CLINIC}:101`, code: 101, label: 'General consultation', price: '40000000' },
+          {
+            id: `${SECOND_CLINIC}:101`,
+            code: 101,
+            label: 'General consultation',
+            price: '40000000',
+          },
           { id: `${SECOND_CLINIC}:202`, code: 202, label: 'Malaria rapid test', price: '15000000' },
           { id: `${SECOND_CLINIC}:404`, code: 404, label: 'Dental cleaning', price: '20000000' },
         ],
@@ -558,10 +563,30 @@ describe('GET /stats/funnel', () => {
     await prisma.voucher.createMany({
       data: [
         { id: 'funnel-funded', status: 'Funded', claimedAt: null, attestedAt: null },
-        { id: 'funnel-claimed', status: 'Claimed', claimedAt: hoursAfterCreation(2), attestedAt: null },
-        { id: 'funnel-attested', status: 'Attested', claimedAt: hoursAfterCreation(4), attestedAt: hoursAfterCreation(7) },
-        { id: 'funnel-settled-a', status: 'Settled', claimedAt: hoursAfterCreation(6), attestedAt: hoursAfterCreation(11) },
-        { id: 'funnel-settled-b', status: 'Settled', claimedAt: hoursAfterCreation(8), attestedAt: hoursAfterCreation(11) },
+        {
+          id: 'funnel-claimed',
+          status: 'Claimed',
+          claimedAt: hoursAfterCreation(2),
+          attestedAt: null,
+        },
+        {
+          id: 'funnel-attested',
+          status: 'Attested',
+          claimedAt: hoursAfterCreation(4),
+          attestedAt: hoursAfterCreation(7),
+        },
+        {
+          id: 'funnel-settled-a',
+          status: 'Settled',
+          claimedAt: hoursAfterCreation(6),
+          attestedAt: hoursAfterCreation(11),
+        },
+        {
+          id: 'funnel-settled-b',
+          status: 'Settled',
+          claimedAt: hoursAfterCreation(8),
+          attestedAt: hoursAfterCreation(11),
+        },
       ].map((voucher) => ({
         ...voucher,
         funder: FUNDER,
@@ -843,7 +868,14 @@ describe('GET /ready', () => {
     await prisma.indexerState.upsert({
       where: { id: 1 },
       create: { id: 1, lastLedger: 50, gap: true, gapOldestLedger: 200, gapCursorLedger: 50 },
-      update: { lastLedger: 50, gap: true, gapOldestLedger: 200, gapCursorLedger: 50, leaseOwner: null, leaseExpiresAt: null },
+      update: {
+        lastLedger: 50,
+        gap: true,
+        gapOldestLedger: 200,
+        gapCursorLedger: 50,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+      },
     });
     vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 1000 } as never);
 
@@ -917,11 +949,61 @@ describe('GET /providers capacity and openVouchers (#316)', () => {
     // openVouchers counts Funded and Claimed only; the others must not add.
     await prisma.voucher.createMany({
       data: [
-        { id: 'cap-funded-1', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Funded', createdAt, expiresAt: createdAt },
-        { id: 'cap-funded-2', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Funded', createdAt, expiresAt: createdAt },
-        { id: 'cap-claimed-1', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Claimed', createdAt, expiresAt: createdAt },
-        { id: 'cap-settled-1', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Settled', createdAt, expiresAt: createdAt },
-        { id: 'cap-attested-1', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Attested', createdAt, expiresAt: createdAt },
+        {
+          id: 'cap-funded-1',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CAP_CLINIC,
+          serviceCode: 101,
+          amount: '1',
+          status: 'Funded',
+          createdAt,
+          expiresAt: createdAt,
+        },
+        {
+          id: 'cap-funded-2',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CAP_CLINIC,
+          serviceCode: 101,
+          amount: '1',
+          status: 'Funded',
+          createdAt,
+          expiresAt: createdAt,
+        },
+        {
+          id: 'cap-claimed-1',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CAP_CLINIC,
+          serviceCode: 101,
+          amount: '1',
+          status: 'Claimed',
+          createdAt,
+          expiresAt: createdAt,
+        },
+        {
+          id: 'cap-settled-1',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CAP_CLINIC,
+          serviceCode: 101,
+          amount: '1',
+          status: 'Settled',
+          createdAt,
+          expiresAt: createdAt,
+        },
+        {
+          id: 'cap-attested-1',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CAP_CLINIC,
+          serviceCode: 101,
+          amount: '1',
+          status: 'Attested',
+          createdAt,
+          expiresAt: createdAt,
+        },
       ],
     });
   });
@@ -949,7 +1031,13 @@ describe('GET /providers capacity and openVouchers (#316)', () => {
   it('reports openVouchers as 0 and capacity as null for a clinic that set neither', async () => {
     const NULL_CLINIC = `G${'D'.repeat(55)}`;
     await prisma.provider.create({
-      data: { address: NULL_CLINIC, name: 'Quiet Clinic', country: 'ZZ', status: 'Active', registeredAt: createdAt },
+      data: {
+        address: NULL_CLINIC,
+        name: 'Quiet Clinic',
+        country: 'ZZ',
+        status: 'Active',
+        registeredAt: createdAt,
+      },
     });
     const { body } = await get(`/providers/${NULL_CLINIC}`);
     expect(body.capacity).toBeNull();
@@ -959,16 +1047,17 @@ describe('GET /providers capacity and openVouchers (#316)', () => {
 
 describe('GET /providers/:address/stats', () => {
   /** Timestamp offsets in seconds from the same creation time. */
-  async function seedTimings(rows: {
-    claimedAtSeconds: number | null;
-    attestedAtSeconds: number | null;
-    providerAddress?: string;
-    status?: string;
-  }[]) {
+  async function seedTimings(
+    rows: {
+      claimedAtSeconds: number | null;
+      attestedAtSeconds: number | null;
+      providerAddress?: string;
+      status?: string;
+    }[],
+  ) {
     const createdAt = new Date('2026-10-01T00:00:00Z');
-    const at = (seconds: number | null) => seconds === null
-      ? null
-      : new Date(createdAt.getTime() + seconds * 1000);
+    const at = (seconds: number | null) =>
+      seconds === null ? null : new Date(createdAt.getTime() + seconds * 1000);
     await prisma.voucher.createMany({
       data: rows.map((row, i) => ({
         id: `timing-${i}`,
@@ -1086,9 +1175,7 @@ describe('GET /providers/:address/stats', () => {
   });
 
   it('returns a claim median but null attestation time before any complete attestation', async () => {
-    await seedTimings([
-      { claimedAtSeconds: 8, attestedAtSeconds: null, status: 'Claimed' },
-    ]);
+    await seedTimings([{ claimedAtSeconds: 8, attestedAtSeconds: null, status: 'Claimed' }]);
 
     const { body } = await get(`/providers/${CLINIC}/stats`);
     expect(body.medianClaimSeconds).toBe(8);
@@ -1098,25 +1185,31 @@ describe('GET /providers/:address/stats', () => {
   it.each([
     { claimedAtSeconds: 0, attestedAtSeconds: 0, claim: 0, attestation: 0 },
     { claimedAtSeconds: 0.125, attestedAtSeconds: 0.375, claim: 0.125, attestation: 0.25 },
-  ])('preserves a singleton interval, including zero and fractional seconds: $claim', async (sample) => {
-    await seedTimings([sample]);
+  ])(
+    'preserves a singleton interval, including zero and fractional seconds: $claim',
+    async (sample) => {
+      await seedTimings([sample]);
 
-    const { body } = await get(`/providers/${CLINIC}/stats`);
-    expect(body.medianClaimSeconds).toBe(sample.claim);
-    expect(body.medianAttestationSeconds).toBe(sample.attestation);
-  });
+      const { body } = await get(`/providers/${CLINIC}/stats`);
+      expect(body.medianClaimSeconds).toBe(sample.claim);
+      expect(body.medianAttestationSeconds).toBe(sample.attestation);
+    },
+  );
 
   it.each([
     { claimedAtSeconds: -1, attestedAtSeconds: -2, claim: null, attestation: null },
     { claimedAtSeconds: 10, attestedAtSeconds: 9, claim: 10, attestation: null },
     { claimedAtSeconds: -1, attestedAtSeconds: 2, claim: null, attestation: 3 },
-  ])('excludes negative intervals independently: $claimedAtSeconds, $attestedAtSeconds', async (sample) => {
-    await seedTimings([sample]);
+  ])(
+    'excludes negative intervals independently: $claimedAtSeconds, $attestedAtSeconds',
+    async (sample) => {
+      await seedTimings([sample]);
 
-    const { body } = await get(`/providers/${CLINIC}/stats`);
-    expect(body.medianClaimSeconds).toBe(sample.claim);
-    expect(body.medianAttestationSeconds).toBe(sample.attestation);
-  });
+      const { body } = await get(`/providers/${CLINIC}/stats`);
+      expect(body.medianClaimSeconds).toBe(sample.claim);
+      expect(body.medianAttestationSeconds).toBe(sample.attestation);
+    },
+  );
 
   it('isolates each provider and serves the same metrics through the v1 route', async () => {
     await seedTimings([
@@ -1139,8 +1232,10 @@ describe('GET /providers/:address/stats', () => {
   it('documents nullable numeric response times and their intervals in OpenAPI', async () => {
     const { body: spec } = await get('/openapi.json');
     for (const prefix of ['', '/v1']) {
-      const schema = spec.paths[`${prefix}/providers/{address}/stats`]
-        .get.responses['200'].content['application/json'].schema;
+      const schema =
+        spec.paths[`${prefix}/providers/{address}/stats`].get.responses['200'].content[
+          'application/json'
+        ].schema;
       for (const field of ['medianClaimSeconds', 'medianAttestationSeconds']) {
         expect(schema.required).toContain(field);
         expect(schema.properties[field].anyOf).toEqual([
@@ -1150,7 +1245,9 @@ describe('GET /providers/:address/stats', () => {
         expect(schema.properties[field].description).toContain('seconds');
       }
       expect(schema.properties.medianClaimSeconds.description).toContain('claimedAt - createdAt');
-      expect(schema.properties.medianAttestationSeconds.description).toContain('attestedAt - claimedAt');
+      expect(schema.properties.medianAttestationSeconds.description).toContain(
+        'attestedAt - claimedAt',
+      );
     }
   });
 
@@ -1166,11 +1263,17 @@ describe('GET /stats/daily', () => {
     await backfillDailyStats();
   });
 
-  const sum = (body: { series: Array<Record<string, { count: number; amount: string }>> }, key: string) =>
+  const sum = (
+    body: { series: Array<Record<string, { count: number; amount: string }>> },
+    key: string,
+  ) =>
     body.series.reduce(
       (acc, row) => {
         const bucket = row[key]!;
-        return { count: acc.count + bucket.count, amount: (BigInt(acc.amount) + BigInt(bucket.amount)).toString() };
+        return {
+          count: acc.count + bucket.count,
+          amount: (BigInt(acc.amount) + BigInt(bucket.amount)).toString(),
+        };
       },
       { count: 0, amount: '0' },
     );
@@ -1184,14 +1287,14 @@ describe('GET /stats/daily', () => {
     const dates = body.series.map((r: { date: string }) => r.date);
     expect(new Set(dates).size).toBe(30);
     for (let i = 1; i < dates.length; i += 1) {
-      expect(Date.parse(`${dates[i]}T00:00:00Z`) - Date.parse(`${dates[i - 1]}T00:00:00Z`)).toBe(DAY);
+      expect(Date.parse(`${dates[i]}T00:00:00Z`) - Date.parse(`${dates[i - 1]}T00:00:00Z`)).toBe(
+        DAY,
+      );
     }
     expect(dates[dates.length - 1]).toBe(new Date().toISOString().slice(0, 10));
 
     // Days with nothing on them are present and zeroed, so charts need no gaps filled.
-    const empty = body.series.find(
-      (r: { funded: { count: number } }) => r.funded.count === 0,
-    );
+    const empty = body.series.find((r: { funded: { count: number } }) => r.funded.count === 0);
     expect(empty).toMatchObject({
       funded: { count: 0, amount: '0' },
       settled: { count: 0, amount: '0' },
@@ -1749,9 +1852,7 @@ describe('GET /attesters', () => {
     const { body } = await get('/attesters?all=true');
     expect(body.total).toBe(2);
 
-    const former = body.attesters.find(
-      (a: { address: string }) => a.address === FORMER_ATTESTER,
-    );
+    const former = body.attesters.find((a: { address: string }) => a.address === FORMER_ATTESTER);
     expect(former).toMatchObject({ active: false, attestations: 0 });
     expect(former.removedAt).not.toBeNull();
   });
@@ -1923,7 +2024,9 @@ describe('GET /receipts', () => {
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_query');
 
-    const { status: s2, body: b2 } = await get(`/receipts?beneficiaryRef=${REF}&provider=${CLINIC}`);
+    const { status: s2, body: b2 } = await get(
+      `/receipts?beneficiaryRef=${REF}&provider=${CLINIC}`,
+    );
     expect(s2).toBe(400);
     expect(b2.error).toBe('invalid_query');
   });
@@ -1971,10 +2074,7 @@ describe('GET /receipts', () => {
   it('pages a cursor with the clinic named', async () => {
     const { body: page1 } = await get(`/receipts?beneficiaryRef=${REF}&limit=1`);
     expect(page1.receipts[0].provider.name).toBe('Ikeja General Clinic');
-    const cursor = encodeCursor(
-      new Date(page1.receipts[0].settledAt),
-      page1.receipts[0].voucherId,
-    );
+    const cursor = encodeCursor(new Date(page1.receipts[0].settledAt), page1.receipts[0].voucherId);
     const { body: page2 } = await get(`/receipts?beneficiaryRef=${REF}&limit=1&cursor=${cursor}`);
     expect(page2.receipts[0].provider).toEqual({
       address: CLINIC,
@@ -2169,9 +2269,7 @@ describe('GET /receipts/summary', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().count).toBe(2);
-    expect(res.headers['cache-control']).toBe(
-      'public, max-age=5, stale-while-revalidate=30',
-    );
+    expect(res.headers['cache-control']).toBe('public, max-age=5, stale-while-revalidate=30');
     expect(res.headers['etag']).toMatch(/^W\/"\d+-[A-Za-z0-9_-]+"$/);
   });
 });
@@ -2266,7 +2364,7 @@ describe('GET /vouchers/due', () => {
   it('returns vouchers expiring, becoming refundable, or settleable within the window', async () => {
     // Use a fixed clock by seeding with specific dates
     const now = Date.now();
-    
+
     // Add more vouchers for testing the due endpoint
     await prisma.voucher.createMany({
       data: [
@@ -2324,7 +2422,7 @@ describe('GET /vouchers/due', () => {
 
     // Use provider filter
     const { body } = await get(`/vouchers/due?provider=${CLINIC}&within=72h`);
-    
+
     // Existing seeded vouchers: id '2' (refundable now) and '4' (settleable now) are in window
     // New vouchers: due-1 (expires in 48h) and due-3 (dispute deadline in 24h) are in window
     // Total expected: 4
@@ -2335,7 +2433,7 @@ describe('GET /vouchers/due', () => {
     expect(ids).toContain('4');
     expect(ids).not.toContain('due-2');
     expect(ids).not.toContain('due-4');
-    
+
     expect(body.total).toBe(4);
   });
 });
@@ -2370,10 +2468,7 @@ describe('cursor pagination', () => {
     const { body: page1 } = await get(`/vouchers?funder=${FUNDER}&limit=2`);
     expect(page1.vouchers).toHaveLength(2);
 
-    const cursor = encodeCursor(
-      new Date(page1.vouchers[1].createdAt),
-      page1.vouchers[1].id,
-    );
+    const cursor = encodeCursor(new Date(page1.vouchers[1].createdAt), page1.vouchers[1].id);
     const { body: page2 } = await get(`/vouchers?funder=${FUNDER}&limit=2&cursor=${cursor}`);
     expect(page2.vouchers.length).toBeGreaterThan(0);
 
@@ -2415,10 +2510,7 @@ describe('cursor pagination', () => {
     const { body: page1 } = await get(`/receipts?beneficiaryRef=${REF}&limit=1`);
     expect(page1.receipts).toHaveLength(1);
 
-    const cursor = encodeCursor(
-      new Date(page1.receipts[0].settledAt),
-      page1.receipts[0].voucherId,
-    );
+    const cursor = encodeCursor(new Date(page1.receipts[0].settledAt), page1.receipts[0].voucherId);
     const { body: page2 } = await get(`/receipts?beneficiaryRef=${REF}&limit=1&cursor=${cursor}`);
     expect(page2.receipts).toHaveLength(1);
     expect(page2.receipts[0].voucherId).not.toBe(page1.receipts[0].voucherId);
@@ -2453,10 +2545,7 @@ describe('GET /providers/:address/services/:code/history', () => {
   it('returns price changes oldest first', async () => {
     const { status, body } = await get(`/providers/${CLINIC}/services/101/history`);
     expect(status).toBe(200);
-    expect(body.history.map((h: { price: string }) => h.price)).toEqual([
-      '30000000',
-      '35000000',
-    ]);
+    expect(body.history.map((h: { price: string }) => h.price)).toEqual(['30000000', '35000000']);
     expect(body.history[0].priceDisplay).toBe('3.0000000');
   });
 
@@ -2556,9 +2645,7 @@ describe('HTTP caching', () => {
     for (const url of ['/providers', `/providers/${CLINIC}`, `/vouchers?funder=${FUNDER}`]) {
       const res = await cached(url);
       expect(res.statusCode).toBe(200);
-      expect(res.headers['cache-control']).toBe(
-        'public, max-age=5, stale-while-revalidate=30',
-      );
+      expect(res.headers['cache-control']).toBe('public, max-age=5, stale-while-revalidate=30');
       expect(res.headers['etag']).toMatch(/^W\/"500-[A-Za-z0-9_-]+"$/);
     }
   });
@@ -2579,9 +2666,9 @@ describe('HTTP caching', () => {
     const etag = first.headers['etag'] as string;
 
     expect((await cached('/providers', { 'if-none-match': '*' })).statusCode).toBe(304);
-    expect(
-      (await cached('/providers', { 'if-none-match': `"other", ${etag}` })).statusCode,
-    ).toBe(304);
+    expect((await cached('/providers', { 'if-none-match': `"other", ${etag}` })).statusCode).toBe(
+      304,
+    );
     // Weak comparison: the strong form of the same tag also validates.
     expect(
       (await cached('/providers', { 'if-none-match': etag.replace(/^W\//, '') })).statusCode,
@@ -2654,7 +2741,9 @@ describe('Stellar address validation (#171)', () => {
       const { status, body } = await get(url);
       expect(status, url).toBe(400);
       expect(body.error, url).toBe('invalid_query');
-      expect(JSON.stringify(body.details), url).toContain('must be a valid Stellar account address');
+      expect(JSON.stringify(body.details), url).toContain(
+        'must be a valid Stellar account address',
+      );
     }
     expect((await getCsv(`/vouchers.csv?funder=${corrupted}`)).status).toBe(400);
   });

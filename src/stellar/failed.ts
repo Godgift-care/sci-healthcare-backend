@@ -70,9 +70,7 @@ export type RetryResult = { retried: number; recovered: number; remaining: numbe
  * pruned by operational data retention); rows that still fail keep their place
  * with a bumped attempt count and the latest error.
  */
-export async function retryFailed(
-  apply: (e: DecodedEvent) => Promise<void>,
-): Promise<RetryResult> {
+export async function retryFailed(apply: (e: DecodedEvent) => Promise<void>): Promise<RetryResult> {
   const rows = await prisma.failedEvent.findMany({
     where: { resolvedAt: null },
     orderBy: [{ ledger: 'asc' }, { id: 'asc' }],

@@ -23,12 +23,9 @@ export type PurgeOptions = {
  * (`deliveredAt == null`) are never deleted by this cleanup, so actionable
  * failures remain visible to operators until resolved.
  */
-export async function purgeExpiredOperationalData(
-  opts: PurgeOptions = {},
-): Promise<PurgeResult> {
+export async function purgeExpiredOperationalData(opts: PurgeOptions = {}): Promise<PurgeResult> {
   const retentionDays =
-    opts.retentionDays ??
-    (process.env.RETENTION_DAYS ? Number(process.env.RETENTION_DAYS) : 30);
+    opts.retentionDays ?? (process.env.RETENTION_DAYS ? Number(process.env.RETENTION_DAYS) : 30);
   const now = opts.now ?? new Date();
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
   const client = opts.client ?? defaultPrisma;

@@ -33,45 +33,129 @@ const INFO = 'info';
 const HIDDEN_UNICODE = /[\u202A-\u202E\u2066-\u2069\u200B-\u200F\u2028\u2029\u00AD\u2060\uFEFF]/;
 
 const LINE_RULES = [
-  { severity: BLOCK, rule: 'crypto-miner', re: /stratum\+(tcp|ssl):\/\/|\bcoinhive\b|\bcryptonight\b|\bxmrig\b|\bminexmr\b|\bnicehash\b/i,
-    message: 'Cryptocurrency-miner reference.' },
-  { severity: BLOCK, rule: 'reverse-shell', re: /\/dev\/tcp\/|\bnc\s+(-\w+\s+)*-e\b|\bbash\s+-i\s+>&|\bmkfifo\b.*\bnc\b|\bsocat\b.*\bexec:/i,
-    message: 'Reverse-shell pattern.' },
-  { severity: BLOCK, rule: 'pipe-to-shell', re: /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba|z)?sh\b/i,
-    message: 'Downloads a script and pipes it into a shell.' },
-  { severity: BLOCK, rule: 'credential-file', re: /(\.npmrc|\.ssh\/id_[a-z0-9]+|\.aws\/credentials|\.config\/gh\/hosts\.yml|\.git-credentials)\b/,
-    message: 'Reads or references a credentials file.' },
+  {
+    severity: BLOCK,
+    rule: 'crypto-miner',
+    re: /stratum\+(tcp|ssl):\/\/|\bcoinhive\b|\bcryptonight\b|\bxmrig\b|\bminexmr\b|\bnicehash\b/i,
+    message: 'Cryptocurrency-miner reference.',
+  },
+  {
+    severity: BLOCK,
+    rule: 'reverse-shell',
+    re: /\/dev\/tcp\/|\bnc\s+(-\w+\s+)*-e\b|\bbash\s+-i\s+>&|\bmkfifo\b.*\bnc\b|\bsocat\b.*\bexec:/i,
+    message: 'Reverse-shell pattern.',
+  },
+  {
+    severity: BLOCK,
+    rule: 'pipe-to-shell',
+    re: /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba|z)?sh\b/i,
+    message: 'Downloads a script and pipes it into a shell.',
+  },
+  {
+    severity: BLOCK,
+    rule: 'credential-file',
+    re: /(\.npmrc|\.ssh\/id_[a-z0-9]+|\.aws\/credentials|\.config\/gh\/hosts\.yml|\.git-credentials)\b/,
+    message: 'Reads or references a credentials file.',
+  },
   // The loader found in infected pull requests: a base64 URL kept in a
   // committed .env, decoded at runtime, fetched and passed to eval. Decoding
   // an environment variable, or carrying a base64-encoded http(s) URL, has no
   // ordinary use here, so neither can be waved through with the review label.
-  { severity: BLOCK, rule: 'encoded-loader', re: /\batob\s*\(\s*process\.env\b|Buffer\.from\s*\(\s*process\.env\.\w+\s*,\s*['"]base64['"]|\baHR0c(HM6Ly|DovL)[A-Za-z0-9+/=_-]{8,}/,
-    message: 'Decodes a hidden value at runtime (an environment variable or a base64-encoded URL): the pattern used to download and run remote code.' },
-  { severity: REVIEW, rule: 'dynamic-code', re: /\beval\s*\(|\bnew\s+Function\s*\(|\bvm\.(runIn\w+|Script)\b|\bsetTimeout\s*\(\s*['"`]|\bsetInterval\s*\(\s*['"`]/,
-    message: 'Executes code built at runtime (eval, new Function, vm).' },
-  { severity: REVIEW, rule: 'process-spawn', re: /\bchild_process\b|\bexecSync\s*\(|\bspawnSync?\s*\(|\bexecFile(Sync)?\s*\(|std::process::Command|\bCommand::new\s*\(/,
-    message: 'Starts another process.' },
-  { severity: REVIEW, rule: 'obfuscation', re: /(\\x[0-9a-fA-F]{2}){12,}|(\\u[0-9a-fA-F]{4}){12,}|String\.fromCharCode\s*\(\s*\d+(\s*,\s*\d+){8,}|\batob\s*\(|Buffer\.from\s*\([^)]*['"]base64['"]\s*\)/,
-    message: 'Encoded or obfuscated content (hex/unicode escapes, char codes, base64 decoding).' },
-  { severity: REVIEW, rule: 'long-encoded-string', re: /['"`][A-Za-z0-9+/=_-]{200,}['"`]/,
-    message: 'Very long encoded string literal.' },
-  { severity: REVIEW, rule: 'env-exfiltration', re: /JSON\.stringify\s*\(\s*process\.env\s*\)|Object\.(entries|keys|values)\s*\(\s*process\.env\s*\)|\bprocess\.env\b[^\n]*\b(fetch|axios|request|https?\.request)\s*\(/,
-    message: 'Collects environment variables, possibly to send them somewhere.' },
-  { severity: REVIEW, rule: 'wallet-secret', re: /\b(secret[_-]?key|private[_-]?key|seed[_-]?phrase|mnemonic)\b[^\n]*\b(fetch|send|post|axios|beacon)\b|\bS[A-Z2-7]{55}\b/,
-    message: 'Handles a wallet secret key or seed (or contains an S... secret key).' },
+  {
+    severity: BLOCK,
+    rule: 'encoded-loader',
+    re: /\batob\s*\(\s*process\.env\b|Buffer\.from\s*\(\s*process\.env\.\w+\s*,\s*['"]base64['"]|\baHR0c(HM6Ly|DovL)[A-Za-z0-9+/=_-]{8,}/,
+    message:
+      'Decodes a hidden value at runtime (an environment variable or a base64-encoded URL): the pattern used to download and run remote code.',
+  },
+  {
+    severity: REVIEW,
+    rule: 'dynamic-code',
+    re: /\beval\s*\(|\bnew\s+Function\s*\(|\bvm\.(runIn\w+|Script)\b|\bsetTimeout\s*\(\s*['"`]|\bsetInterval\s*\(\s*['"`]/,
+    message: 'Executes code built at runtime (eval, new Function, vm).',
+  },
+  {
+    severity: REVIEW,
+    rule: 'process-spawn',
+    re: /\bchild_process\b|\bexecSync\s*\(|\bspawnSync?\s*\(|\bexecFile(Sync)?\s*\(|std::process::Command|\bCommand::new\s*\(/,
+    message: 'Starts another process.',
+  },
+  {
+    severity: REVIEW,
+    rule: 'obfuscation',
+    re: /(\\x[0-9a-fA-F]{2}){12,}|(\\u[0-9a-fA-F]{4}){12,}|String\.fromCharCode\s*\(\s*\d+(\s*,\s*\d+){8,}|\batob\s*\(|Buffer\.from\s*\([^)]*['"]base64['"]\s*\)/,
+    message: 'Encoded or obfuscated content (hex/unicode escapes, char codes, base64 decoding).',
+  },
+  {
+    severity: REVIEW,
+    rule: 'long-encoded-string',
+    re: /['"`][A-Za-z0-9+/=_-]{200,}['"`]/,
+    message: 'Very long encoded string literal.',
+  },
+  {
+    severity: REVIEW,
+    rule: 'env-exfiltration',
+    re: /JSON\.stringify\s*\(\s*process\.env\s*\)|Object\.(entries|keys|values)\s*\(\s*process\.env\s*\)|\bprocess\.env\b[^\n]*\b(fetch|axios|request|https?\.request)\s*\(/,
+    message: 'Collects environment variables, possibly to send them somewhere.',
+  },
+  {
+    severity: REVIEW,
+    rule: 'wallet-secret',
+    re: /\b(secret[_-]?key|private[_-]?key|seed[_-]?phrase|mnemonic)\b[^\n]*\b(fetch|send|post|axios|beacon)\b|\bS[A-Z2-7]{55}\b/,
+    message: 'Handles a wallet secret key or seed (or contains an S... secret key).',
+  },
 ];
 
 const URL_RE = /\bhttps?:\/\/([a-zA-Z0-9.-]+)/g;
 const STELLAR_ADDRESS_RE = /\b[GC][A-Z2-7]{55}\b/g;
 
 const BLOCKED_EXTENSIONS = new Set([
-  '.exe', '.dll', '.so', '.dylib', '.bin', '.jar', '.class', '.pyc', '.node', '.scr', '.msi', '.dmg', '.apk',
-  '.app', '.com', '.cpl', '.sys', '.elf', '.out', '.wasm',
+  '.exe',
+  '.dll',
+  '.so',
+  '.dylib',
+  '.bin',
+  '.jar',
+  '.class',
+  '.pyc',
+  '.node',
+  '.scr',
+  '.msi',
+  '.dmg',
+  '.apk',
+  '.app',
+  '.com',
+  '.cpl',
+  '.sys',
+  '.elf',
+  '.out',
+  '.wasm',
 ]);
 const REVIEW_EXTENSIONS = new Set(['.sh', '.bat', '.cmd', '.ps1', '.vbs', '.py', '.rb', '.pl']);
-const BINARY_OK_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.woff', '.woff2', '.ttf', '.otf', '.pdf', '.avif']);
+const BINARY_OK_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.ico',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.otf',
+  '.pdf',
+  '.avif',
+]);
 
-const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare', 'prepublish', 'preprepare', 'postprepare'];
+const INSTALL_SCRIPTS = [
+  'preinstall',
+  'install',
+  'postinstall',
+  'prepare',
+  'prepublish',
+  'preprepare',
+  'postprepare',
+];
 
 function ext(p) {
   return path.extname(p).toLowerCase();
@@ -105,21 +189,40 @@ function scanAddedLines(file, added, config) {
   const findings = [];
   const isData = matchesAny(file, config.dataPaths);
   for (const { line, text } of added) {
-    if (HIDDEN_UNICODE.test(text) && !(line === 1 && text.startsWith('\uFEFF') && !HIDDEN_UNICODE.test(text.slice(1)))) {
-      findings.push({ severity: BLOCK, rule: 'hidden-unicode', path: file, line,
-        message: 'Invisible or bidirectional Unicode characters (Trojan Source): the code may not do what it appears to.' });
+    if (
+      HIDDEN_UNICODE.test(text) &&
+      !(line === 1 && text.startsWith('\uFEFF') && !HIDDEN_UNICODE.test(text.slice(1)))
+    ) {
+      findings.push({
+        severity: BLOCK,
+        rule: 'hidden-unicode',
+        path: file,
+        line,
+        message:
+          'Invisible or bidirectional Unicode characters (Trojan Source): the code may not do what it appears to.',
+      });
     }
     // A payload pushed off-screen: code, a long run of blanks, more code
     // (or a line that starts after a wall of blanks). Editors and diff views
     // show only the visible part. Markdown is not executed, so it is skipped.
     if (!/\.md$/i.test(file) && (/\S[ \t]{40,}\S/.test(text) || /^[ \t]{60,}\S/.test(text))) {
-      findings.push({ severity: BLOCK, rule: 'hidden-code', path: file, line,
-        message: 'Code hidden after a long run of whitespace, off the visible edge of the line.' });
+      findings.push({
+        severity: BLOCK,
+        rule: 'hidden-code',
+        path: file,
+        line,
+        message: 'Code hidden after a long run of whitespace, off the visible edge of the line.',
+      });
     }
     // Names and arithmetic that javascript-obfuscator and similar tools emit.
     if (/\b_0x[0-9a-f]{4,}\b/.test(text) || (text.match(/parseInt\(0x/g) || []).length >= 3) {
-      findings.push({ severity: BLOCK, rule: 'obfuscated-javascript', path: file, line,
-        message: 'Machine-obfuscated JavaScript (javascript-obfuscator signatures).' });
+      findings.push({
+        severity: BLOCK,
+        rule: 'obfuscated-javascript',
+        path: file,
+        line,
+        message: 'Machine-obfuscated JavaScript (javascript-obfuscator signatures).',
+      });
     }
     for (const r of LINE_RULES) {
       if (r.re.test(text) && !(isData && r.severity === REVIEW)) {
@@ -127,18 +230,35 @@ function scanAddedLines(file, added, config) {
       }
     }
     if (text.length > 1000 && !isData && !/\.(md|svg|json|lock|map)$/i.test(file)) {
-      findings.push({ severity: REVIEW, rule: 'minified-code', path: file, line, message: 'Very long line; minified or generated code hides behaviour.' });
+      findings.push({
+        severity: REVIEW,
+        rule: 'minified-code',
+        path: file,
+        line,
+        message: 'Very long line; minified or generated code hides behaviour.',
+      });
     }
     if (!isData) {
       for (const m of text.matchAll(URL_RE)) {
         if (!hostAllowed(m[1], config.allowedHosts)) {
-          findings.push({ severity: REVIEW, rule: 'new-network-host', path: file, line, message: `Contacts a host not on the allow-list: ${m[1]}.` });
+          findings.push({
+            severity: REVIEW,
+            rule: 'new-network-host',
+            path: file,
+            line,
+            message: `Contacts a host not on the allow-list: ${m[1]}.`,
+          });
         }
       }
       for (const m of text.matchAll(STELLAR_ADDRESS_RE)) {
         if (!config.allowedAddresses.includes(m[0])) {
-          findings.push({ severity: REVIEW, rule: 'new-stellar-address', path: file, line,
-            message: `Hard-coded Stellar address ${m[0].slice(0, 6)}...${m[0].slice(-4)}: could redirect funds.` });
+          findings.push({
+            severity: REVIEW,
+            rule: 'new-stellar-address',
+            path: file,
+            line,
+            message: `Hard-coded Stellar address ${m[0].slice(0, 6)}...${m[0].slice(-4)}: could redirect funds.`,
+          });
         }
       }
     }
@@ -152,42 +272,101 @@ function scanFile(file, status, content, config) {
   const e = ext(file);
   if (status !== 'D') {
     if (BLOCKED_EXTENSIONS.has(e) && !matchesAny(file, config.allowedBinaries)) {
-      findings.push({ severity: BLOCK, rule: 'executable-file', path: file, message: `Adds or changes an executable or compiled binary (${e}).` });
-    } else if (content && content.includes(0) && !BINARY_OK_EXTENSIONS.has(e) && !matchesAny(file, config.allowedBinaries)) {
-      findings.push({ severity: BLOCK, rule: 'unexpected-binary', path: file, message: 'Binary content in a file that should be text.' });
+      findings.push({
+        severity: BLOCK,
+        rule: 'executable-file',
+        path: file,
+        message: `Adds or changes an executable or compiled binary (${e}).`,
+      });
+    } else if (
+      content &&
+      content.includes(0) &&
+      !BINARY_OK_EXTENSIONS.has(e) &&
+      !matchesAny(file, config.allowedBinaries)
+    ) {
+      findings.push({
+        severity: BLOCK,
+        rule: 'unexpected-binary',
+        path: file,
+        message: 'Binary content in a file that should be text.',
+      });
     } else if (REVIEW_EXTENSIONS.has(e)) {
-      findings.push({ severity: REVIEW, rule: 'script-file', path: file, message: `Adds or changes a ${e} script.` });
+      findings.push({
+        severity: REVIEW,
+        rule: 'script-file',
+        path: file,
+        message: `Adds or changes a ${e} script.`,
+      });
     }
     // SVGs are served as images but can carry script.
-    if (e === '.svg' && content && /<script\b|javascript:|\son[a-z]+\s*=/i.test(content.toString('utf8'))) {
-      findings.push({ severity: REVIEW, rule: 'svg-script', path: file, message: 'SVG with script or event handlers.' });
+    if (
+      e === '.svg' &&
+      content &&
+      /<script\b|javascript:|\son[a-z]+\s*=/i.test(content.toString('utf8'))
+    ) {
+      findings.push({
+        severity: REVIEW,
+        rule: 'svg-script',
+        path: file,
+        message: 'SVG with script or event handlers.',
+      });
     }
     // A real .env holds secrets and is gitignored; .env.example is the
     // committed one. The infected pull requests committed a .env (after
     // removing it from .gitignore) to carry their download URL.
     if (/(^|\/)\.env(\.(local|development|production|test))?$/.test(file)) {
-      findings.push({ severity: BLOCK, rule: 'env-file', path: file, message: 'Commits an environment file; only .env.example belongs in the repository.' });
+      findings.push({
+        severity: BLOCK,
+        rule: 'env-file',
+        path: file,
+        message: 'Commits an environment file; only .env.example belongs in the repository.',
+      });
     }
     if (/(^|\/)build\.rs$/.test(file)) {
-      findings.push({ severity: REVIEW, rule: 'cargo-build-script', path: file, message: 'Cargo build script: runs arbitrary code at compile time.' });
+      findings.push({
+        severity: REVIEW,
+        rule: 'cargo-build-script',
+        path: file,
+        message: 'Cargo build script: runs arbitrary code at compile time.',
+      });
     }
     if (/(^|\/)\.npmrc$/.test(file) && content) {
       const text = content.toString('utf8');
       const reg = text.match(/registry\s*=\s*(\S+)/i);
       if (reg && !/^https:\/\/registry\.npmjs\.org\/?$/i.test(reg[1])) {
-        findings.push({ severity: BLOCK, rule: 'registry-override', path: file, message: `Points npm at another registry: ${reg[1]}.` });
+        findings.push({
+          severity: BLOCK,
+          rule: 'registry-override',
+          path: file,
+          message: `Points npm at another registry: ${reg[1]}.`,
+        });
       }
       if (/_authToken|_auth\s*=|always-auth/i.test(text)) {
-        findings.push({ severity: BLOCK, rule: 'npm-credentials', path: file, message: 'Puts npm credentials in the repository.' });
+        findings.push({
+          severity: BLOCK,
+          rule: 'npm-credentials',
+          path: file,
+          message: 'Puts npm credentials in the repository.',
+        });
       }
     }
     if (/(^|\/)\.(husky|githooks)\//.test(file) || /(^|\/)\.git\/hooks\//.test(file)) {
-      findings.push({ severity: REVIEW, rule: 'git-hook', path: file, message: 'Git hook: runs on contributors\' machines.' });
+      findings.push({
+        severity: REVIEW,
+        rule: 'git-hook',
+        path: file,
+        message: "Git hook: runs on contributors' machines.",
+      });
     }
   }
   if (matchesAny(file, config.sensitivePaths) && !matchesAny(file, config.dataPaths)) {
-    findings.push({ severity: REVIEW, rule: 'sensitive-path', path: file,
-      message: 'Changes a security-sensitive file (keys, signing, secrets, contracts or deployment); a maintainer must read this diff.' });
+    findings.push({
+      severity: REVIEW,
+      rule: 'sensitive-path',
+      path: file,
+      message:
+        'Changes a security-sensitive file (keys, signing, secrets, contracts or deployment); a maintainer must read this diff.',
+    });
   }
   return findings;
 }
@@ -205,7 +384,11 @@ function levenshtein(a, b) {
   for (let j = 1; j <= b.length; j++) d[0][j] = j;
   for (let i = 1; i <= a.length; i++) {
     for (let j = 1; j <= b.length; j++) {
-      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      d[i][j] = Math.min(
+        d[i - 1][j] + 1,
+        d[i][j - 1] + 1,
+        d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
     }
   }
   return d[a.length][b.length];
@@ -217,7 +400,12 @@ function scanPackageJson(file, baseText, headText) {
   const base = parseJson(baseText) || {};
   const head = parseJson(headText);
   if (!head) return findings;
-  const deps = (p) => ({ ...(p.dependencies || {}), ...(p.devDependencies || {}), ...(p.optionalDependencies || {}), ...(p.peerDependencies || {}) });
+  const deps = (p) => ({
+    ...(p.dependencies || {}),
+    ...(p.devDependencies || {}),
+    ...(p.optionalDependencies || {}),
+    ...(p.peerDependencies || {}),
+  });
   const before = deps(base);
   const after = deps(head);
   const added = [];
@@ -227,40 +415,89 @@ function scanPackageJson(file, baseText, headText) {
     // A folder inside this repository is reviewable; anything else off the registry is not.
     const local = /^(file|link):(?!\/|[A-Za-z]:|~)(?!.*\.\.)/.test(String(spec));
     if (local) {
-      findings.push({ severity: REVIEW, rule: 'local-dependency', path: file,
-        message: `Dependency ${name} is installed from ${spec}, a folder in this repository.` });
-    } else if (/^(git|git\+\w+|github|gitlab|bitbucket|gist|https?|file|link):|^[\w-]+\/[\w.-]+(#.*)?$/.test(String(spec))) {
-      findings.push({ severity: BLOCK, rule: 'non-registry-dependency', path: file,
-        message: `Dependency ${name} is installed from ${spec}, not the npm registry.` });
+      findings.push({
+        severity: REVIEW,
+        rule: 'local-dependency',
+        path: file,
+        message: `Dependency ${name} is installed from ${spec}, a folder in this repository.`,
+      });
+    } else if (
+      /^(git|git\+\w+|github|gitlab|bitbucket|gist|https?|file|link):|^[\w-]+\/[\w.-]+(#.*)?$/.test(
+        String(spec),
+      )
+    ) {
+      findings.push({
+        severity: BLOCK,
+        rule: 'non-registry-dependency',
+        path: file,
+        message: `Dependency ${name} is installed from ${spec}, not the npm registry.`,
+      });
     }
     // "name": "npm:other@1" installs a different package under a trusted name.
     if (/^npm:/.test(String(spec)) && before[name] !== spec) {
-      findings.push({ severity: REVIEW, rule: 'package-alias', path: file,
-        message: `${name} is an alias for ${spec}: a different package installed under this name.` });
+      findings.push({
+        severity: REVIEW,
+        rule: 'package-alias',
+        path: file,
+        message: `${name} is an alias for ${spec}: a different package installed under this name.`,
+      });
     }
   }
   // Only a scope's owner can publish inside it, so look-alikes in the same
   // scope are siblings, not typosquats; very short names collide by chance.
   const scopeOf = (n) => (n.startsWith('@') ? n.split('/')[0] : '');
   for (const name of added) {
-    const similar = name.length >= 5 && Object.keys(before).find((known) => known !== name
-      && !(scopeOf(name) && scopeOf(name) === scopeOf(known)) && levenshtein(known, name) <= 2);
-    findings.push(similar
-      ? { severity: BLOCK, rule: 'typosquat', path: file, message: `New dependency ${name} looks like the existing ${similar} (possible typosquat).` }
-      : { severity: REVIEW, rule: 'new-dependency', path: file, message: `Adds dependency ${name}.`, pkg: name, spec: String(after[name]) });
+    const similar =
+      name.length >= 5 &&
+      Object.keys(before).find(
+        (known) =>
+          known !== name &&
+          !(scopeOf(name) && scopeOf(name) === scopeOf(known)) &&
+          levenshtein(known, name) <= 2,
+      );
+    findings.push(
+      similar
+        ? {
+            severity: BLOCK,
+            rule: 'typosquat',
+            path: file,
+            message: `New dependency ${name} looks like the existing ${similar} (possible typosquat).`,
+          }
+        : {
+            severity: REVIEW,
+            rule: 'new-dependency',
+            path: file,
+            message: `Adds dependency ${name}.`,
+            pkg: name,
+            spec: String(after[name]),
+          },
+    );
   }
   const bs = base.scripts || {};
   const hs = head.scripts || {};
   for (const [k, v] of Object.entries(hs)) {
     if (bs[k] !== v) {
-      findings.push({ severity: REVIEW, rule: INSTALL_SCRIPTS.includes(k) ? 'install-script' : 'npm-script', path: file,
-        message: INSTALL_SCRIPTS.includes(k) ? `Changes the "${k}" lifecycle script, which runs on every install.` : `Changes the "${k}" npm script.`,
-        script: k, command: String(v), existed: k in bs });
+      findings.push({
+        severity: REVIEW,
+        rule: INSTALL_SCRIPTS.includes(k) ? 'install-script' : 'npm-script',
+        path: file,
+        message: INSTALL_SCRIPTS.includes(k)
+          ? `Changes the "${k}" lifecycle script, which runs on every install.`
+          : `Changes the "${k}" npm script.`,
+        script: k,
+        command: String(v),
+        existed: k in bs,
+      });
     }
   }
   const registry = head.publishConfig && head.publishConfig.registry;
   if (registry && !/^https:\/\/registry\.npmjs\.org\/?$/.test(registry)) {
-    findings.push({ severity: BLOCK, rule: 'registry-override', path: file, message: `publishConfig points at ${registry}.` });
+    findings.push({
+      severity: BLOCK,
+      rule: 'registry-override',
+      path: file,
+      message: `publishConfig points at ${registry}.`,
+    });
   }
   return findings;
 }
@@ -280,11 +517,17 @@ function scriptsRunningNewFiles(findings, changes) {
   for (const f of findings) {
     if (!f.command || !f.existed) continue;
     const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
-    for (const m of f.command.matchAll(/\b(?:node|bash|sh|tsx|ts-node|deno|bun)\s+(?:\.\/)?([\w./-]+)/g)) {
+    for (const m of f.command.matchAll(
+      /\b(?:node|bash|sh|tsx|ts-node|deno|bun)\s+(?:\.\/)?([\w./-]+)/g,
+    )) {
       const target = path.posix.normalize(dir + m[1]);
       if (addedFiles.has(target)) {
-        out.push({ severity: BLOCK, rule: 'script-runs-new-file', path: f.path,
-          message: `The "${f.script}" script runs ${target}, a file this pull request adds.` });
+        out.push({
+          severity: BLOCK,
+          rule: 'script-runs-new-file',
+          path: f.path,
+          message: `The "${f.script}" script runs ${target}, a file this pull request adds.`,
+        });
       }
     }
   }
@@ -300,15 +543,29 @@ function scanNpmLock(file, baseText, headText) {
   for (const [key, pkg] of Object.entries(head.packages)) {
     if (!key || pkg.link) continue;
     if (pkg.resolved && !pkg.resolved.startsWith('https://registry.npmjs.org/')) {
-      findings.push({ severity: BLOCK, rule: 'lockfile-host', path: file, message: `${key} resolves to ${pkg.resolved}, not registry.npmjs.org.` });
+      findings.push({
+        severity: BLOCK,
+        rule: 'lockfile-host',
+        path: file,
+        message: `${key} resolves to ${pkg.resolved}, not registry.npmjs.org.`,
+      });
     }
     if (pkg.resolved && !pkg.integrity) {
-      findings.push({ severity: BLOCK, rule: 'lockfile-integrity', path: file, message: `${key} has no integrity hash.` });
+      findings.push({
+        severity: BLOCK,
+        rule: 'lockfile-integrity',
+        path: file,
+        message: `${key} has no integrity hash.`,
+      });
     }
     const prev = (base.packages || {})[key];
     if (pkg.hasInstallScript && !(prev && prev.hasInstallScript && prev.version === pkg.version)) {
-      findings.push({ severity: REVIEW, rule: 'dependency-install-script', path: file,
-        message: `${key.replace(/^.*node_modules\//, '')}@${pkg.version} runs an install script.` });
+      findings.push({
+        severity: REVIEW,
+        rule: 'dependency-install-script',
+        path: file,
+        message: `${key.replace(/^.*node_modules\//, '')}@${pkg.version} runs an install script.`,
+      });
     }
   }
   return findings;
@@ -321,8 +578,17 @@ function scanCargoLock(file, headText, config) {
   for (const block of headText.split('[[package]]').slice(1)) {
     const name = (block.match(/name\s*=\s*"([^"]+)"/) || [])[1];
     const source = (block.match(/source\s*=\s*"([^"]+)"/) || [])[1];
-    if (source && !source.startsWith('registry+https://github.com/rust-lang/crates.io-index') && !(config.allowedCrateSources || []).includes(source)) {
-      findings.push({ severity: BLOCK, rule: 'crate-source', path: file, message: `Crate ${name} comes from ${source}, not crates.io.` });
+    if (
+      source &&
+      !source.startsWith('registry+https://github.com/rust-lang/crates.io-index') &&
+      !(config.allowedCrateSources || []).includes(source)
+    ) {
+      findings.push({
+        severity: BLOCK,
+        rule: 'crate-source',
+        path: file,
+        message: `Crate ${name} comes from ${source}, not crates.io.`,
+      });
     }
   }
   return findings;
@@ -332,9 +598,21 @@ function scanCargoLock(file, headText, config) {
 function decide(findings, reviewed) {
   const blocks = findings.filter((f) => f.severity === BLOCK);
   const reviews = findings.filter((f) => f.severity === REVIEW);
-  if (blocks.length) return { state: 'failure', description: `${blocks.length} blocking finding(s): not auto-mergeable` };
-  if (reviews.length && !reviewed) return { state: 'failure', description: `${reviews.length} finding(s) need a maintainer security review` };
-  if (reviews.length) return { state: 'success', description: `${reviews.length} finding(s) reviewed by a maintainer` };
+  if (blocks.length)
+    return {
+      state: 'failure',
+      description: `${blocks.length} blocking finding(s): not auto-mergeable`,
+    };
+  if (reviews.length && !reviewed)
+    return {
+      state: 'failure',
+      description: `${reviews.length} finding(s) need a maintainer security review`,
+    };
+  if (reviews.length)
+    return {
+      state: 'success',
+      description: `${reviews.length} finding(s) reviewed by a maintainer`,
+    };
   return { state: 'success', description: 'No suspicious changes found' };
 }
 
@@ -346,7 +624,10 @@ function git(...args) {
 
 function gitBuffer(...args) {
   try {
-    return execFileSync('git', args, { maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+    return execFileSync('git', args, {
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
   } catch {
     return null;
   }
@@ -356,7 +637,13 @@ function addedLinesByFile(base, head) {
   const out = {};
   let file = null;
   let lineNo = 0;
-  for (const raw of git('diff', '--unified=0', '--no-color', '--no-ext-diff', `${base}...${head}`).split('\n')) {
+  for (const raw of git(
+    'diff',
+    '--unified=0',
+    '--no-color',
+    '--no-ext-diff',
+    `${base}...${head}`,
+  ).split('\n')) {
     if (raw.startsWith('+++ ')) {
       file = raw.startsWith('+++ b/') ? raw.slice(6) : null;
       if (file) out[file] = out[file] || [];
@@ -378,7 +665,9 @@ const daysSince = (iso) => (iso ? (Date.now() - new Date(iso).getTime()) / 86400
  */
 async function npmPackageInfo(name, spec) {
   try {
-    const res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2F')}`, { signal: AbortSignal.timeout(10000) });
+    const res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2F')}`, {
+      signal: AbortSignal.timeout(10000),
+    });
     if (res.status === 404) return { exists: false };
     const data = await res.json();
     const time = data.time || {};
@@ -386,10 +675,20 @@ async function npmPackageInfo(name, spec) {
     const version = time[exact] ? exact : (data['dist-tags'] || {}).latest;
     let weeklyDownloads = null;
     try {
-      const d = await fetch(`https://api.npmjs.org/downloads/point/last-week/${name}`, { signal: AbortSignal.timeout(10000) });
+      const d = await fetch(`https://api.npmjs.org/downloads/point/last-week/${name}`, {
+        signal: AbortSignal.timeout(10000),
+      });
       if (d.ok) weeklyDownloads = (await d.json()).downloads;
-    } catch { /* downloads are a hint only */ }
-    return { exists: true, ageDays: daysSince(time.created), version, versionAgeDays: daysSince(time[version]), weeklyDownloads };
+    } catch {
+      /* downloads are a hint only */
+    }
+    return {
+      exists: true,
+      ageDays: daysSince(time.created),
+      version,
+      versionAgeDays: daysSince(time[version]),
+      weeklyDownloads,
+    };
   } catch {
     return { exists: null };
   }
@@ -402,18 +701,33 @@ async function npmPackageInfo(name, spec) {
  */
 function classifyNewDependency(finding, info, config) {
   if (info.exists === false) {
-    return [{ severity: BLOCK, rule: 'unknown-package', path: finding.path,
-      message: `${finding.pkg} does not exist on the npm registry (possible dependency confusion).` }];
+    return [
+      {
+        severity: BLOCK,
+        rule: 'unknown-package',
+        path: finding.path,
+        message: `${finding.pkg} does not exist on the npm registry (possible dependency confusion).`,
+      },
+    ];
   }
   if (info.exists !== true) return [];
   const notes = [];
-  if (info.ageDays !== null && info.ageDays < (config.minPackageAgeDays || 30)) notes.push(`first published ${Math.floor(info.ageDays)} day(s) ago`);
-  if (info.weeklyDownloads !== null) notes.push(`${info.weeklyDownloads.toLocaleString('en-US')} downloads last week`);
-  const freshVersion = info.versionAgeDays !== null && info.versionAgeDays < (config.minVersionAgeDays || 3);
-  if (freshVersion) notes.push(`version ${info.version} published ${Math.floor(info.versionAgeDays * 24)} hour(s) ago`);
+  if (info.ageDays !== null && info.ageDays < (config.minPackageAgeDays || 30))
+    notes.push(`first published ${Math.floor(info.ageDays)} day(s) ago`);
+  if (info.weeklyDownloads !== null)
+    notes.push(`${info.weeklyDownloads.toLocaleString('en-US')} downloads last week`);
+  const freshVersion =
+    info.versionAgeDays !== null && info.versionAgeDays < (config.minVersionAgeDays || 3);
+  if (freshVersion)
+    notes.push(
+      `version ${info.version} published ${Math.floor(info.versionAgeDays * 24)} hour(s) ago`,
+    );
   if (notes.length) finding.message += ` (${notes.join('; ')})`;
-  const established = info.ageDays !== null && info.ageDays >= (config.establishedPackageAgeDays || 365)
-    && info.weeklyDownloads !== null && info.weeklyDownloads >= (config.establishedWeeklyDownloads || 50000);
+  const established =
+    info.ageDays !== null &&
+    info.ageDays >= (config.establishedPackageAgeDays || 365) &&
+    info.weeklyDownloads !== null &&
+    info.weeklyDownloads >= (config.establishedWeeklyDownloads || 50000);
   if (established && !freshVersion) finding.severity = INFO;
   return [];
 }
@@ -432,7 +746,11 @@ function runOsv(lockfiles, osvBinary) {
   });
   let out;
   try {
-    out = execFileSync(osvBinary, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+    out = execFileSync(osvBinary, args, {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
   } catch (err) {
     out = err.stdout; // exits non-zero when anything is found
   }
@@ -443,8 +761,12 @@ function runOsv(lockfiles, osvBinary) {
       for (const v of p.vulnerabilities || []) {
         vulnerabilities++;
         if (String(v.id).startsWith('MAL-')) {
-          findings.push({ severity: BLOCK, rule: 'known-malware', path: 'lockfile',
-            message: `${p.package.name}@${p.package.version} is a known malicious package (${v.id}).` });
+          findings.push({
+            severity: BLOCK,
+            rule: 'known-malware',
+            path: 'lockfile',
+            message: `${p.package.name}@${p.package.version} is a known malicious package (${v.id}).`,
+          });
         }
       }
     }
@@ -458,40 +780,67 @@ function formatReport(findings, decision, vulnerabilities) {
   if (findings.length) {
     lines.push('| Severity | Rule | Where | Finding |', '| --- | --- | --- | --- |');
     for (const f of findings.slice(0, 100)) {
-      lines.push(`| ${f.severity} | \`${f.rule}\` | \`${f.path}${f.line ? `:${f.line}` : ''}\` | ${f.message.replace(/\|/g, '\\|')} |`);
+      lines.push(
+        `| ${f.severity} | \`${f.rule}\` | \`${f.path}${f.line ? `:${f.line}` : ''}\` | ${f.message.replace(/\|/g, '\\|')} |`,
+      );
     }
     if (findings.length > 100) lines.push(`| | | | ...and ${findings.length - 100} more |`);
     lines.push('');
   }
-  if (vulnerabilities) lines.push(`OSV also reports ${vulnerabilities} known vulnerabilities (not malware) in the lockfiles; the audit job covers those.`, '');
-  lines.push('**block** findings are never merged automatically. **review** findings pass once a maintainer has reviewed the change and applied the `security-reviewed` label to the latest commit (pushing again clears it). **info** findings are context only.');
+  if (vulnerabilities)
+    lines.push(
+      `OSV also reports ${vulnerabilities} known vulnerabilities (not malware) in the lockfiles; the audit job covers those.`,
+      '',
+    );
+  lines.push(
+    '**block** findings are never merged automatically. **review** findings pass once a maintainer has reviewed the change and applied the `security-reviewed` label to the latest commit (pushing again clears it). **info** findings are context only.',
+  );
   return lines.join('\n');
 }
 
 async function run({ github, context, core }) {
   const { owner, repo } = context.repo;
   // workflow_dispatch scans a pull request by number.
-  const pr = context.payload.pull_request
-    || (await github.rest.pulls.get({ owner, repo, pull_number: Number(process.env.PR_NUMBER) })).data;
+  const pr =
+    context.payload.pull_request ||
+    (await github.rest.pulls.get({ owner, repo, pull_number: Number(process.env.PR_NUMBER) })).data;
   const headSha = pr.head.sha;
-  const config = JSON.parse(fs.readFileSync(path.join(process.env.TRUSTED_DIR, '.github/security-scan.json'), 'utf8'));
+  const config = JSON.parse(
+    fs.readFileSync(path.join(process.env.TRUSTED_DIR, '.github/security-scan.json'), 'utf8'),
+  );
 
   // On a new push the review label no longer applies: remove it, and never
   // honour it in the same run.
   const labels = (pr.labels || []).map((l) => l.name);
   if (context.payload.action === 'synchronize' && labels.includes(REVIEW_LABEL)) {
-    await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: REVIEW_LABEL }).catch(() => {});
+    await github.rest.issues
+      .removeLabel({ owner, repo, issue_number: pr.number, name: REVIEW_LABEL })
+      .catch(() => {});
   }
   let reviewed = false;
-  if (context.payload.action === 'labeled' && context.payload.label && context.payload.label.name === REVIEW_LABEL) {
-    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: context.payload.sender.login });
+  if (
+    context.payload.action === 'labeled' &&
+    context.payload.label &&
+    context.payload.label.name === REVIEW_LABEL
+  ) {
+    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+      owner,
+      repo,
+      username: context.payload.sender.login,
+    });
     reviewed = data.permission === 'admin' || data.permission === 'write';
     if (!reviewed) core.warning(`${context.payload.sender.login} cannot approve security findings`);
   }
 
   const base = git('merge-base', pr.base.sha, headSha).trim();
-  const changes = git('diff', '--name-status', '--no-renames', `${base}...${headSha}`).trim().split('\n').filter(Boolean)
-    .map((l) => { const [status, ...rest] = l.split('\t'); return { status: status[0], file: rest.join('\t') }; });
+  const changes = git('diff', '--name-status', '--no-renames', `${base}...${headSha}`)
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      const [status, ...rest] = l.split('\t');
+      return { status: status[0], file: rest.join('\t') };
+    });
   const added = addedLinesByFile(base, headSha);
 
   const findings = [];
@@ -500,13 +849,24 @@ async function run({ github, context, core }) {
     const content = status === 'D' ? null : gitBuffer('show', `${headSha}:${file}`);
     findings.push(...scanFile(file, status, content, config));
     const isText = content && !content.includes(0);
-    if (isText && added[file] && !/(^|\/)(package-lock\.json|Cargo\.lock|yarn\.lock|pnpm-lock\.yaml)$/.test(file) && !/test_snapshots\//.test(file)) {
+    if (
+      isText &&
+      added[file] &&
+      !/(^|\/)(package-lock\.json|Cargo\.lock|yarn\.lock|pnpm-lock\.yaml)$/.test(file) &&
+      !/test_snapshots\//.test(file)
+    ) {
       findings.push(...scanAddedLines(file, added[file], config));
     }
-    const baseText = () => { const b = gitBuffer('show', `${base}:${file}`); return b ? b.toString('utf8') : null; };
-    if (/(^|\/)package\.json$/.test(file) && isText) findings.push(...scanPackageJson(file, baseText(), content.toString('utf8')));
-    if (/(^|\/)package-lock\.json$/.test(file) && isText) findings.push(...scanNpmLock(file, baseText(), content.toString('utf8')));
-    if (/(^|\/)Cargo\.lock$/.test(file) && isText) findings.push(...scanCargoLock(file, content.toString('utf8'), config));
+    const baseText = () => {
+      const b = gitBuffer('show', `${base}:${file}`);
+      return b ? b.toString('utf8') : null;
+    };
+    if (/(^|\/)package\.json$/.test(file) && isText)
+      findings.push(...scanPackageJson(file, baseText(), content.toString('utf8')));
+    if (/(^|\/)package-lock\.json$/.test(file) && isText)
+      findings.push(...scanNpmLock(file, baseText(), content.toString('utf8')));
+    if (/(^|\/)Cargo\.lock$/.test(file) && isText)
+      findings.push(...scanCargoLock(file, content.toString('utf8'), config));
   }
 
   findings.push(...scriptsRunningNewFiles(findings, changes));
@@ -530,22 +890,44 @@ async function run({ github, context, core }) {
   const report = formatReport(findings, decision, osv.vulnerabilities);
   await core.summary.addRaw(report).write();
   for (const f of findings) {
-    const props = { title: `${f.severity}: ${f.rule}`, file: f.path === 'lockfile' ? undefined : f.path, startLine: f.line };
-    (f.severity === BLOCK ? core.error : f.severity === REVIEW ? core.warning : core.notice)(f.message, props);
+    const props = {
+      title: `${f.severity}: ${f.rule}`,
+      file: f.path === 'lockfile' ? undefined : f.path,
+      startLine: f.line,
+    };
+    (f.severity === BLOCK ? core.error : f.severity === REVIEW ? core.warning : core.notice)(
+      f.message,
+      props,
+    );
   }
 
   const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
   await github.rest.repos.createCommitStatus({
-    owner, repo, sha: headSha, state: decision.state, context: STATUS_CONTEXT,
-    description: decision.description.slice(0, 140), target_url: runUrl,
+    owner,
+    repo,
+    sha: headSha,
+    state: decision.state,
+    context: STATUS_CONTEXT,
+    description: decision.description.slice(0, 140),
+    target_url: runUrl,
   });
 
   // One comment per head commit when something needs attention.
   if (findings.length && decision.state === 'failure') {
     const marker = `<!-- security-scan ${headSha} -->`;
-    const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 });
+    const comments = await github.paginate(github.rest.issues.listComments, {
+      owner,
+      repo,
+      issue_number: pr.number,
+      per_page: 100,
+    });
     if (!comments.some((c) => (c.body || '').includes(marker))) {
-      await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: `${report}\n\n${marker}` });
+      await github.rest.issues.createComment({
+        owner,
+        repo,
+        issue_number: pr.number,
+        body: `${report}\n\n${marker}`,
+      });
     }
   }
   core.info(`${decision.state}: ${decision.description}`);
@@ -553,7 +935,17 @@ async function run({ github, context, core }) {
 
 module.exports = run;
 Object.assign(module.exports, {
-  scanAddedLines, scanFile, scanPackageJson, scanNpmLock, scanCargoLock, decide, classifyNewDependency, scriptsRunningNewFiles,
-  globToRegExp, levenshtein,
-  BLOCK, REVIEW, INFO,
+  scanAddedLines,
+  scanFile,
+  scanPackageJson,
+  scanNpmLock,
+  scanCargoLock,
+  decide,
+  classifyNewDependency,
+  scriptsRunningNewFiles,
+  globToRegExp,
+  levenshtein,
+  BLOCK,
+  REVIEW,
+  INFO,
 });

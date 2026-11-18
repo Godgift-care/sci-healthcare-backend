@@ -15,11 +15,28 @@ export function serviceKey(providerAddress: string, code: number): string {
 export async function topFundedServices(
   vouchers: readonly { providerAddress: string; serviceCode: number; value: number }[],
   limit: number,
-): Promise<{ id: string; serviceCode: number; providerAddress: string; label: string | null; count: number; value: number }[]> {
-  const totals = new Map<string, { providerAddress: string; serviceCode: number; count: number; value: number }>();
+): Promise<
+  {
+    id: string;
+    serviceCode: number;
+    providerAddress: string;
+    label: string | null;
+    count: number;
+    value: number;
+  }[]
+> {
+  const totals = new Map<
+    string,
+    { providerAddress: string; serviceCode: number; count: number; value: number }
+  >();
   for (const v of vouchers) {
     const id = serviceKey(v.providerAddress, v.serviceCode);
-    const t = totals.get(id) ?? { providerAddress: v.providerAddress, serviceCode: v.serviceCode, count: 0, value: 0 };
+    const t = totals.get(id) ?? {
+      providerAddress: v.providerAddress,
+      serviceCode: v.serviceCode,
+      count: 0,
+      value: 0,
+    };
     t.count += 1;
     t.value += v.value;
     totals.set(id, t);

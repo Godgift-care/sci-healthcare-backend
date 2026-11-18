@@ -130,7 +130,11 @@ describe('examples/telegram-bot', () => {
     });
 
     it('rejects webhook without signature header', async () => {
-      const payload = JSON.stringify({ event: 'voucher_funded', voucherId: '123', status: 'Funded' });
+      const payload = JSON.stringify({
+        event: 'voucher_funded',
+        voucherId: '123',
+        status: 'Funded',
+      });
       const res = await fetch(`${serverUrl}/webhook`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -143,7 +147,11 @@ describe('examples/telegram-bot', () => {
     });
 
     it('rejects webhook with invalid signature', async () => {
-      const payload = JSON.stringify({ event: 'voucher_funded', voucherId: '123', status: 'Funded' });
+      const payload = JSON.stringify({
+        event: 'voucher_funded',
+        voucherId: '123',
+        status: 'Funded',
+      });
       const res = await fetch(`${serverUrl}/webhook`, {
         method: 'POST',
         headers: {

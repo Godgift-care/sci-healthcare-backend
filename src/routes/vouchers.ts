@@ -19,14 +19,7 @@ import { receiptsByVoucherId } from '../lib/receipts.js';
 import { serviceKey, serviceLabels } from '../lib/services.js';
 import { accountAddress } from '../lib/stellar-address.js';
 
-const STATUSES = [
-  'Funded',
-  'Claimed',
-  'Attested',
-  'Settled',
-  'Disputed',
-  'Refunded',
-] as const;
+const STATUSES = ['Funded', 'Claimed', 'Attested', 'Settled', 'Disputed', 'Refunded'] as const;
 
 /** Top-level keys `serialise()` emits: the allow-list for `?fields=` (#166). */
 const VOUCHER_FIELDS = [
@@ -74,7 +67,12 @@ const INCLUDABLE = ['receipt', 'provider'] as const;
 const includeParam = z
   .string()
   .max(64)
-  .transform((raw) => raw.split(',').map((name) => name.trim()).filter((name) => name !== ''))
+  .transform((raw) =>
+    raw
+      .split(',')
+      .map((name) => name.trim())
+      .filter((name) => name !== ''),
+  )
   .pipe(z.array(z.enum(INCLUDABLE)))
   .optional();
 
@@ -87,53 +85,46 @@ const statusList = z
   .transform((s) => s.split(',').map((x) => x.trim()))
   .pipe(z.array(z.enum(STATUSES)).min(1));
 
-const listQuery = z.object({
-  funder: accountAddress.optional(),
-  provider: accountAddress.optional(),
-  beneficiaryRef: z
-    .string()
-    .max(64)
-    .refine(isValidRef, 'must be 64 hex characters')
-    .optional(),
-  status: statusList.optional(),
-  createdFrom: z.string().max(64).datetime({ offset: true }).optional(),
-  createdTo: z.string().max(64).datetime({ offset: true }).optional(),
-  minAmount: z
-    .string()
-    .max(64)
-    .regex(BASE_UNITS, 'must be base units as an integer string')
-    .optional(),
-  maxAmount: z
-    .string()
-    .max(64)
-    .regex(BASE_UNITS, 'must be base units as an integer string')
-    .optional(),
-  sort: z.enum(['createdAt', 'expiresAt', 'amount']).default('createdAt'),
-  order: z.enum(['asc', 'desc']).default('desc'),
-  cursor: cursorParam,
-  limit: limitParam,
-  offset: z.coerce.number().int().min(0).default(0),
-  fields: z.string().max(512).optional(),
-  include: includeParam,
-})
+const listQuery = z
+  .object({
+    funder: accountAddress.optional(),
+    provider: accountAddress.optional(),
+    beneficiaryRef: z.string().max(64).refine(isValidRef, 'must be 64 hex characters').optional(),
+    status: statusList.optional(),
+    createdFrom: z.string().max(64).datetime({ offset: true }).optional(),
+    createdTo: z.string().max(64).datetime({ offset: true }).optional(),
+    minAmount: z
+      .string()
+      .max(64)
+      .regex(BASE_UNITS, 'must be base units as an integer string')
+      .optional(),
+    maxAmount: z
+      .string()
+      .max(64)
+      .regex(BASE_UNITS, 'must be base units as an integer string')
+      .optional(),
+    sort: z.enum(['createdAt', 'expiresAt', 'amount']).default('createdAt'),
+    order: z.enum(['asc', 'desc']).default('desc'),
+    cursor: cursorParam,
+    limit: limitParam,
+    offset: z.coerce.number().int().min(0).default(0),
+    fields: z.string().max(512).optional(),
+    include: includeParam,
+  })
   .refine(
     (q) => !q.createdFrom || !q.createdTo || Date.parse(q.createdFrom) <= Date.parse(q.createdTo),
     { message: 'must not be later than createdTo', path: ['createdFrom'] },
   )
-  .refine(
-    (q) => !q.minAmount || !q.maxAmount || BigInt(q.minAmount) <= BigInt(q.maxAmount),
-    { message: 'must not exceed maxAmount', path: ['minAmount'] },
-  );
+  .refine((q) => !q.minAmount || !q.maxAmount || BigInt(q.minAmount) <= BigInt(q.maxAmount), {
+    message: 'must not exceed maxAmount',
+    path: ['minAmount'],
+  });
 
 /** The CSV export takes the filters but none of the paging or sort options. */
 const csvQuery = z.object({
   funder: accountAddress.optional(),
   provider: accountAddress.optional(),
-  beneficiaryRef: z
-    .string()
-    .max(64)
-    .refine(isValidRef, 'must be 64 hex characters')
-    .optional(),
+  beneficiaryRef: z.string().max(64).refine(isValidRef, 'must be 64 hex characters').optional(),
   status: statusList.optional(),
 });
 
@@ -387,50 +378,46 @@ export function voucherRoutes(app: FastifyInstance): void {
     return reply.send(Readable.from(voucherCsv(where), { objectMode: false }));
   });
 
-  app.get(
-    '/vouchers/due',
-    { config: { rateLimit: LIST_ROUTE_RATE_LIMIT } },
-    async (req) => {
-      const parsed = dueQuery.safeParse(req.query);
-      if (!parsed.success) {
-        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
-      }
-      const { funder, provider, within } = parsed.data;
+  app.get('/vouchers/due', { config: { rateLimit: LIST_ROUTE_RATE_LIMIT } }, async (req) => {
+    const parsed = dueQuery.safeParse(req.query);
+    if (!parsed.success) {
+      throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
+    }
+    const { funder, provider, within } = parsed.data;
 
-      if (!funder && !provider) {
-        throw new ApiError(400, 'filter_required', 'Provide at least one of: funder, provider');
-      }
+    if (!funder && !provider) {
+      throw new ApiError(400, 'filter_required', 'Provide at least one of: funder, provider');
+    }
 
-      const now = Date.now();
-      const deadline = parseWithin(within, now);
+    const now = Date.now();
+    const deadline = parseWithin(within, now);
 
-      const where = {
-        ...(funder ? { funder } : {}),
-        ...(provider ? { providerAddress: provider } : {}),
-        status: { in: ['Funded', 'Claimed', 'Attested'] },
-      };
+    const where = {
+      ...(funder ? { funder } : {}),
+      ...(provider ? { providerAddress: provider } : {}),
+      status: { in: ['Funded', 'Claimed', 'Attested'] },
+    };
 
-      const rows = await prisma.voucher.findMany({
-        where,
-        include: { provider: true },
-        orderBy: { expiresAt: 'asc' },
-      });
+    const rows = await prisma.voucher.findMany({
+      where,
+      include: { provider: true },
+      orderBy: { expiresAt: 'asc' },
+    });
 
-      const labels = await serviceLabels(rows);
-      const due = rows
-        .filter((v) => {
-          const timing = {
-            status: v.status,
-            expiresAt: v.expiresAt,
-            disputeDeadline: v.disputeDeadline,
-          };
-          return isRefundable(timing, deadline) || isSettleable(timing, deadline);
-        })
-        .map((v) => serialise(v, labels));
+    const labels = await serviceLabels(rows);
+    const due = rows
+      .filter((v) => {
+        const timing = {
+          status: v.status,
+          expiresAt: v.expiresAt,
+          disputeDeadline: v.disputeDeadline,
+        };
+        return isRefundable(timing, deadline) || isSettleable(timing, deadline);
+      })
+      .map((v) => serialise(v, labels));
 
-      return { total: due.length, vouchers: due };
-    },
-  );
+    return { total: due.length, vouchers: due };
+  });
 
   app.get(
     '/vouchers/:id',
@@ -614,9 +601,7 @@ async function pageByWhere(
  */
 function amountBound(base: string): string {
   const canonical = BigInt(base).toString();
-  return canonical.length > AMOUNT_KEY_WIDTH
-    ? '9'.repeat(AMOUNT_KEY_WIDTH)
-    : amountKey(canonical);
+  return canonical.length > AMOUNT_KEY_WIDTH ? '9'.repeat(AMOUNT_KEY_WIDTH) : amountKey(canonical);
 }
 
 function parseWithin(within: string, now: number): number {

@@ -34,9 +34,10 @@ function decodeEntities(text: string): string {
   return text.replace(new RegExp(`&${ENTITY_BODY};`, 'g'), (entity) => {
     const body = entity.slice(1, -1);
     if (body.startsWith('#')) {
-      const code = body.startsWith('#x') || body.startsWith('#X')
-        ? Number.parseInt(body.slice(2), 16)
-        : Number.parseInt(body.slice(1), 10);
+      const code =
+        body.startsWith('#x') || body.startsWith('#X')
+          ? Number.parseInt(body.slice(2), 16)
+          : Number.parseInt(body.slice(1), 10);
       return String.fromCodePoint(code);
     }
     return { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }[body]!;
@@ -207,7 +208,8 @@ function assertAtom(xml: string): { feed: XmlNode; entries: XmlNode[] } {
   textOf(feed, 'title', 'feed');
   const feedId = textOf(feed, 'id', 'feed');
   if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(feedId)) throw new Error(`feed id is not a URI: ${feedId}`);
-  if (!RFC_3339.test(textOf(feed, 'updated', 'feed'))) throw new Error('feed updated is not RFC 3339');
+  if (!RFC_3339.test(textOf(feed, 'updated', 'feed')))
+    throw new Error('feed updated is not RFC 3339');
 
   const self = all(feed, 'link').find((link) => link.attrs.rel === 'self');
   if (!self) throw new Error('feed has no rel="self" link');
@@ -459,7 +461,9 @@ describe('GET /feed.xml', () => {
 
   it('orders entries newest first and caps the document', async () => {
     const { entries } = assertAtom((await get('/feed.xml')).body);
-    const dates = entries.map((e) => Date.parse(e.children.find((c) => c.name === 'updated')!.text));
+    const dates = entries.map((e) =>
+      Date.parse(e.children.find((c) => c.name === 'updated')!.text),
+    );
     expect([...dates].sort((a, b) => b - a)).toEqual(dates);
     expect(entries.length).toBeLessThanOrEqual(20);
   });
@@ -498,8 +502,8 @@ describe('GET /feed.xml', () => {
       const { entries } = assertAtom((await get('/feed.xml')).body);
       expect(entries.length).toBe(20);
 
-      const feedDates = entries.map(
-        (e) => new Date(e.children.find((c) => c.name === 'updated')!.text).getTime(),
+      const feedDates = entries.map((e) =>
+        new Date(e.children.find((c) => c.name === 'updated')!.text).getTime(),
       );
       expect([...feedDates].sort((a, b) => b - a)).toEqual(feedDates);
 

@@ -24,7 +24,9 @@ let seq = 0;
 function event(
   name: string,
   fields: Record<string, unknown>,
-  opts: Partial<Pick<DecodedEvent, 'contractId' | 'txHash' | 'ledger' | 'ledgerClosedAt' | 'id'>> = {},
+  opts: Partial<
+    Pick<DecodedEvent, 'contractId' | 'txHash' | 'ledger' | 'ledgerClosedAt' | 'id'>
+  > = {},
 ): DecodedEvent {
   seq += 1;
   return {

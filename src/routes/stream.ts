@@ -4,11 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { env } from '../env.js';
-import {
-  acquireStreamSlot,
-  releaseStreamSlot,
-  subscribeVoucherSignals,
-} from '../lib/event-bus.js';
+import { acquireStreamSlot, releaseStreamSlot, subscribeVoucherSignals } from '../lib/event-bus.js';
 import { ApiError } from '../lib/errors.js';
 import { accountAddress } from '../lib/stellar-address.js';
 

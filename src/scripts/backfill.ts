@@ -64,10 +64,7 @@ async function main(): Promise<void> {
         totalApplied += 1;
       } catch (err) {
         await recordFailure(prisma, raw as never, decoded, err);
-        log.warn(
-          { err, event: decoded.name, ledger: decoded.ledger },
-          'backfill: event skipped',
-        );
+        log.warn({ err, event: decoded.name, ledger: decoded.ledger }, 'backfill: event skipped');
       }
     }
 

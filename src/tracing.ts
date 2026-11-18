@@ -45,9 +45,7 @@ let sdk: NodeSDK | null = null;
  * are the manual ones in `src/stellar/indexer.ts`. Calling it twice is
  * harmless — the SDK starts once and later calls return the same instance.
  */
-export function startTracingIfConfigured(
-  source: NodeJS.ProcessEnv = process.env,
-): NodeSDK | null {
+export function startTracingIfConfigured(source: NodeJS.ProcessEnv = process.env): NodeSDK | null {
   if (sdk !== null) return sdk;
   if (!isTracingEnabled(source)) return null;
 
@@ -85,10 +83,7 @@ function getTracer() {
  * identical whether or not the SDK is running. An error is recorded on the
  * span and rethrown untouched; the span always ends.
  */
-export async function withSpan<T>(
-  name: string,
-  fn: (span: Span) => Promise<T>,
-): Promise<T> {
+export async function withSpan<T>(name: string, fn: (span: Span) => Promise<T>): Promise<T> {
   return getTracer().startActiveSpan(name, async (span) => {
     try {
       return await fn(span);

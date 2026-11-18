@@ -154,7 +154,9 @@ describe('Referential integrity verification (#144)', () => {
     expect(report.totalOrphans).toBeGreaterThanOrEqual(4);
     expect(report.orphanedReceipts.some((r) => r.voucherId === 'ghost-voucher')).toBe(true);
     if (!isPostgres) {
-      expect(report.orphanedServices.some((s) => s.providerAddress === 'ghost-provider')).toBe(true);
+      expect(report.orphanedServices.some((s) => s.providerAddress === 'ghost-provider')).toBe(
+        true,
+      );
     }
     expect(report.orphanedEvents.some((e) => e.id === 'evt-orphan')).toBe(true);
     expect(report.orphanedEvents.some((e) => e.id === 'psc-orphan')).toBe(true);

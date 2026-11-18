@@ -79,7 +79,11 @@ async function attesterStats(address: string) {
     prisma.voucher.count({
       where: {
         ...attested,
-        OR: [{ status: 'Disputed' }, { disputeReason: { not: null } }, { disputeOutcome: { not: null } }],
+        OR: [
+          { status: 'Disputed' },
+          { disputeReason: { not: null } },
+          { disputeOutcome: { not: null } },
+        ],
       },
     }),
     prisma.voucher.findMany({

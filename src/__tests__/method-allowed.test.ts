@@ -17,7 +17,12 @@ async function call(
   method: string,
   url: string,
   headers: Record<string, string> = {},
-): Promise<{ status: number; body: unknown; allow: string | undefined; headers: Record<string, string> }> {
+): Promise<{
+  status: number;
+  body: unknown;
+  allow: string | undefined;
+  headers: Record<string, string>;
+}> {
   const res = await app.inject({
     method: method as 'GET',
     url,
@@ -83,11 +88,7 @@ describe('allowedMethods', () => {
   it('leaves a catch-all pattern out of the table', () => {
     // Counting `/*` would answer 405 for every unknown path there is, and a
     // `/docs/*` asset route says nothing about a verb on a real endpoint.
-    expect(patterns.map((p) => p.pattern)).toEqual([
-      '/vouchers',
-      '/vouchers/:id',
-      '/receipts',
-    ]);
+    expect(patterns.map((p) => p.pattern)).toEqual(['/vouchers', '/vouchers/:id', '/receipts']);
     expect(allowedMethods(patterns, 'POST', '/nothing-here')).toBeNull();
     expect(allowedMethods(patterns, 'POST', '/docs/swagger-ui.js')).toBeNull();
   });
@@ -106,9 +107,12 @@ describe('allowedMethods', () => {
   });
 
   it('merges the same pattern registered more than once', () => {
-    expect(routePatterns([{ method: 'GET', url: '/a' }, { method: 'GET', url: '/a' }])).toEqual([
-      { pattern: '/a', methods: ['GET'] },
-    ]);
+    expect(
+      routePatterns([
+        { method: 'GET', url: '/a' },
+        { method: 'GET', url: '/a' },
+      ]),
+    ).toEqual([{ pattern: '/a', methods: ['GET'] }]);
   });
 });
 
