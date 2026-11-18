@@ -18,3 +18,13 @@ prisma/migrations/
 # indentation, so YAML is left to its authors.
 *.yml
 *.yaml
+
+# Trusted GitHub Actions scripts (.github/scripts/*.cjs). security-scan.cjs
+# runs under pull_request_target and reads the pull request's changed lines as
+# data, matching them against the very malware patterns it exists to catch. It
+# and its test fixtures legitimately contain those patterns (miner URLs,
+# reverse shells, base64 loaders) to prove the scanner works. Reformatting them
+# would move those strings into a PR's diff and make the scanner flag its own
+# fixtures as hostile changes, so they stay untouched by the formatter (lint
+# still covers them).
+.github/
