@@ -982,6 +982,7 @@ Suited to a platform that runs long-lived processes with a database attached, su
 - Start: `npm run db:migrate && npm start` (or `npm run start:api` / `npm run start:indexer` when split)
 - Run `./scripts/use-postgres.sh` before `prisma generate` to switch the schema from `sqlite` to `postgresql`
 - Provision the database in the **same region** and use its internal connection string
+- Before the first mainnet request, work through [docs/mainnet-checklist.md](docs/mainnet-checklist.md): configuration, database and migrations, backups, capacity, monitoring and rollback, each item paired with the command or setting that verifies it. `src/__tests__/mainnet-checklist.test.ts` fails if the checklist names a variable, script, route or file that no longer exists
 
 ### Schema changes and migrations
 
