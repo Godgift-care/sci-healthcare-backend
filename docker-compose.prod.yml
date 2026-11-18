@@ -1,0 +1,136 @@
+# Production stack for one VPS: Postgres, the API, and Caddy terminating TLS.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#   curl https://your-host/ready
+#
+# The step-by-step version - DNS, the firewall, the first boot, backups and
+# upgrades - is docs/self-hosting.md. This file is the dev stack
+# (docker-compose.yml) with the parts that only matter in production: a real
+# database password, no published ports except the web, and a proxy that gets
+# a certificate.
+#
+# Secrets come from `.env` next to this file, which is gitignored;
+# `.env.prod.example` is the template to copy. Nothing below is a secret, so
+# this file stays safe to commit.
+#
+# The dev compose uses `prisma db push`, which is right for a scratch database
+# and wrong for one holding real rows. This one applies the reviewed
+# migrations in prisma/migrations instead.
+
+name: sci-healthcare
+
+# The one place the database credentials are assembled. Postgres' own
+# variables and the app's connection string are derived from the same three
+# values in `.env`, so they cannot drift apart. Point this at a managed
+# Postgres instead and the `db` service below becomes redundant.
+x-database-url: &database-url "postgresql://${POSTGRES_USER:?set in .env}:${POSTGRES_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:-sci_healthcare}?schema=public"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # Deliberately no `ports:`. Only the services on this network need
+    # Postgres, and a published 5432 is a database on the open internet.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-sci_healthcare}
+    volumes:
+      - sci-db:/var/lib/postgresql/data
+    healthcheck:
+      # `$${...}` so compose leaves the expansion to the container's shell,
+      # which is where the POSTGRES_* variables actually are.
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Applies the committed migrations and exits; `api` starts only once it has
+  # succeeded, so a schema that will not migrate never serves traffic. The
+  # `build` target is used because it keeps the Prisma CLI, and its image
+  # build already ran scripts/use-postgres.sh, so the migrations it applies
+  # are the Postgres ones the `migrations` CI job verifies.
+  migrate:
+    build:
+      context: .
+      target: build
+    command: npx prisma migrate deploy
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: *database-url
+
+  api:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # The app's own settings (contract ids, RPC endpoints, CORS_ORIGIN, ...)
+    # pass through from `.env` untouched. Anything named in `environment:`
+    # below wins over the file, which is why the three that must not be
+    # negotiable are named here.
+    env_file: .env
+    environment:
+      DATABASE_URL: *database-url
+      # Not `development`: that is what turns on the relaxed CORS rule, and a
+      # production process that thinks it is a dev box is a silent misconfig.
+      NODE_ENV: production
+      PORT: "8080"
+      HOST: 0.0.0.0
+    # Again no `ports:`, and this one is load-bearing rather than tidiness:
+    # the app sets `trustProxy: true`, so it reads the client address from
+    # X-Forwarded-For. Reachable without Caddy in front, any client can put
+    # anything in that header and walk past the per-IP rate limits.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/ready').then(r => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      # A cold start has to migrate nothing (already done), connect, and let
+      # the indexer's first poll land before /ready is willing to say 200.
+      start_period: 40s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # The only published ports in the stack. 80 is not optional even though
+      # every request should be HTTPS: it is how ACME answers the
+      # HTTP-01 challenge that earns the certificate.
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set in .env to this server's hostname}
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and CA account key live here. Losing this volume means
+      # a re-issue, and Let's Encrypt rate-limits those per domain, so it is
+      # worth including in the backup below.
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  sci-db:
+  caddy-data:
+  caddy-config:
