@@ -10,21 +10,21 @@ import {
 } from '../lib/webhooks.js';
 
 /**
- * The webhook section of the README documents the delivery sequence and the
- * retry schedule. Consumers size their downtime handling on those numbers,
- * so they must equal the constants `src/lib/webhooks.ts` actually uses
- * (issue #151).
+ * `docs/webhooks.md` documents the delivery sequence and the retry schedule.
+ * Consumers size their downtime handling on those numbers, so they must equal
+ * the constants `src/lib/webhooks.ts` actually uses (issue #151).
+ *
+ * The page is the webhook reference end to end, so the whole document is the
+ * section under test; issue #302 moved it out of the README and this file
+ * follows it.
  */
 
-const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+const webhooksDoc = readFileSync(new URL('../../docs/webhooks.md', import.meta.url), 'utf8');
 
-/** The `## Webhooks` section, up to the next top-level heading. */
+/** The page itself, minus the navigation line that links back out of `docs/`. */
 function webhooksSection(): string {
-  const start = readme.indexOf('\n## Webhooks\n');
-  expect(start).toBeGreaterThan(-1);
-  const rest = readme.slice(start + 1);
-  const next = rest.indexOf('\n## ');
-  return next === -1 ? rest : rest.slice(0, next);
+  expect(webhooksDoc.startsWith('# Webhooks\n')).toBe(true);
+  return webhooksDoc;
 }
 
 /** `5000` -> `5_000`, the way the constants are written in the source. */
