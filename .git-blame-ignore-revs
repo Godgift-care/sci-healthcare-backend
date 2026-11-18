@@ -1,0 +1,9 @@
+# Revisions git blame should skip, so a repo-wide mechanical change does not
+# eclipse the commit that actually introduced each line.
+#
+# Enable with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# The Prettier formatting-only commit (#304) — `npm run format` with no
+# behavioural change, verified green on lint, typecheck and the coverage suite.
+4776225fccf894b3bf793d80c9bec726e0cfcc70
