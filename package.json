@@ -24,6 +24,8 @@
     "start:indexer": "node dist/worker.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "mutation": "stryker run",
@@ -84,6 +86,7 @@
     "fast-check": "^4.5.3",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
+    "prettier": "^3.10.1",
     "prisma": "6.19.3",
     "tsx": "4.19.2",
     "typescript": "5.7.3",
@@ -91,6 +94,9 @@
     "vitest": "2.1.9"
   },
   "lint-staged": {
+    "**/*.{ts,js,mjs,cjs}": [
+      "prettier --write"
+    ],
     "src/**/*.{ts,js}": [
       "eslint --fix"
     ]
