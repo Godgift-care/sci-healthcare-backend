@@ -1,8 +1,4 @@
 <p align="center">
-  <img src="docs/banner.png" alt="SCI Healthcare" width="640" />
-</p>
-
-<p align="center">
   <a href="https://github.com/Godgift-care/sci-healthcare-backend/actions/workflows/ci.yml">
     <img src="https://github.com/Godgift-care/sci-healthcare-backend/actions/workflows/ci.yml/badge.svg" alt="CI" />
   </a>
@@ -999,6 +995,14 @@ npm run db:migrate
 
 A new, empty database needs nothing special.
 
+### Self-hosting on a VPS
+
+[docs/self-hosting.md](docs/self-hosting.md) runs the same service on one
+server with `docker-compose.prod.yml`: Postgres, a one-shot migration service,
+the API, and Caddy for TLS. Use it when the indexer must not sleep — the
+`docker-compose.yml` in this repo is the local dev stack, and Render's free
+tier spins the process down after ~15 minutes idle.
+
 ## Operations
 
 - **Metrics**: `GET /metrics` is Prometheus text (not rate limited). `ops/grafana-dashboard.json` is a ready-made Grafana dashboard (import it, pick your Prometheus datasource) with panels for request rate, latency, error rate, indexer lag, seconds since the last successful poll, events applied/skipped and the webhook backlog; a test keeps it in sync with `src/lib/metrics.ts`. Alert on `indexer_lag_ledgers` and `indexer_seconds_since_success`; both are set by the process running the indexer. `stream_connections` is the number of `GET /stream` clients this process is holding, so `rate-limited`-looking `503 stream_full` responses can be seen before they happen; it only moves in the process that serves the streams (combined mode, or the API in a split deployment). `webhook_deliveries_pending` and `webhook_deliveries_abandoned` are the outbox backlog, refreshed by the process running the delivery loop, and are the series `/ready` reports as `checks.webhooks`.
@@ -1006,6 +1010,7 @@ A new, empty database needs nothing special.
 - **Logs**: Render's log explorer keeps a short window, so incident forensics need a stream to somewhere searchable. See [docs/logging.md](docs/logging.md) for the fields worth indexing, the Better Stack and Axiom recipes, and an end-to-end check that one request is one line.
 - **Tracing**: with `OTEL_EXPORTER_OTLP_ENDPOINT` set, the OpenTelemetry SDK starts and emits spans for HTTP routes, Prisma queries, Soroban RPC calls and indexer cycles; unset means no tracing at all. See [Tracing (OpenTelemetry)](#tracing-opentelemetry).
 - **Dependency review**: `.github/workflows/dependency-review.yml` reviews the dependencies a pull request adds or bumps and fails it on a high or critical advisory. It complements the `audit` job, which runs `npm audit --omit=dev` over the whole lockfile; this one only looks at the diff, so a bad package is caught in the pull request that introduces it. It needs the repository's dependency graph, which a maintainer enables under **Settings → Code security and analysis → Dependency graph**; until then the job reports a warning naming that setting instead of failing every pull request, and starts reviewing as soon as it is on.
+- **Docs links**: `.github/workflows/links.yml` runs [lychee](https://github.com/lycheeverse/lychee) over every tracked Markdown file on a pull request that touches one, and weekly on `main`. It checks the links in two halves with two severities: a link to a file or a heading inside this repository that no longer resolves fails the pull request, because only the author could have broken it and only the author can fix it. A link to somewhere else on the internet is retried and posted to the run summary without failing the job, because a third-party page moving on — or the free-tier API in this README still being asleep — is not a reason to block a merge. The settings are in `lychee.toml`, which a local run reads the same way (`lychee --config lychee.toml --scheme file $(git ls-files '*.md')`), so the fatal half is reproducible before pushing.
 - **Failed events**: an event the indexer cannot project is stored in the `FailedEvent` table and `/ready` reports degraded until it is cleared. After fixing the cause, run `npm run indexer:retry-failed`; it exits non-zero while any event still fails.
 - **Reconciliation**: the read model is a cache of the chain, so run `npm run indexer:reconcile` on a schedule. It reads `get_voucher` for every non-terminal voucher (plus a rolling sample of settled ones, `--sample`, default 25) and records each disagreement in `ReconcileMismatch`. `/ready` reports `checks.reconcileMismatches` and `checks.reconcile: "drift"`, but stays 200: unlike a failed event, drift says nothing about whether this instance can serve traffic. `--fix` rewrites the differing rows from chain state, which is the only safe direction. The command exits non-zero while any mismatch is open. It reads `get_voucher_options` for the same vouchers too: the terms a funder chose at funding time reach no event, so a `--fix` pass is what fills `Voucher.disputeWindowSecs` and `Voucher.presenceCommitment` (#319), and a report-only pass only compares them.
 
