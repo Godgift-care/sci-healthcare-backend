@@ -1,0 +1,88 @@
+name: Lockfile
+
+# Does this lockfile install with the npm CI actually uses?
+#
+# Every other job here — lint, typecheck, test, build — begins with `npm ci`
+# under Node 22, whose bundled npm is 10.9.2. A `package-lock.json` that npm
+# 10 cannot install therefore fails all of them at once, with messages about
+# resolution that point anywhere but at the file that is wrong. This job runs
+# only when that file moves, asks the one question the change raises, and
+# answers in seconds: it never installs anything (`--dry-run`) and never runs
+# a lifecycle script from a package under review (`--ignore-scripts`).
+#
+# Two answers can be wrong here, and they are checked in this order:
+#
+#   1. the lockfile was written by a newer npm than the one CI runs, and
+#   2. it no longer agrees with `package.json`.
+#
+# (2) is the common one: a dependency edited in `package.json` without
+# regenerating the lockfile, or regenerated on a machine with a different npm
+# in `PATH`. Both produce a tree npm 10 refuses to build, and both are fixed
+# the same way — regenerate it with npm 10 — which the last step prints when
+# the job fails.
+#
+# A test in src/__tests__/ci-workflows.test.ts keeps the triggers, the Node
+# version, the command and that message in place.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - package-lock.json
+  push:
+    branches: [main]
+    paths:
+      - package-lock.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm10:
+    name: npm10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22 is what `.nvmrc`, every other CI job and the Dockerfile
+          # use; the npm it bundles is the version being checked against.
+          node-version: '22'
+          cache: npm
+
+      - name: Toolchain in use
+        run: echo "node $(node --version), npm $(npm --version)"
+
+      - name: Lockfile written by npm 10
+        run: |
+          # Only digits ever reach the annotation below: the file is contributor
+          # content in a pull request, and an annotation line is not a place to
+          # echo arbitrary text.
+          version="$(node -e 'const m = String(require("./package-lock.json").lockfileVersion).match(/^[0-9]+$/); process.stdout.write(m ? m[0] : "invalid");')"
+          echo "package-lock.json is lockfileVersion ${version}"
+          if [ "${version}" = "invalid" ] || [ "${version}" -gt 3 ]; then
+            echo "::error title=Lockfile needs npm 10::lockfileVersion ${version} is not the 3 that npm 10, bundled with Node 22, writes. Regenerate the lockfile with npm 10 — the fix commands are in the last step and under Setup in CONTRIBUTING.md."
+            exit 1
+          fi
+
+      - name: Install the tree with npm 10
+        run: npm ci --ignore-scripts --dry-run
+
+      - name: How to fix it
+        if: failure()
+        run: |
+          cat <<'FIX'
+          The lockfile on this branch does not install with npm 10.9.2 — the npm
+          bundled with Node 22, which every other CI job and the Dockerfile use.
+          Regenerate it with that npm:
+
+              nvm use 22                    # .nvmrc pins Node 22
+              git checkout package-lock.json
+              npm install                   # re-adds the dependency, with npm 10
+              git add package-lock.json && git commit
+
+          If `npm --version` does not print 10.x after `nvm use 22`, the wrong npm
+          is first in `PATH`. The same commands are under Setup in CONTRIBUTING.md.
+          FIX

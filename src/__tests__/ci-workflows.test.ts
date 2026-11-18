@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -14,6 +14,24 @@ function workflow(name: string): string {
 function file(path: string): string {
   return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 }
+
+const workflowFiles = readdirSync(new URL('../../.github/workflows', import.meta.url))
+  .filter((name) => name.endsWith('.yml'))
+  .sort();
+
+describe('every workflow file', () => {
+  it('spells `permissions` as a block mapping, never inline', () => {
+    // `permissions: contents: read` on one line is not valid workflow YAML:
+    // GitHub rejects the whole file, and the run then fails in seconds with
+    // zero jobs and no pointer to the culprit. Every assertion above matches
+    // text, so it stays green on exactly that mistake.
+    for (const name of workflowFiles) {
+      for (const line of workflow(name).split('\n')) {
+        expect(/^\s*permissions: +\S+: \S/.test(line), `${name}: ${line.trim()}`).toBe(false);
+      }
+    }
+  });
+});
 
 describe('codeql.yml', () => {
   const yml = workflow('codeql.yml');
@@ -67,6 +85,54 @@ describe('dependency-review.yml', () => {
     expect(yml).toMatch(/dependency-graph\/sbom/);
     expect(yml).toMatch(/if: steps\.support\.outputs\.enabled == 'true'/);
     expect(yml).toMatch(/::warning/);
+  });
+});
+
+describe('lockfile.yml', () => {
+  const yml = workflow('lockfile.yml');
+
+  it('runs only when the lockfile itself moves (#313)', () => {
+    expect(yml).toMatch(/^ {2}pull_request:/m);
+    expect(yml).toMatch(/^ {2}push:/m);
+    // Both triggers are path-filtered; a job that ran on every pull request
+    // would duplicate the `npm ci` every other job already does.
+    expect(yml.match(/- package-lock\.json/g)).toHaveLength(2);
+  });
+
+  it('checks the install against the npm Node 22 bundles, cheaply (#313)', () => {
+    expect(yml).toMatch(/node-version: '22'/);
+    // `--dry-run` so it answers without writing a tree, `--ignore-scripts` so
+    // a package under review gets no lifecycle script to run with.
+    expect(yml).toMatch(/npm ci --ignore-scripts --dry-run/);
+    expect(yml).toMatch(/cache: npm/);
+  });
+
+  it('rejects a lockfile newer npm wrote, without quoting its contents into the shell (#313)', () => {
+    // The version is read, reduced to digits, and only then compared: the
+    // file is contributor content on a pull request, and this is a shell line.
+    expect(yml).toMatch(/lockfileVersion/);
+    expect(yml).toMatch(/match\(\/\^\[0-9\]\+\$\//);
+    expect(yml).toMatch(/"invalid"/);
+    expect(yml).toMatch(/-gt 3/);
+    expect(yml).toMatch(/::error/);
+    expect(yml).toMatch(/exit 1/);
+  });
+
+  it('prints the regeneration fix when it fails, and asks for no write permission (#313)', () => {
+    expect(yml).toMatch(/^ {8}if: failure\(\)$/m);
+    expect(yml).toMatch(/git checkout package-lock\.json/);
+    expect(yml).toMatch(/nvm use 22/);
+    expect(yml).toMatch(/^permissions:$/m);
+    expect(yml).toMatch(/contents: read/);
+    expect(yml).not.toMatch(/: write/);
+  });
+
+  it('is fixed the way CONTRIBUTING.md says (#313)', () => {
+    const contributing = readFileSync(new URL('../../CONTRIBUTING.md', import.meta.url), 'utf8');
+    expect(contributing).toMatch(/### Lockfile changes/);
+    expect(contributing).toMatch(/nvm use 22/);
+    expect(contributing).toMatch(/git checkout package-lock\.json/);
+    expect(contributing).toMatch(/npm --version/);
   });
 });
 
