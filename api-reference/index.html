@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SCI Healthcare API reference</title>
+    <meta
+      name="description"
+      content="OpenAPI reference for the SCI Healthcare care-voucher read API on Stellar."
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      redoc {
+        display: block;
+        min-height: 100vh;
+      }
+      #fallback {
+        padding: 1.5rem 2rem;
+        line-height: 1.6;
+        font-size: 0.95rem;
+      }
+      footer {
+        padding: 1rem 2rem;
+        border-top: 1px solid #ddd;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      The rendered API reference published by .github/workflows/pages.yml.
+
+      It reads ./openapi.json — the committed spec, copied verbatim into the
+      Pages artifact — instead of the specification from the running API. That
+      is the point: the Swagger UI at /docs on the server is unavailable
+      whenever the server is, and a frozen Render free instance is unavailable
+      often. openapi-contract.test.ts is what keeps this file equal to the
+      routes actually served.
+
+      The spec is referenced by a relative path so the same page works at the
+      organisation URL and at a fork's per-repository prefix.
+    -->
+    <noscript id="fallback">
+      <p>
+        This page renders the specification in the browser, which is switched
+        off. The contract itself is plain JSON:
+        <a href="./openapi.json">openapi.json</a>.
+      </p>
+    </noscript>
+    <redoc spec-url="./openapi.json" disable-telemetry="true"></redoc>
+    <footer>
+      SCI Healthcare API · generated from the committed
+      <a href="./openapi.json">OpenAPI 3.1 specification</a> · interactive
+      version served by the running API at
+      <a href="https://sci-healthcare-api.onrender.com/docs">/docs</a>
+    </footer>
+    <!--
+      Redoc pinned to an exact version, with a published-subresource-integrity
+      hash so a changed bundle fails closed rather than executing. The hash is
+      over the file served for this version; recompute it when the version is
+      deliberately bumped:
+        curl -sL https://cdn.jsdelivr.net/npm/redoc@3.1.0/bundles/redoc.standalone.js \
+          | openssl dgst -sha384 -binary | openssl base64 -A
+    -->
+    <script
+      type="module"
+      src="https://cdn.jsdelivr.net/npm/redoc@3.1.0/bundles/redoc.standalone.js"
+      integrity="sha384-JeMYOUn7XELj12XQpz8IRcyCi5pih2IAwvXmTcH3IAFVWrAXJVRNa64PuS3MIj9/"
+      crossorigin="anonymous"
+    ></script>
+  </body>
+</html>
