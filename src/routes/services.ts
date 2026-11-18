@@ -4,13 +4,14 @@ import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
 import { lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
 import { ApiError } from '../lib/errors.js';
-import { serviceKey, serviceLabels } from '../lib/services.js';
+import { serviceKey, serviceLabels, formatServicePrice, scheduledPriceOf } from '../lib/services.js';
 
 type CatalogueRow = {
   code: number;
   label: string;
-  price: string;
   providerAddress: string;
+  /** The price in effect, after any schedule that has come due (#315). */
+  price: string;
 };
 
 /**
@@ -67,14 +68,30 @@ export function serviceRoutes(app: FastifyInstance): void {
   app.get('/services', async () => {
     const rows = await prisma.service.findMany({
       where: { active: true, provider: { status: 'Active' } },
-      select: { code: true, label: true, price: true, providerAddress: true },
+      select: {
+        code: true,
+        label: true,
+        price: true,
+        upcomingPrice: true,
+        upcomingFrom: true,
+        providerAddress: true,
+      },
     });
 
+    // One moment for the whole page, so the band cannot mix a price from
+    // before a schedule with one from after it.
+    const now = new Date();
     const byCode = new Map<number, CatalogueRow[]>();
     for (const row of rows) {
-      const group = byCode.get(row.code);
-      if (group) group.push(row);
-      else byCode.set(row.code, [row]);
+      const entry: CatalogueRow = {
+        code: row.code,
+        label: row.label,
+        providerAddress: row.providerAddress,
+        price: scheduledPriceOf(row, now).price,
+      };
+      const group = byCode.get(entry.code);
+      if (group) group.push(entry);
+      else byCode.set(entry.code, [entry]);
     }
 
     const services = [...byCode.entries()]
@@ -113,13 +130,15 @@ export function serviceRoutes(app: FastifyInstance): void {
     });
     if (rows.length === 0) throw new ApiError(404, 'service_not_found', 'Service not found');
 
+    const now = new Date();
     const clinics = rows
       .map((row) => ({
         address: row.provider.address,
         name: row.provider.name,
         country: row.provider.country,
-        price: row.price,
-        priceDisplay: fromBaseUnits(row.price),
+        // The price in effect plus the schedule still pending (#315), so a
+        // funder comparing clinics sees that one of them is about to move.
+        ...formatServicePrice(row, now),
       }))
       .sort((a, b) => {
         const av = BigInt(a.price);

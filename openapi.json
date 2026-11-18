@@ -1084,6 +1084,131 @@
         }
       }
     },
+    "/v1/providers/{address}/services": {
+      "get": {
+        "summary": "A clinic's services and price list",
+        "tags": [
+          "providers"
+        ],
+        "description": "Filters: `active=true` or `active=false` to take only the listed or only the delisted half of the catalogue (both by default), `sort=price` (default) or `sort=code`, and `order=asc` (default) or `desc`. Equal prices always order by code ascending.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "providerAddress": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Entries matching the filters."
+                    },
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "string",
+                            "description": "Price in effect, as a base-unit decimal string."
+                          },
+                          "priceDisplay": {
+                            "type": "string"
+                          },
+                          "active": {
+                            "type": "boolean",
+                            "description": "False once the clinic delisted the service."
+                          },
+                          "upcomingPrice": {
+                            "description": "Price scheduled to take effect, or null when nothing is pending.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "upcomingFrom": {
+                            "description": "ISO instant `upcomingPrice` takes effect; null with no pending schedule.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "label",
+                          "price",
+                          "priceDisplay",
+                          "active",
+                          "upcomingPrice",
+                          "upcomingFrom"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "providerAddress",
+                    "name",
+                    "total",
+                    "services"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "provider_not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/providers/{address}/stats": {
       "get": {
         "summary": "Clinic throughput and response times",
@@ -5097,6 +5222,131 @@
                   "type": "integer"
                 },
                 "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/{address}/services": {
+      "get": {
+        "summary": "A clinic's services and price list",
+        "tags": [
+          "providers"
+        ],
+        "description": "Filters: `active=true` or `active=false` to take only the listed or only the delisted half of the catalogue (both by default), `sort=price` (default) or `sort=code`, and `order=asc` (default) or `desc`. Equal prices always order by code ascending.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "providerAddress": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Entries matching the filters."
+                    },
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "string",
+                            "description": "Price in effect, as a base-unit decimal string."
+                          },
+                          "priceDisplay": {
+                            "type": "string"
+                          },
+                          "active": {
+                            "type": "boolean",
+                            "description": "False once the clinic delisted the service."
+                          },
+                          "upcomingPrice": {
+                            "description": "Price scheduled to take effect, or null when nothing is pending.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "upcomingFrom": {
+                            "description": "ISO instant `upcomingPrice` takes effect; null with no pending schedule.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "label",
+                          "price",
+                          "priceDisplay",
+                          "active",
+                          "upcomingPrice",
+                          "upcomingFrom"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "providerAddress",
+                    "name",
+                    "total",
+                    "services"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "provider_not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
               }
             }
           }

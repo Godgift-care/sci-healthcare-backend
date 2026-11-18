@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { prisma } from '../db.js';
 import { contractName, env, getAllDeployments, INDEXED_CONTRACTS } from '../env.js';
 import { voucherSeq } from '../lib/voucher-seq.js';
+import { scheduledPriceOf } from '../lib/services.js';
 import { enqueueWebhook } from '../lib/webhooks.js';
 import {
   metadataUriOf,
@@ -760,6 +761,9 @@ export class Indexer {
       case 'service_upserted':
         await this.onServiceUpserted(db, e);
         return null;
+      case 'service_price_scheduled':
+        await this.onServicePriceScheduled(db, e);
+        return null;
       case 'service_removed':
         await this.onServiceRemoved(db, d);
         return null;
@@ -1112,15 +1116,38 @@ export class Indexer {
 
     const existing = await db.service.findUnique({
       where: { id },
-      select: { price: true },
+      select: { price: true, upcomingPrice: true, upcomingFrom: true },
     });
+    // The contract reads the service through `apply_due_price` before it
+    // writes, so a schedule whose time has already passed is consumed by the
+    // upsert and only a still-future one survives it (contracts
+    // `upsert_service`, `..existing`). Mirroring that here is what keeps a
+    // later price *decrease* from being overridden by a schedule that had
+    // already become the current price.
+    const pending = existing ? scheduledPriceOf(existing, e.ledgerClosedAt) : null;
     await db.service.upsert({
       where: { id },
-      create: { id, code, label, price, active: true, providerAddress },
-      update: { label, price, active: true },
+      create: {
+        id,
+        code,
+        label,
+        price,
+        active: true,
+        providerAddress,
+        upcomingPrice: pending?.upcomingPrice ?? null,
+        upcomingFrom: pending?.upcomingFrom ?? null,
+      },
+      update: {
+        label,
+        price,
+        active: true,
+        upcomingPrice: pending?.upcomingPrice ?? null,
+        upcomingFrom: pending?.upcomingFrom ?? null,
+      },
     });
-    // Only a price change is history; a relabelled service is not.
-    if (!existing || existing.price !== price) {
+    // Only a price change is history; a relabelled service is not. Compared
+    // against the price in effect, which is the scheduled one once due.
+    if (!existing || (pending?.price ?? existing.price) !== price) {
       await db.servicePriceChange.upsert({
         where: { id: e.id },
         create: {
@@ -1134,6 +1161,33 @@ export class Indexer {
         update: {},
       });
     }
+  }
+
+  /**
+   * Record a price the clinic scheduled with notice (#315).
+   *
+   * Nothing takes effect here: `effective_at` is a future ledger time, and
+   * the contract makes the price swap on the next read rather than in a second
+   * event. So this writes the two pending columns and leaves `price` alone;
+   * `scheduledPriceOf()` decides at read time when the schedule becomes the
+   * current price.
+   *
+   * Scheduling again replaces the earlier schedule, including cancelling it —
+   * scheduling the current price is how a clinic calls one off, so the row
+   * simply ends up with a pending price equal to the live one.
+   *
+   * `updateMany` rather than `update` because a service listed by a deployment
+   * that predates scheduling has no row here until this event, but an event
+   * for a code the indexer never saw must not wedge the pipeline (#315: "Old
+   * deployments without the event still index").
+   */
+  private async onServicePriceScheduled(db: Db, e: DecodedEvent): Promise<void> {
+    const d = e.fields;
+    const id = `${asAddress(d.provider)}:${asNumber(d.code)}`;
+    await db.service.updateMany({
+      where: { id },
+      data: { upcomingPrice: asAmount(d.price), upcomingFrom: asTimestamp(d.effective_at) },
+    });
   }
 
   private async onAdminProposed(db: Db, e: DecodedEvent): Promise<void> {

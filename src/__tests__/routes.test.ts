@@ -2576,6 +2576,190 @@ describe('GET /providers/:address/services/:code/history', () => {
   });
 });
 
+describe('GET /providers/:address/services (#314)', () => {
+  it('serves the clinic price list on its own, cheapest first', async () => {
+    const { status, body } = await get(`/providers/${CLINIC}/services`);
+    expect(status).toBe(200);
+    expect(body.providerAddress).toBe(CLINIC);
+    expect(body.name).toBe('Ikeja General Clinic');
+    // The whole catalogue by default, delisted entries included, so this
+    // route can replace the array embedded in GET /providers/:address.
+    expect(body.total).toBe(3);
+    expect(body.services.map((s: { price: string }) => s.price)).toEqual([
+      '10000000',
+      '30000000',
+      '50000000',
+    ]);
+    expect(body.services[0]).toMatchObject({
+      code: 202,
+      label: 'Malaria rapid test',
+      priceDisplay: '1.0000000',
+      active: true,
+    });
+  });
+
+  it('sorts by amount, not by the string', async () => {
+    // 10^10 stroops is more than 9 x 10^9, but a lexicographic sort of the
+    // decimal strings — what a database ORDER BY on a String column does —
+    // would put them the other way round.
+    await prisma.service.create({
+      data: {
+        id: `${CLINIC}:707`,
+        code: 707,
+        label: 'Imaging',
+        price: '9000000000',
+        providerAddress: CLINIC,
+      },
+    });
+    await prisma.service.create({
+      data: {
+        id: `${CLINIC}:708`,
+        code: 708,
+        label: 'Surgery',
+        price: '10000000000',
+        providerAddress: CLINIC,
+      },
+    });
+
+    const { body } = await get(`/providers/${CLINIC}/services`);
+    const big = body.services.filter((s: { code: number }) => s.code >= 707);
+    expect(big.map((s: { price: string }) => s.price)).toEqual(['9000000000', '10000000000']);
+  });
+
+  it('filters the catalogue by listed or delisted', async () => {
+    const listed = await get(`/providers/${CLINIC}/services?active=true`);
+    expect(listed.body.total).toBe(2);
+    expect(listed.body.services.every((s: { active: boolean }) => s.active)).toBe(true);
+
+    const delisted = await get(`/providers/${CLINIC}/services?active=false`);
+    expect(delisted.body.services.map((s: { code: number }) => s.code)).toEqual([303]);
+  });
+
+  it('reorders by code, and reverses', async () => {
+    const { body } = await get(`/providers/${CLINIC}/services?sort=code&order=desc`);
+    expect(body.services.map((s: { code: number }) => s.code)).toEqual([303, 202, 101]);
+  });
+
+  it('404s an unknown clinic', async () => {
+    const { status, body } = await get(`/providers/${FUNDER}/services`);
+    expect(status).toBe(404);
+    expect(body.error).toBe('provider_not_found');
+  });
+
+  it('returns an empty list for a clinic without services', async () => {
+    const { status, body } = await get(`/providers/${PENDING_CLINIC}/services`);
+    expect(status).toBe(200);
+    expect(body.total).toBe(0);
+    expect(body.services).toEqual([]);
+  });
+
+  it('rejects an unknown filter value with the house error code', async () => {
+    const { status, body } = await get(`/providers/${CLINIC}/services?sort=name`);
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('is cacheable, so a price refresh does not have to refetch the clinic record', async () => {
+    const res = await app.inject({ method: 'GET', url: `/providers/${CLINIC}/services` });
+    expect(res.headers['cache-control']).toContain('max-age=');
+    expect(res.headers.etag).toBeDefined();
+  });
+});
+
+describe('scheduled price changes in the API (#315)', () => {
+  /** A schedule taking effect an hour from `now`. */
+  async function scheduleFuture(price: string, now: number): Promise<void> {
+    await prisma.service.update({
+      where: { id: `${CLINIC}:101` },
+      data: { upcomingPrice: price, upcomingFrom: new Date(now + 60 * 60 * 1000) },
+    });
+  }
+
+  it('shows a scheduled change before it takes effect', async () => {
+    const now = Date.now();
+    await scheduleFuture('45000000', now);
+
+    const { body } = await get(`/providers/${CLINIC}/services`);
+    const consult = body.services.find((s: { code: number }) => s.code === 101);
+    expect(consult.price).toBe('30000000');
+    expect(consult.upcomingPrice).toBe('45000000');
+    expect(consult.upcomingFrom).toBe(new Date(now + 60 * 60 * 1000).toISOString());
+  });
+
+  it('applies a schedule that has come due and stops showing it as upcoming', async () => {
+    await prisma.service.update({
+      where: { id: `${CLINIC}:101` },
+      data: {
+        upcomingPrice: '45000000',
+        upcomingFrom: new Date(Date.now() - 60 * 1000),
+      },
+    });
+
+    const { body } = await get(`/providers/${CLINIC}/services`);
+    const consult = body.services.find((s: { code: number }) => s.code === 101);
+    // The contract swaps the pending price into `price` on the first read at
+    // or after `effective_at` and emits nothing, so the pending columns clear.
+    expect(consult.price).toBe('45000000');
+    expect(consult.priceDisplay).toBe('4.5000000');
+    expect(consult.upcomingPrice).toBeNull();
+    expect(consult.upcomingFrom).toBeNull();
+  });
+
+  it('sorts on the price in effect, not the one still pending', async () => {
+    // 101 is about to become the most expensive thing the clinic sells;
+    // until it does, it must not sort above 303.
+    await scheduleFuture('90000000', Date.now());
+
+    const { body } = await get(`/providers/${CLINIC}/services`);
+    expect(body.services.map((s: { code: number }) => s.code)).toEqual([202, 101, 303]);
+  });
+
+  it('reports the same prices as the clinic record and the embedded catalogue', async () => {
+    await scheduleFuture('45000000', Date.now());
+
+    const standalone = await get(`/providers/${CLINIC}/services?active=true`);
+    const detail = await get(`/providers/${CLINIC}`);
+    const list = await get('/providers');
+
+    const priceOf = (entries: { code: number; price: string; upcomingPrice: string }[]) =>
+      entries
+        .filter((s) => s.code === 101)
+        .map((s) => [s.price, s.upcomingPrice])[0];
+
+    const listed = list.body.providers.find((p: { address: string }) => p.address === CLINIC);
+    expect(priceOf(detail.body.services)).toEqual(priceOf(standalone.body.services));
+    expect(priceOf(listed.services)).toEqual(priceOf(standalone.body.services));
+  });
+
+  it('prices the service bands by what a funder would pay now', async () => {
+    // SECOND_CLINIC stays at 40000000 for code 101; CLINIC is scheduled to
+    // move to 90000000 but has not yet.
+    await scheduleFuture('90000000', Date.now());
+
+    const { body } = await get('/services');
+    const consult = body.services.find((s: { code: number }) => s.code === 101);
+    expect(consult.minPrice).toBe('30000000');
+    expect(consult.maxPrice).toBe('40000000');
+  });
+
+  it('shows the pending change on the per-code clinic list too', async () => {
+    await scheduleFuture('45000000', Date.now());
+
+    const { body } = await get('/services/101');
+    const clinic = body.clinics.find((c: { address: string }) => c.address === CLINIC);
+    expect(clinic.price).toBe('30000000');
+    expect(clinic.upcomingPrice).toBe('45000000');
+  });
+
+  it('leaves a deployment with no scheduling unchanged', async () => {
+    // The columns are nullable and never written by an older registry, so a
+    // row predating them reads as an ordinary price with nothing pending.
+    const { body } = await get(`/providers/${CLINIC}/services`);
+    expect(body.services[0].upcomingPrice).toBeNull();
+    expect(body.services[0].upcomingFrom).toBeNull();
+  });
+});
+
 describe('response hardening', () => {
   it('sends the standard security headers, without a CSP', async () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
