@@ -85,7 +85,7 @@ export function scValBase64(input: unknown): string {
 /** The event name in an RPC event's first topic entry (a symbol ScVal). */
 export function eventNameOf(raw: { topic: unknown[] }): string | null {
   try {
-    const name = scValToNative(xdr.ScVal.fromXDR(scValBase64(raw.topic[0]), 'base64'));
+    const name: unknown = scValToNative(xdr.ScVal.fromXDR(scValBase64(raw.topic[0]), 'base64'));
     return typeof name === 'string' ? name : null;
   } catch {
     return null;

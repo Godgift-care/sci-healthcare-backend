@@ -230,10 +230,11 @@ export class WebhookDispatcher {
     this.schedule();
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    return Promise.resolve();
   }
 
   private schedule(): void {

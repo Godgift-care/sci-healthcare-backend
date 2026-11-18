@@ -55,7 +55,7 @@ const RECEIPT_FIELDS = [
   'beneficiaryRef',
 ] as const;
 
-export async function receiptRoutes(app: FastifyInstance): Promise<void> {
+export function receiptRoutes(app: FastifyInstance): void {
   /**
    * A patient's care history.
    *

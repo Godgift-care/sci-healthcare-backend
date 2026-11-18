@@ -252,7 +252,7 @@ export const RPC_URLS = env.RPC_URLS;
 function parseDeployments(): DeploymentEntry[] {
   if (!env.DEPLOYMENTS) return [];
   try {
-    const parsed = JSON.parse(env.DEPLOYMENTS);
+    const parsed: unknown = JSON.parse(env.DEPLOYMENTS);
     const validated = deploymentSchema.parse(parsed);
     // Strip undefined toLedger values to satisfy exactOptionalPropertyTypes
     return validated.map((d) => ({

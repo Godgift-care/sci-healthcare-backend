@@ -41,7 +41,7 @@ const streamQuery = z
     path: ['voucher', 'provider'],
   });
 
-export async function streamRoutes(app: FastifyInstance): Promise<void> {
+export function streamRoutes(app: FastifyInstance): void {
   /** The responses this scope is holding open, so closing can release them. */
   const open = new Set<ServerResponse>();
 

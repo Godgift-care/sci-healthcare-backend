@@ -22,7 +22,7 @@ export function serializeRaw(raw: RawEvent): string {
   return JSON.stringify({
     id: raw.id,
     contractId: String(raw.contractId),
-    txHash: raw.txHash ? String(raw.txHash) : undefined,
+    txHash: typeof raw.txHash === 'string' ? raw.txHash : undefined,
     ledger: raw.ledger,
     ledgerClosedAt: raw.ledgerClosedAt,
     topic: (raw.topic ?? []).map(toBase64),

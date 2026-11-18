@@ -8,7 +8,15 @@
 /** Escapes one cell: quote it only when it contains a delimiter, quote or line break. */
 export function csvCell(value: unknown): string {
   if (value === null || value === undefined) return '';
-  const text = value instanceof Date ? value.toISOString() : String(value);
+  const text =
+    value instanceof Date
+      ? value.toISOString()
+      : typeof value === 'string' ||
+          typeof value === 'number' ||
+          typeof value === 'boolean' ||
+          typeof value === 'bigint'
+        ? String(value)
+        : JSON.stringify(value);
   if (!/[",\r\n]/.test(text)) return text;
   return `"${text.replace(/"/g, '""')}"`;
 }

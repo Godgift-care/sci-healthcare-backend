@@ -192,7 +192,7 @@ const dueQuery = z.object({
     .regex(/^\d+[hmd]$/, 'within must be like 72h, 30d, or 45m'),
 });
 
-export async function voucherRoutes(app: FastifyInstance): Promise<void> {
+export function voucherRoutes(app: FastifyInstance): void {
   app.get(
     '/vouchers',
     {

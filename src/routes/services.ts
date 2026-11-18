@@ -12,7 +12,7 @@ type CatalogueRow = {
   providerAddress: string;
 };
 
-export async function serviceRoutes(app: FastifyInstance): Promise<void> {
+export function serviceRoutes(app: FastifyInstance): void {
   app.get('/services', async () => {
     const rows = await prisma.service.findMany({
       where: { active: true, provider: { status: 'Active' } },

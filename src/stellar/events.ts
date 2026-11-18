@@ -95,7 +95,7 @@ export function decodeEvent(raw: {
     name,
     fields,
     contractId: String(raw.contractId),
-    txHash: raw.txHash ? String(raw.txHash) : '',
+    txHash: typeof raw.txHash === 'string' ? raw.txHash : '',
     ledger: raw.ledger,
     ledgerClosedAt: new Date(raw.ledgerClosedAt),
     id: raw.id,

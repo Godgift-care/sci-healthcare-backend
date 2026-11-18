@@ -23,7 +23,7 @@
     "start:api": "node dist/api.js",
     "start:indexer": "node dist/worker.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "mutation": "stryker run",

@@ -21,7 +21,7 @@ type Row = {
  * neither at any moment. The history is folded in ledger order so the
  * latest proposal or acceptance decides the current state.
  */
-export async function governanceRoutes(app: FastifyInstance): Promise<void> {
+export function governanceRoutes(app: FastifyInstance): void {
   app.get('/governance', {
     schema: {
       tags: ['governance'],

@@ -236,7 +236,10 @@ async function readCappedBody(res: Response, maxBytes: number): Promise<string> 
   let size = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = (await reader.read()) as {
+        done: boolean;
+        value: Uint8Array;
+      };
       if (done) break;
       size += value.byteLength;
       if (size > maxBytes) {

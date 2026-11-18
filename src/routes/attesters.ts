@@ -107,7 +107,7 @@ async function attesterStats(address: string) {
  * right now. `?all=true` adds those that were removed, so the roster can
  * be audited over time rather than only as it stands today.
  */
-export async function attesterRoutes(app: FastifyInstance): Promise<void> {
+export function attesterRoutes(app: FastifyInstance): void {
   app.get('/attesters', async (req, reply) => {
     const parsed = listQuery.safeParse(req.query);
     if (!parsed.success) {

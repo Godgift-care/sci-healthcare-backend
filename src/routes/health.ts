@@ -146,12 +146,12 @@ export function resetStatsCache(): void {
   statsCache = null;
 }
 
-export async function healthRoutes(app: FastifyInstance): Promise<void> {
+export function healthRoutes(app: FastifyInstance): void {
   // The app-level onSend hook sends `Cache-Control: no-store` on this and
   // /ready; both are probed continuously and must reflect the current state.
   app.get('/health', {
     schema: { tags: ['health'], summary: 'Liveness check' },
-  }, async () => ({ status: 'ok' }));
+  }, () => ({ status: 'ok' }));
 
   /**
    * Version and deployment metadata.
@@ -176,7 +176,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         'the RPC endpoints in use (redacted), the indexed contract ids, the ' +
         'configured indexer start ledger, and when this process started.',
     },
-  }, async () => {
+  }, () => {
     return {
       // Read from package.json at startup, so it always matches the code.
       version: APP_VERSION,

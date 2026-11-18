@@ -93,7 +93,7 @@ function nameContains(q: string): { contains: string; mode?: string } {
   return filter;
 }
 
-export async function providerRoutes(app: FastifyInstance): Promise<void> {
+export function providerRoutes(app: FastifyInstance): void {
   app.get('/providers', { config: { rateLimit: LIST_ROUTE_RATE_LIMIT } }, async (req) => {
     const parsed = listQuery.safeParse(req.query);
     if (!parsed.success) {

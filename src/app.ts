@@ -86,12 +86,12 @@ function withRedactedLogging(logger: FastifyServerOptions['logger']): LoggerOpti
   if (!logger) return false;
   // A ready-made logger instance is the caller's; only the plain options
   // object can be extended with our request serializer.
-  if (typeof logger !== 'object' || !('level' in logger)) return logger as LoggerOption;
+  if (typeof logger !== 'object' || !('level' in logger)) return logger;
   const options = logger as { serializers?: Record<string, (value: unknown) => unknown> } & object;
   return {
     ...options,
     serializers: { ...options.serializers, req: serializeRequestForLog },
-  } as LoggerOption;
+  };
 }
 
 async function registerRoutes(scope: FastifyInstance): Promise<void> {
@@ -262,7 +262,7 @@ export async function buildApp(
     });
   });
 
-  app.get('/openapi.json', { schema: { hide: true } }, async () => {
+  app.get('/openapi.json', { schema: { hide: true } }, () => {
     return app.swagger();
   });
 
