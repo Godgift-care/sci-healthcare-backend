@@ -151,6 +151,56 @@ describe('provider_status_changed projection', () => {
   });
 });
 
+describe('capacity_changed projection', () => {
+  // registry `set_capacity` requires the clinic to be registered first, so
+  // the fixtures mirror that order.
+  async function registerClinic(): Promise<void> {
+    await apply(
+      rawEvent(
+        'provider_registered',
+        101,
+        { name: 'Clinic', country: 'CF', registered_at: 1n },
+        [addr(CLINIC)],
+      ),
+    );
+  }
+
+  it('leaves capacity null for a clinic that never set one', async () => {
+    await registerClinic();
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
+    expect(provider.capacity).toBeNull();
+  });
+
+  it('stores the max_outstanding cap the registry emits', async () => {
+    await registerClinic();
+    await apply(
+      rawEvent('capacity_changed', 102, { max_outstanding: u32(3) }, [addr(CLINIC)]),
+    );
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
+    expect(provider.capacity).toBe(3);
+  });
+
+  it('stores the contract\'s "0 means unlimited" literally', async () => {
+    await registerClinic();
+    await apply(
+      rawEvent('capacity_changed', 102, { max_outstanding: u32(5) }, [addr(CLINIC)]),
+    );
+    await apply(
+      rawEvent('capacity_changed', 103, { max_outstanding: u32(0) }, [addr(CLINIC)]),
+    );
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
+    expect(provider.capacity).toBe(0);
+  });
+
+  it('is replay-idempotent: re-applying the same cap is a no-op', async () => {
+    await registerClinic();
+    await apply(rawEvent('capacity_changed', 102, { max_outstanding: u32(4) }, [addr(CLINIC)]));
+    await apply(rawEvent('capacity_changed', 102, { max_outstanding: u32(4) }, [addr(CLINIC)]));
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
+    expect(provider.capacity).toBe(4);
+  });
+});
+
 describe('service_upserted projection', () => {
   // `Service.provider` is a required relation: on chain a clinic registers
   // before it can upsert a service, so the fixtures mirror that order.

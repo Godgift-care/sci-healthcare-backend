@@ -899,6 +899,64 @@ describe('GET /providers', () => {
   });
 });
 
+describe('GET /providers capacity and openVouchers (#316)', () => {
+  const CAP_CLINIC = `G${'C'.repeat(55)}`;
+  const createdAt = new Date('2026-01-01T00:00:00Z');
+
+  beforeEach(async () => {
+    await prisma.provider.create({
+      data: {
+        address: CAP_CLINIC,
+        name: 'Capacity Clinic',
+        country: 'ZZ',
+        status: 'Active',
+        registeredAt: createdAt,
+        capacity: 3,
+      },
+    });
+    // openVouchers counts Funded and Claimed only; the others must not add.
+    await prisma.voucher.createMany({
+      data: [
+        { id: 'cap-funded-1', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Funded', createdAt, expiresAt: createdAt },
+        { id: 'cap-funded-2', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Funded', createdAt, expiresAt: createdAt },
+        { id: 'cap-claimed-1', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Claimed', createdAt, expiresAt: createdAt },
+        { id: 'cap-settled-1', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Settled', createdAt, expiresAt: createdAt },
+        { id: 'cap-attested-1', funder: FUNDER, beneficiaryRef: REF, providerAddress: CAP_CLINIC, serviceCode: 101, amount: '1', status: 'Attested', createdAt, expiresAt: createdAt },
+      ],
+    });
+  });
+
+  it('reports capacity and the open (Funded + Claimed) count on the detail route', async () => {
+    const { status, body } = await get(`/providers/${CAP_CLINIC}`);
+    expect(status).toBe(200);
+    expect(body.capacity).toBe(3);
+    expect(body.openVouchers).toBe(3); // 2 Funded + 1 Claimed, excluding Settled/Attested
+  });
+
+  it('reports the same fields on the list route', async () => {
+    const { body } = await get('/providers?q=Capacity');
+    const clinic = body.providers.find((p: { address: string }) => p.address === CAP_CLINIC);
+    expect(clinic.capacity).toBe(3);
+    expect(clinic.openVouchers).toBe(3);
+  });
+
+  it('exposes capacity and openVouchers through the sparse-field allow-list', async () => {
+    const { body } = await get(`/providers?q=Capacity&fields=address,capacity,openVouchers`);
+    const clinic = body.providers.find((p: { address: string }) => p.address === CAP_CLINIC);
+    expect(Object.keys(clinic).sort()).toEqual(['address', 'capacity', 'openVouchers']);
+  });
+
+  it('reports openVouchers as 0 and capacity as null for a clinic that set neither', async () => {
+    const NULL_CLINIC = `G${'D'.repeat(55)}`;
+    await prisma.provider.create({
+      data: { address: NULL_CLINIC, name: 'Quiet Clinic', country: 'ZZ', status: 'Active', registeredAt: createdAt },
+    });
+    const { body } = await get(`/providers/${NULL_CLINIC}`);
+    expect(body.capacity).toBeNull();
+    expect(body.openVouchers).toBe(0);
+  });
+});
+
 describe('GET /providers/:address/stats', () => {
   /** Timestamp offsets in seconds from the same creation time. */
   async function seedTimings(rows: {

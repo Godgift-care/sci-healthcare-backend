@@ -777,6 +777,9 @@ export class Indexer {
       case 'provider_metadata_changed':
         await this.onProviderMetadataChanged(db, e);
         return null;
+      case 'capacity_changed':
+        await this.onCapacityChanged(db, e);
+        return null;
       case 'service_upserted':
         await this.onServiceUpserted(db, e);
         return null;
@@ -1069,6 +1072,21 @@ export class Indexer {
       where: { address, ...differs },
       data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
     });
+  }
+
+  /**
+   * The clinic set its outstanding-voucher cap (registry `set_capacity`).
+   *
+   * `max_outstanding` is an absolute value, not an increment, so storing it
+   * directly is replay-idempotent: re-applying the event writes the same
+   * number. `0` is the contract's "unlimited" and is stored as such; a clinic
+   * that has never called `set_capacity` keeps `capacity` null, which the
+   * routes distinguish from an explicit `0` only by absence.
+   */
+  private async onCapacityChanged(db: Db, e: DecodedEvent): Promise<void> {
+    const address = asAddress(e.fields.provider);
+    const capacity = asNumber(e.fields.max_outstanding);
+    await db.provider.updateMany({ where: { address }, data: { capacity } });
   }
 
   /**

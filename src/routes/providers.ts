@@ -9,7 +9,7 @@ import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { providerMetadataOf } from '../lib/provider-metadata.js';
-import { serialiseProviderDetail } from '../lib/providers.js';
+import { serialiseProviderDetail, openVoucherCounts } from '../lib/providers.js';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
@@ -32,6 +32,11 @@ const PROVIDER_FIELDS = [
   // field, so a clinic card asking only for hours and a phone number
   // does not also download every service price.
   'metadata',
+  // Clinic capacity read model (#316): the cap indexed from the registry and
+  // the live count of open (Funded + Claimed) vouchers, so a funder can see
+  // a clinic is full before funding it.
+  'capacity',
+  'openVouchers',
   'services',
 ] as const;
 
@@ -107,8 +112,9 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       status: string;
       registeredAt: Date;
       metadata: string | null;
+      capacity: number | null;
       services: { code: number; label: string; price: string }[];
-    }) => ({
+    }, openVouchers: number) => ({
       address: p.address,
       name: p.name,
       country: p.country,
@@ -118,6 +124,10 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       // (#159); null until one was fetched, so clients treat it as
       // optional rather than a second request they must make.
       metadata: providerMetadataOf(p),
+      // #316: the cap indexed from the registry (`0` means unlimited, null
+      // when the clinic has never set one) and the vouchers open against it.
+      capacity: p.capacity,
+      openVouchers,
       services: p.services.map((s) => ({
         code: s.code,
         label: s.label,
@@ -125,6 +135,14 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
         priceDisplay: fromBaseUnits(s.price),
       })),
     });
+
+    // One grouped count for the whole page, never one per clinic (#316).
+    const formatPage = async (
+      page: Parameters<typeof formatProvider>[0][],
+    ): Promise<ReturnType<typeof formatProvider>[]> => {
+      const openBy = await openVoucherCounts(page.map((p) => p.address));
+      return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0));
+    };
 
     if (cursor) {
       const decoded = decodeCursor(cursor);
@@ -151,7 +169,7 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       const page = hasNext ? rows.slice(0, limit) : rows;
       const last = page[page.length - 1];
       const nextCursor = hasNext && last ? encodeCursor(last.registeredAt, last.address) : null;
-      return { limit, nextCursor, providers: project(page.map(formatProvider)) };
+      return { limit, nextCursor, providers: project(await formatPage(page)) };
     }
 
     const where = {
@@ -176,7 +194,7 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     const last = page[page.length - 1];
     const nextCursor = hasNext && last ? encodeCursor(last.registeredAt, last.address) : undefined;
 
-    return { total, limit, offset, nextCursor, providers: project(page.map(formatProvider)) };
+    return { total, limit, offset, nextCursor, providers: project(await formatPage(page)) };
   });
 
   app.get('/providers/:address', async (req) => {
@@ -190,7 +208,8 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     // The same record `?include=provider` embeds on the voucher routes
     // (#167), so a clinic fetched on its own and one embedded in a voucher
     // page are identical.
-    return serialiseProviderDetail(p);
+    const openBy = await openVoucherCounts([address]);
+    return serialiseProviderDetail(p, openBy.get(address) ?? 0);
   });
 
   /**

@@ -18,6 +18,8 @@ export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   provider_status_changed: ['provider'],
   // The clinic repointed its off-chain metadata URI (contracts #10).
   provider_metadata_changed: ['provider'],
+  // The clinic set its outstanding-voucher cap (registry `set_capacity`).
+  capacity_changed: ['provider'],
   service_upserted: ['provider', 'code'],
   service_removed: ['provider'],
   attester_added: ['attester'],
