@@ -13,7 +13,8 @@ on:
 
 # The job reads the repository and downloads a release; it writes nothing
 # back to GitHub.
-permissions: contents: read
+permissions:
+  contents: read
 
 jobs:
   quickstart-integration:

@@ -64,6 +64,22 @@ describe('every workflow', () => {
     expect(missing).toEqual([]);
   });
 
+  it('writes each permissions declaration as a block GitHub can parse (#284)', () => {
+    // `permissions: contents: read` is shorter and is not valid YAML: a nested
+    // mapping needs its own lines. GitHub then rejects the file, the run fails
+    // before any job starts, and nothing says which workflow was at fault.
+    // A flow mapping (`{ contents: read }`) parses, so only the bare form fails.
+    const unreadable = workflowNames().filter((name) =>
+      workflow(name)
+        .split('\n')
+        .some((line) => {
+          const declared = /^permissions:\s*(.*)$/.exec(line)?.[1]?.trim() ?? '';
+          return declared.length > 0 && !declared.startsWith('{') && declared.includes(':');
+        }),
+    );
+    expect(unreadable).toEqual([]);
+  });
+
   it('keeps repository contents read-only for the workflows that only read it (#284)', () => {
     // These never push, comment or upload artifacts, so `contents: write`
     // would only widen what a compromised action could do to the repository.

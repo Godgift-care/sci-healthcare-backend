@@ -11,7 +11,8 @@ on:
 
 # Every job in this workflow reads the repository and runs npm against it;
 # none of them writes back to GitHub.
-permissions: contents: read
+permissions:
+  contents: read
 
 jobs:
   lint:
