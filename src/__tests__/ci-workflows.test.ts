@@ -152,9 +152,11 @@ describe('pages.yml (#297)', () => {
 
 describe('api-reference/index.html (#297)', () => {
   const html = file('api-reference/index.html');
+  const scanConfig = JSON.parse(file('.github/security-scan.json')) as { allowedHosts: string[] };
+  const spec: unknown = JSON.parse(file('openapi.json'));
 
   it('renders the committed spec from the artifact, not from the API', () => {
-    expect(html).toMatch(/spec-url="\.\/openapi\.json"/);
+    expect(html).toMatch(/var SPEC = '\.\/openapi\.json';/);
     // The server's own spec is exactly what this page must not depend on.
     expect(html).not.toMatch(/onrender\.com\/(v\d\/)?openapi\.json/);
   });
@@ -162,25 +164,91 @@ describe('api-reference/index.html (#297)', () => {
   it('works under any URL prefix', () => {
     // Absolute paths would 404 on a fork or project site, which is how the
     // "deploy from a fork" check is meant to be run.
-    expect(html).not.toMatch(/(?:src|href|spec-url)="\/(?!\/)/);
+    expect(html).not.toMatch(/(?:src|href)="\/(?!\/)/);
   });
 
-  it('pins the renderer to one version and verifies its bytes', () => {
-    expect(html).toMatch(/redoc@\d+\.\d+\.\d+\/bundles\/redoc\.standalone\.js/);
-    expect(html).not.toMatch(/redoc@(\d+|latest|next)\//);
-    expect(html).toMatch(/integrity="sha384-[A-Za-z0-9+/]{64}"/);
-    // integrity without CORS is ignored by the browser for cross-origin scripts.
-    expect(html).toMatch(/crossorigin="anonymous"/);
+  it('loads no resource from a host the repository does not control', () => {
+    // The pull request security gate reports an off-allow-list host as
+    // `new-network-host`, and a review finding has to be cleared by a
+    // maintainer — the right call for a page documenting a health-sector API,
+    // because a well-known CDN can still serve bytes nobody read. An earlier
+    // version of this file loaded Redoc from one, pinned to a version with a
+    // published-subresource-integrity hash, and tripped it anyway.
+    const hosts = [...html.matchAll(/\bhttps?:\/\/([a-zA-Z0-9.-]+)/g)]
+      .map((match) => match[1] ?? '')
+      .filter(Boolean);
+    for (const host of hosts) {
+      const lower = host.toLowerCase();
+      expect(
+        scanConfig.allowedHosts.some((a) => lower === a || lower.endsWith(`.${a}`)),
+        `${host} is not on the scan allow-list`,
+      ).toBe(true);
+    }
+    // A link a reader chooses is not a resource the page takes on load.
+    expect(html).not.toMatch(/<script[^>]+\bsrc=/i);
+    expect(html).not.toMatch(/<link\b/i);
+    expect(html).not.toMatch(/<img\b/i);
+    expect(html).not.toMatch(/@import/i);
+  });
+
+  it('says nothing to anyone but the host that served it', () => {
+    // One request, for the specification. This replaces the
+    // `disable-telemetry="true"` the Redoc version needed for the guarantee.
+    expect(html.match(/\bfetch\(/g) ?? []).toHaveLength(1);
+    expect(html).toMatch(/fetch\(SPEC\)/);
+    expect(html).not.toMatch(/sendBeacon|new WebSocket|new EventSource|new Image\(/);
   });
 
   it('gives the reader the contract when it cannot render', () => {
     expect(html).toMatch(/<noscript[^>]*>[\s\S]*?<a href="\.\/openapi\.json">/);
-    // Redoc renders into its own element and removes nothing, so a loading
-    // notice outside <noscript> would stay on the page forever.
-    expect(html).not.toMatch(/<div id="fallback">/);
+    // The loading notice lives inside the element the renderer replaces, so it
+    // cannot survive into the finished page or outlive a failed fetch.
+    expect(html).toMatch(/<div id="app">\s*<p class="notice">Loading/);
+    expect(html).toMatch(/getElementById\('app'\)[\s\S]{0,90}\.replaceChildren\(/);
   });
 
-  it('sends no telemetry from a health-sector documentation page', () => {
-    expect(html).toMatch(/disable-telemetry="true"/);
+  it('renders specification strings as text, never as markup', () => {
+    // Summaries and descriptions are the routes' own text. Writing it through
+    // HTML would turn an ordinary schema edit into script on every reader's
+    // machine, on a page a maintainer regenerates without reading the prose.
+    expect(html).not.toMatch(/\.innerHTML\s*=/);
+    expect(html).not.toMatch(/document\.write/);
+    expect(html).toMatch(/node\.append\(value\)/);
+  });
+
+  it('interprets every schema keyword the committed spec uses', () => {
+    // The page renders this contract, not JSON Schema in general: it says so
+    // with a keyword list and a runtime note. This pins the list against the
+    // spec, so a schema the page cannot show fails the build instead of
+    // silently publishing a thinner reference than openapi.json.
+    const start = html.indexOf('var KNOWN_KEYWORDS');
+    const handled = new Set(
+      [...html.slice(start, html.indexOf('];', start)).matchAll(/'([^']+)'/g)].map((m) => m[1]),
+    );
+    expect(handled.size).toBeGreaterThan(0);
+
+    const used = new Set<string>();
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      const record = node as Record<string, unknown>;
+      const isSchema =
+        record.type !== undefined ||
+        record.properties ||
+        record.items ||
+        record.enum ||
+        record.propertyNames ||
+        record.$ref;
+      if (isSchema) Object.keys(record).forEach((key) => used.add(key));
+      Object.keys(record).forEach((key) => walk(record[key]));
+    };
+    walk(spec);
+
+    // Nothing here resolves a pointer, so the spec may not carry one.
+    expect([...used]).not.toContain('$ref');
+    expect([...used].filter((key) => !handled.has(key))).toEqual([]);
   });
 });
