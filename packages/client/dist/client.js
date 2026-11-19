@@ -3,13 +3,25 @@ export class ApiError extends Error {
     error;
     details;
     issues;
-    constructor(status, error, message, details) {
+    /**
+     * The error body as the API sent it, typed as the one documented envelope
+     * (#296).
+     *
+     * `message` on this class is a fallback-protected string because `Error`
+     * needs one; `envelope` is the honest record, so a route that answers a
+     * lookup failure without a localised `message` shows that here rather than
+     * inheriting a sentence the server never sent.
+     */
+    envelope;
+    constructor(status, error, message, details, envelope) {
         super(message);
         this.name = 'ApiError';
         this.status = status;
         this.error = error;
         this.details = details;
         this.issues = details;
+        this.envelope =
+            envelope ?? { error, message, ...(details === undefined ? {} : { details }) };
     }
 }
 /**
@@ -81,7 +93,11 @@ export class Client {
             const errCode = body.error ?? `http_${res.status}`;
             const message = body.message ?? res.statusText ?? 'Request failed';
             const details = body.details ?? body.issues;
-            throw new ApiError(res.status, errCode, message, details);
+            // `error` is the only required member of the envelope, so a body that
+            // does not carry one is not an envelope and is left out rather than
+            // dressed up as one.
+            const envelope = body.error === undefined ? undefined : body;
+            throw new ApiError(res.status, errCode, message, details, envelope);
         }
         return (await res.json());
     }
