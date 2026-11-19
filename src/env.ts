@@ -78,6 +78,12 @@ const envShape = z.object({
   USDC_CONTRACT_ID: z.string().length(56).optional(),
   /** Testnet demo faucet. Drips are counted only when this is set. */
   FAUCET_CONTRACT_ID: z.string().length(56).optional(),
+  /**
+   * Matching-funding desk (`contracts/sponsor`). Its events are indexed only
+   * when this is set, because no deployment of that contract is listed in
+   * `deployments/testnet.env` yet (#317).
+   */
+  SPONSOR_CONTRACT_ID: z.string().length(56).optional(),
 
   /**
    * Optional JSON array of previous contract deployments for redeployment support.
@@ -306,8 +312,10 @@ export function deploymentIndexForContract(contractId: string): number | undefin
 /**
  * Contract ids the indexer subscribes to, in one place.
  *
- * The faucet is only present on a testnet demo, so it joins the list when
- * `FAUCET_CONTRACT_ID` is set and is absent otherwise.
+ * The faucet and the sponsor desk are only present where they are deployed,
+ * so each joins the list when its variable is set and is absent otherwise.
+ * Neither is in `CONTRACTS`: a reader grouping by role has no use for them,
+ * and a subscription is the only thing they need to exist for.
  */
 export const INDEXED_CONTRACTS = [
   ...new Set([
@@ -315,6 +323,7 @@ export const INDEXED_CONTRACTS = [
     env.VOUCHER_CONTRACT_ID,
     env.RECEIPT_CONTRACT_ID,
     ...(env.FAUCET_CONTRACT_ID ? [env.FAUCET_CONTRACT_ID] : []),
+    ...(env.SPONSOR_CONTRACT_ID ? [env.SPONSOR_CONTRACT_ID] : []),
     ...DEPLOYMENTS.map((d) => d.contractId),
   ]),
 ] as readonly string[];

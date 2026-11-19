@@ -3948,6 +3948,38 @@
         }
       }
     },
+    "/v1/sponsors": {
+      "get": {
+        "summary": "Sponsors of the matching-funding desk",
+        "description": "One row per sponsor the indexer has seen, most recently seen first, with its terms, the budget the contract last reported for it, and totals over the matches it has made. Accepts `?fields=`; empty while `SPONSOR_CONTRACT_ID` is unset, which is a valid state rather than a failure — a directory of nobody is a truer answer than a 503.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/sponsors/{address}": {
+      "get": {
+        "summary": "One sponsor: terms, budget and match totals",
+        "description": "The same object `GET /sponsors` serves for this address. `available` is what the contract reported at the last budget movement, not what the desk holds now: matching spends budget without emitting a budget event. 404 `sponsor_not_found` for an address the desk has never seen.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/stream": {
       "get": {
         "summary": "Live voucher updates (server-sent events)",
@@ -7963,6 +7995,38 @@
                 "example": 5
               }
             }
+          }
+        }
+      }
+    },
+    "/sponsors": {
+      "get": {
+        "summary": "Sponsors of the matching-funding desk",
+        "description": "One row per sponsor the indexer has seen, most recently seen first, with its terms, the budget the contract last reported for it, and totals over the matches it has made. Accepts `?fields=`; empty while `SPONSOR_CONTRACT_ID` is unset, which is a valid state rather than a failure — a directory of nobody is a truer answer than a 503.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/sponsors/{address}": {
+      "get": {
+        "summary": "One sponsor: terms, budget and match totals",
+        "description": "The same object `GET /sponsors` serves for this address. `available` is what the contract reported at the last budget movement, not what the desk holds now: matching spends budget without emitting a budget event. 404 `sponsor_not_found` for an address the desk has never seen.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
           }
         }
       }

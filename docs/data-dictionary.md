@@ -42,7 +42,7 @@ schema does not have. Documentation cannot drift from the schema unnoticed.
 | `attester_added` | `Attester` (create/reactivate) |
 | `attester_removed` | `Attester.active = false` |
 | `voucher_created` | `Voucher` (create), `Provider` stub if unknown, webhook outbox row, `DailyStat` funded counters |
-| `voucher_claimed` | `Voucher.status`, `Voucher.claimedAt`, webhook outbox row |
+| `voucher_claimed` | `Voucher.status`, `Voucher.claimedAt`, `Voucher.claimedWithProof` (from `get_voucher_options`), webhook outbox row |
 | `voucher_attested` | `Voucher.status`, `attestedAt`, `attestedBy`, `disputeDeadline`, webhook outbox row |
 | `voucher_disputed` | `Voucher.status`, `disputeReason`, webhook outbox row |
 | `voucher_settled` | `Voucher.status`, `settledNet`, `settledFee`, webhook outbox row |
@@ -50,6 +50,12 @@ schema does not have. Documentation cannot drift from the schema unnoticed.
 | `dispute_resolved` | `Voucher.disputeResolvedAt/By/Outcome` |
 | `receipt_minted` | `Receipt`, `DailyStat` settled counters |
 | `dripped` | `FaucetDrip` |
+| `budget_deposited` | `Sponsor.available`, `Sponsor.lastMovementAt` (and the sponsor row itself), `SponsorBudgetEvent` |
+| `budget_withdrawn` | `Sponsor.available`, `Sponsor.lastMovementAt`, `SponsorBudgetEvent` |
+| `rules_set` | `Sponsor` — the four match terms and `rulesAt` |
+| `match_created` | `Sponsor` stub if the desk is new, `SponsorMatch` |
+| `match_settled` | `SponsorMatch.status = Settled`, `settledAt` |
+| `match_refunded` | `SponsorMatch.status = Refunded`, `refundedAt` |
 
 Every event also appends a row to `ContractEvent` before its projection
 runs; an event whose projection throws is written to `FailedEvent` instead
@@ -132,6 +138,7 @@ refund. Dispute columns stay `null` unless the voucher is disputed.
 | `createdAt` | `DateTime` | No | `voucher_created.created_at` | From the event payload |
 | `expiresAt` | `DateTime` | No | `voucher_created.expires_at` | From the event payload |
 | `claimedAt` | `DateTime?` | Yes | `voucher_claimed.claimed_at` | Null until claimed |
+| `claimedWithProof` | `Boolean?` | Yes | `get_voucher_options.presence_commitment`, read when the claim is indexed | Whether the claim revealed a presence secret (issue #318). The claim event is identical for `claim` and `claim_with_proof`, so the voucher's funding options decide it: a commitment makes the proof the only way to claim. Null for an unclaimed voucher *and* for a claim whose options could not be read — absence is not evidence of no proof |
 | `attestedAt` | `DateTime?` | Yes | `voucher_attested.attested_at` | Null until attested |
 | `attestedBy` | `String?` | Yes | `voucher_attested` topic (`attester`) | Attester that signed; nullable so `prisma db push` can add it in place |
 | `disputeDeadline` | `DateTime?` | Yes | `voucher_attested.dispute_deadline` | Window in which the funder can dispute |
@@ -294,6 +301,66 @@ replay is idempotent; only populated when `FAUCET_CONTRACT_ID` is set.
 | `amount` | `String` | No | `dripped.amount` | `i128` as a decimal string |
 | `ledger` | `Int` | No | event ledger | |
 | `drippedAt` | `DateTime` | No | ledger close time | |
+
+## `Sponsor`
+
+One sponsor of the matching-funding desk, as its own events describe it.
+Only populated when `SPONSOR_CONTRACT_ID` is set. A field the desk has not
+emitted an event for stays null rather than reading as zero, because "has not
+matched yet" and "matched nothing" are different facts.
+
+| Column | Type | Nullable | Written from | Notes |
+| --- | --- | --- | --- | --- |
+| `address` | `String` | No | `sponsor` topic of every sponsor event | Primary key. Created on first sight, so a match can arrive before any budget movement |
+| `available` | `String?` | Yes | `available` carried by the latest budget event | What the contract reported as unused budget after that movement — never summed here: matching spends budget without emitting a budget event |
+| `matchBps` | `Int?` | Yes | `rules_set.match_bps` | u32 basis points; 10000 matches one-for-one, 20000 two-for-one |
+| `capPerVoucher` | `String?` | Yes | `rules_set.cap_per_voucher` | i128 as a decimal string |
+| `minVoucherAmount` | `String?` | Yes | `rules_set.min_voucher_amount` | i128 as a decimal string |
+| `minVoucherAgeSecs` | `String?` | Yes | `rules_set.min_voucher_age_secs` | u64 as a decimal string, because it is wider than a Postgres integer. An anti-farming minimum age, not a funding deadline |
+| `rulesAt` | `DateTime?` | Yes | ledger close time of the `rules_set` | The terms are replaced wholesale, never merged |
+| `lastMovementAt` | `DateTime?` | Yes | ledger close time of the latest budget event | Says which event `available` describes; null until one is indexed |
+| `firstSeenAt` | `DateTime` | No | ledger close time of the first sponsor event seen | Orders `GET /sponsors`; not a registration date |
+| `updatedAt` | `DateTime` | No | database, on every write | `@updatedAt` ingest stamp; deliberately not in any API response, so a replay is not observable |
+
+## `SponsorBudgetEvent`
+
+One budget movement on the desk, keyed by the on-chain event id so replaying
+a ledger is idempotent. This is the audit trail behind `Sponsor.available`;
+the balance itself is never derived by summing these rows, because a deposit
+and a withdrawal both report the resulting balance.
+
+| Column | Type | Nullable | Written from | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `String` | No | on-chain event id | Primary key |
+| `sponsorAddress` | `String` | No | `sponsor` topic | |
+| `kind` | `String` | No | which event projected the row | `Deposited` or `Withdrawn` |
+| `amount` | `String` | No | `amount` | i128 as a decimal string, always positive — the direction is `kind` |
+| `available` | `String` | No | `available` | The balance the contract reported after this movement |
+| `ledger` | `Int` | No | event ledger | |
+| `occurredAt` | `DateTime` | No | ledger close time | |
+
+## `SponsorMatch`
+
+The sponsor's own contribution to one voucher. Keyed by the voucher the desk
+funded, with the voucher it was made against indexed separately — that is the
+join the voucher routes use to answer `matchedAmount`.
+
+| Column | Type | Nullable | Written from | Notes |
+| --- | --- | --- | --- | --- |
+| `matchedVoucherId` | `String` | No | `match_created.matched_voucher_id` | Primary key; u64 as a string. The desk's voucher, not the one the original funder issued |
+| `originalVoucherId` | `String` | No | `match_created.original_voucher_id` (topic) | `@unique`: the contract keeps one match per voucher and rejects a second |
+| `sponsorAddress` | `String` | No | `sponsor` topic | |
+| `providerAddress` | `String` | No | `match_created.provider` | Published by the desk so a clinic can list matched work without joining `Voucher` |
+| `serviceCode` | `Int` | No | `match_created.service_code` | Same reason |
+| `amount` | `String` | No | `match_created.amount` | i128 as a decimal string: `min(original amount × matchBps / 10000, capPerVoucher)`. The funder's own amount is not in this event — it stays on the voucher |
+| `status` | `String` | No | `match_created`, then `match_settled` / `match_refunded` | `Open`, `Settled` or `Refunded` |
+| `matchedAt` | `DateTime` | No | `match_created.matched_at` | The desk's own timestamp, not the ledger's |
+| `settledAt` | `DateTime?` | Yes | ledger close time of `match_settled` | Only that event writes it. `match_settled` carries no timestamp, as with `voucher_refunded` |
+| `refundedAt` | `DateTime?` | Yes | ledger close time of `match_refunded` | Only that event writes it |
+
+A settlement or refund for a match created before the indexer's start ledger
+finds no row and creates none: the resolution event names only the matched
+voucher, so it cannot supply the original id a create would need.
 
 ## `ReconcileMismatch`
 
