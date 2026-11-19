@@ -129,8 +129,8 @@ const RATE_LIMITED: ResponseDoc = {
     'how long is left. Reading `Retry-After` is the whole recovery: the ' +
     'budget refills on its own.',
   example: {
-   "error": "rate_limited",
-   "message": "Too many requests"
+    error: 'rate_limited',
+    message: 'Too many requests',
   },
   headers: {
     'retry-after': {
@@ -238,9 +238,10 @@ const JSON_MEDIA = 'application/json';
 export const API_DOCS: Record<string, OperationDoc> = {
   'GET /health': {
     ok: {
-      description: 'The process is up. Never reads the database, so it stays green while a query would fail.',
+      description:
+        'The process is up. Never reads the database, so it stays green while a query would fail.',
       example: {
-       "status": "ok"
+        status: 'ok',
       },
     },
     errors: { '429': limited() },
@@ -252,22 +253,20 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'Which build is running and what it indexes. Fields are allow-listed, ' +
         'so no credential from the environment can reach this response.',
       example: {
-       "version": "0.2.0",
-       "commit": null,
-       "network": "testnet",
-       "rpcUrl": "http://127.0.0.1:8100/soroban/rpc",
-       "rpcUrls": [
-        'http://127.0.0.1:8100/soroban/rpc'
-       ],
-       "contracts": {
-        "registry": "CREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "voucher": "CVOUCHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "receipt": "CRECEIPTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "usdc": null,
-        "faucet": null
-       },
-       "indexerStartLedger": 0,
-       "startedAt": "2026-11-18T16:34:28.834Z"
+        version: '0.2.0',
+        commit: null,
+        network: 'testnet',
+        rpcUrl: 'http://127.0.0.1:8100/soroban/rpc',
+        rpcUrls: ['http://127.0.0.1:8100/soroban/rpc'],
+        contracts: {
+          registry: 'CREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          voucher: 'CVOUCHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          receipt: 'CRECEIPTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          usdc: null,
+          faucet: null,
+        },
+        indexerStartLedger: 0,
+        startedAt: '2026-11-18T16:34:28.834Z',
       },
     },
     errors: { '429': limited() },
@@ -280,35 +279,35 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'is the same in both statuses, so an operator can read the diagnosis ' +
         'from a `503` without a second request.',
       example: {
-       "status": "ready",
-       "checks": {
-        "database": "ok",
-        "failedEvents": 0,
-        "reconcileMismatches": 0,
-        "reconcile": "ok",
-        "webhooks": {
-         "state": "disabled",
-         "enabled": false,
-         "pending": 0,
-         "abandoned": 0,
-         "oldestPendingAgeSeconds": null,
-         "maxPendingAgeSeconds": 900
+        status: 'ready',
+        checks: {
+          database: 'ok',
+          failedEvents: 0,
+          reconcileMismatches: 0,
+          reconcile: 'ok',
+          webhooks: {
+            state: 'disabled',
+            enabled: false,
+            pending: 0,
+            abandoned: 0,
+            oldestPendingAgeSeconds: null,
+            maxPendingAgeSeconds: 900,
+          },
+          rpc: 'ok',
+          rpcUrl: 'http://127.0.0.1:8100/soroban/rpc',
+          latestLedger: 5000000,
+          indexedLedger: 5000000,
+          lagLedgers: 0,
+          maxLagLedgers: 120,
+          paused: false,
+          indexer: 'ok',
+          network: 'testnet',
+          contracts: {
+            registry: 'CREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            voucher: 'CVOUCHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            receipt: 'CRECEIPTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          },
         },
-        "rpc": "ok",
-        "rpcUrl": "http://127.0.0.1:8100/soroban/rpc",
-        "latestLedger": 5000000,
-        "indexedLedger": 5000000,
-        "lagLedgers": 0,
-        "maxLagLedgers": 120,
-        "paused": false,
-        "indexer": "ok",
-        "network": "testnet",
-        "contracts": {
-         "registry": "CREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-         "voucher": "CVOUCHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-         "receipt": "CRECEIPTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-        }
-       }
       },
     },
     errors: {
@@ -321,32 +320,30 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'because a failed check is an answer rather than a rejected ' +
           'request.',
         example: {
-         "status": "degraded",
-         "checks": {
-          "database": "ok",
-          "failedEvents": 0,
-          "reconcileMismatches": 0,
-          "reconcile": "ok",
-          "webhooks": {
-           "state": "disabled",
-           "enabled": false,
-           "pending": 0,
-           "abandoned": 0,
-           "oldestPendingAgeSeconds": null,
-           "maxPendingAgeSeconds": 900
+          status: 'degraded',
+          checks: {
+            database: 'ok',
+            failedEvents: 0,
+            reconcileMismatches: 0,
+            reconcile: 'ok',
+            webhooks: {
+              state: 'disabled',
+              enabled: false,
+              pending: 0,
+              abandoned: 0,
+              oldestPendingAgeSeconds: null,
+              maxPendingAgeSeconds: 900,
+            },
+            rpc: 'error: fetch failed',
+            rpcUrl: 'http://localhost:8000/soroban/rpc',
+            rpcUrls: ['http://localhost:8000/soroban/rpc'],
+            network: 'testnet',
+            contracts: {
+              registry: 'CREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+              voucher: 'CVOUCHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+              receipt: 'CRECEIPTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            },
           },
-          "rpc": "error: fetch failed",
-          "rpcUrl": "http://localhost:8000/soroban/rpc",
-          "rpcUrls": [
-           "http://localhost:8000/soroban/rpc"
-          ],
-          "network": "testnet",
-          "contracts": {
-           "registry": "CREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-           "voucher": "CVOUCHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-           "receipt": "CRECEIPTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-          }
-         }
         },
       },
       '429': limited(),
@@ -359,15 +356,15 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'Counters for the whole read model, cached until the next indexed ' +
         'ledger. Amounts are base-unit i128 decimal strings.',
       example: {
-       "providers": 13,
-       "activeProviders": 11,
-       "vouchers": 2503,
-       "settledVouchers": 873,
-       "settledValue": "48055000000",
-       "feesCollected": "1201375000",
-       "receipts": 873,
-       "faucetDrips": 0,
-       "faucetWallets": 0
+        providers: 13,
+        activeProviders: 11,
+        vouchers: 2503,
+        settledVouchers: 873,
+        settledValue: '48055000000',
+        feesCollected: '1201375000',
+        receipts: 873,
+        faucetDrips: 0,
+        faucetWallets: 0,
       },
     },
     errors: limitedAndDown(),
@@ -379,19 +376,19 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'Voucher stage counts and the median hours between stages. A stage ' +
         'with no completed interval is `null`, not 0.',
       example: {
-       "country": null,
-       "clinic": null,
-       "counts": {
-        "funded": 2503,
-        "claimed": 2025,
-        "attested": 1348,
-        "settled": 873
-       },
-       "medianHours": {
-        "fundedToClaimed": 120,
-        "claimedToAttested": 72,
-        "attestedToSettled": 24
-       }
+        country: null,
+        clinic: null,
+        counts: {
+          funded: 2503,
+          claimed: 2025,
+          attested: 1348,
+          settled: 873,
+        },
+        medianHours: {
+          fundedToClaimed: 120,
+          claimedToAttested: 72,
+          attestedToSettled: 24,
+        },
       },
     },
     errors: {
@@ -403,22 +400,22 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'rather than the Zod issues the routes that call `safeParse` ' +
           'report under `invalid_query`.',
         example: {
-         "error": "bad_request",
-         "message": "querystring/country Too big: expected string to have exactly 2 characters",
-         "details": [
-          {
-           "keyword": "too_big",
-           "instancePath": "/country",
-           "schemaPath": "#/country/too_big",
-           "message": "Too big: expected string to have exactly 2 characters",
-           "params": {
-            "origin": "string",
-            "maximum": 2,
-            "inclusive": true,
-            "exact": true
-           }
-          }
-         ]
+          error: 'bad_request',
+          message: 'querystring/country Too big: expected string to have exactly 2 characters',
+          details: [
+            {
+              keyword: 'too_big',
+              instancePath: '/country',
+              schemaPath: '#/country/too_big',
+              message: 'Too big: expected string to have exactly 2 characters',
+              params: {
+                origin: 'string',
+                maximum: 2,
+                inclusive: true,
+                exact: true,
+              },
+            },
+          ],
         },
       },
       ...limitedAndDown(),
@@ -431,56 +428,56 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'One row per UTC day in the window, days with no activity included, ' +
         'so a chart does not have to fill gaps itself.',
       example: {
-       "days": 3,
-       "from": "2026-11-16T00:00:00.000Z",
-       "to": "2026-11-18T00:00:00.000Z",
-       "series": [
-        {
-         "date": "2026-11-16",
-         "funded": {
-          "count": 0,
-          "amount": "0"
-         },
-         "settled": {
-          "count": 0,
-          "amount": "0"
-         },
-         "refunded": {
-          "count": 0,
-          "amount": "0"
-         }
-        },
-        {
-         "date": "2026-11-17",
-         "funded": {
-          "count": 0,
-          "amount": "0"
-         },
-         "settled": {
-          "count": 0,
-          "amount": "0"
-         },
-         "refunded": {
-          "count": 0,
-          "amount": "0"
-         }
-        },
-        {
-         "date": "2026-11-18",
-         "funded": {
-          "count": 0,
-          "amount": "0"
-         },
-         "settled": {
-          "count": 0,
-          "amount": "0"
-         },
-         "refunded": {
-          "count": 0,
-          "amount": "0"
-         }
-        }
-       ]
+        days: 3,
+        from: '2026-11-16T00:00:00.000Z',
+        to: '2026-11-18T00:00:00.000Z',
+        series: [
+          {
+            date: '2026-11-16',
+            funded: {
+              count: 0,
+              amount: '0',
+            },
+            settled: {
+              count: 0,
+              amount: '0',
+            },
+            refunded: {
+              count: 0,
+              amount: '0',
+            },
+          },
+          {
+            date: '2026-11-17',
+            funded: {
+              count: 0,
+              amount: '0',
+            },
+            settled: {
+              count: 0,
+              amount: '0',
+            },
+            refunded: {
+              count: 0,
+              amount: '0',
+            },
+          },
+          {
+            date: '2026-11-18',
+            funded: {
+              count: 0,
+              amount: '0',
+            },
+            settled: {
+              count: 0,
+              amount: '0',
+            },
+            refunded: {
+              count: 0,
+              amount: '0',
+            },
+          },
+        ],
       },
     },
     errors: {
@@ -490,19 +487,17 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'key: this route reports the failing parameters under `issues`, ' +
           'where every other route uses `details`.',
         example: {
-         "error": "invalid_query",
-         "issues": [
-          {
-           "origin": "number",
-           "code": "too_small",
-           "minimum": 1,
-           "inclusive": true,
-           "path": [
-            "days"
-           ],
-           "message": "Too small: expected number to be >=1"
-          }
-         ]
+          error: 'invalid_query',
+          issues: [
+            {
+              origin: 'number',
+              code: 'too_small',
+              minimum: 1,
+              inclusive: true,
+              path: ['days'],
+              message: 'Too small: expected number to be >=1',
+            },
+          ],
         },
       },
       ...limitedAndDown(),
@@ -513,88 +508,74 @@ export const API_DOCS: Record<string, OperationDoc> = {
     ok: {
       description: 'Service codes ranked by funded value, highest first.',
       example: {
-       "total": 7,
-       "limit": 10,
-       "services": [
-        {
-         "serviceCode": 505,
-         "label": "Physiotherapy session",
-         "labels": [
-          "Physiotherapy session"
-         ],
-         "count": 379,
-         "value": "34065000000",
-         "valueDisplay": "3406.5000000"
-        },
-        {
-         "serviceCode": 303,
-         "label": "Antenatal visit",
-         "labels": [
-          "Antenatal visit"
-         ],
-         "count": 343,
-         "value": "33950000000",
-         "valueDisplay": "3395.0000000"
-        },
-        {
-         "serviceCode": 101,
-         "label": "Outpatient consult",
-         "labels": [
-          "Outpatient consult"
-         ],
-         "count": 371,
-         "value": "21585000000",
-         "valueDisplay": "2158.5000000"
-        },
-        {
-         "serviceCode": 201,
-         "label": "Routine bloodwork",
-         "labels": [
-          "Routine bloodwork"
-         ],
-         "count": 351,
-         "value": "16600000000",
-         "valueDisplay": "1660.0000000"
-        },
-        {
-         "serviceCode": 404,
-         "label": "Paediatric vaccination",
-         "labels": [
-          "Paediatric vaccination"
-         ],
-         "count": 347,
-         "value": "13520000000",
-         "valueDisplay": "1352.0000000"
-        },
-        {
-         "serviceCode": 102,
-         "label": "Follow-up consult",
-         "labels": [
-          "Follow-up consult"
-         ],
-         "count": 339,
-         "value": "9975000000",
-         "valueDisplay": "997.5000000"
-        },
-        {
-         "serviceCode": 202,
-         "label": "Malaria rapid test",
-         "labels": [
-          "Malaria rapid test"
-         ],
-         "count": 373,
-         "value": "7690000000",
-         "valueDisplay": "769.0000000"
-        }
-       ]
+        total: 7,
+        limit: 10,
+        services: [
+          {
+            serviceCode: 505,
+            label: 'Physiotherapy session',
+            labels: ['Physiotherapy session'],
+            count: 379,
+            value: '34065000000',
+            valueDisplay: '3406.5000000',
+          },
+          {
+            serviceCode: 303,
+            label: 'Antenatal visit',
+            labels: ['Antenatal visit'],
+            count: 343,
+            value: '33950000000',
+            valueDisplay: '3395.0000000',
+          },
+          {
+            serviceCode: 101,
+            label: 'Outpatient consult',
+            labels: ['Outpatient consult'],
+            count: 371,
+            value: '21585000000',
+            valueDisplay: '2158.5000000',
+          },
+          {
+            serviceCode: 201,
+            label: 'Routine bloodwork',
+            labels: ['Routine bloodwork'],
+            count: 351,
+            value: '16600000000',
+            valueDisplay: '1660.0000000',
+          },
+          {
+            serviceCode: 404,
+            label: 'Paediatric vaccination',
+            labels: ['Paediatric vaccination'],
+            count: 347,
+            value: '13520000000',
+            valueDisplay: '1352.0000000',
+          },
+          {
+            serviceCode: 102,
+            label: 'Follow-up consult',
+            labels: ['Follow-up consult'],
+            count: 339,
+            value: '9975000000',
+            valueDisplay: '997.5000000',
+          },
+          {
+            serviceCode: 202,
+            label: 'Malaria rapid test',
+            labels: ['Malaria rapid test'],
+            count: 373,
+            value: '7690000000',
+            valueDisplay: '769.0000000',
+          },
+        ],
       },
     },
     errors: {
       '400': {
         description: '`error: invalid_limit` when `limit` is not an integer from 1 to 100.',
         example: {
-         "error": "invalid_limit",
-         "message": "limit must be an integer between 1 and 100"
+          error: 'invalid_limit',
+          message: 'limit must be an integer between 1 and 100',
         },
       },
       ...limitedAndDown(),
@@ -606,42 +587,48 @@ export const API_DOCS: Record<string, OperationDoc> = {
       description:
         'A page of clinics with their active services, newest registration ' +
         'first. `nextCursor` is the way forward; `total` is only present ' +
-        'without a cursor, because a keyset page does not count.',
+        'without a cursor, because a keyset page does not count. `capacity` ' +
+        'is the clinic voucher cap the indexer read from the registry, ' +
+        '`null` until the clinic has ever set one (`0` means unlimited), and ' +
+        '`openVouchers` counts its `Funded` and `Claimed` vouchers.',
       example: {
-       "total": 13,
-       "limit": 1,
-       "offset": 0,
-       "nextCursor": "eyJjcmVhdGVkQXQiOiIyMDI2LTAxLTA4VDEwOjAwOjAwLjAwMFoiLCJpZCI6IkdCSE9KQ1RaWkhTRUhKTlNHUUQ3VElJSDRYTExKRTVHVkZFQzY0UEFYTEZSTFdSMkFOVjMzM09VIn0",
-       "providers": [
-        {
-         "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-         "name": "Kumasi Community Clinic",
-         "country": "GH",
-         "status": "Active",
-         "registeredAt": "2026-01-08T10:00:00.000Z",
-         "metadata": null,
-         "services": [
+        total: 13,
+        limit: 1,
+        offset: 0,
+        nextCursor:
+          'eyJjcmVhdGVkQXQiOiIyMDI2LTAxLTA4VDEwOjAwOjAwLjAwMFoiLCJpZCI6IkdCSE9KQ1RaWkhTRUhKTlNHUUQ3VElJSDRYTExKRTVHVkZFQzY0UEFYTEZSTFdSMkFOVjMzM09VIn0',
+        providers: [
           {
-           "code": 101,
-           "label": "Outpatient consult",
-           "price": "33600000",
-           "priceDisplay": "3.3600000"
+            address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+            name: 'Kumasi Community Clinic',
+            country: 'GH',
+            status: 'Active',
+            registeredAt: '2026-01-08T10:00:00.000Z',
+            metadata: null,
+            capacity: null,
+            openVouchers: 2,
+            services: [
+              {
+                code: 101,
+                label: 'Outpatient consult',
+                price: '33600000',
+                priceDisplay: '3.3600000',
+              },
+              {
+                code: 201,
+                label: 'Routine bloodwork',
+                price: '27250000',
+                priceDisplay: '2.7250000',
+              },
+              {
+                code: 404,
+                label: 'Paediatric vaccination',
+                price: '23800000',
+                priceDisplay: '2.3800000',
+              },
+            ],
           },
-          {
-           "code": 201,
-           "label": "Routine bloodwork",
-           "price": "27250000",
-           "priceDisplay": "2.7250000"
-          },
-          {
-           "code": 404,
-           "label": "Paediatric vaccination",
-           "price": "23800000",
-           "priceDisplay": "2.3800000"
-          }
-         ]
-        }
-       ]
+        ],
       },
     },
     errors: {
@@ -650,20 +637,18 @@ export const API_DOCS: Record<string, OperationDoc> = {
           '`error: invalid_query` for a filter outside its range, or ' +
           '`invalid_cursor` for a `cursor` this route did not issue.',
         example: {
-         "error": "invalid_query",
-         "message": "Invalid query parameters",
-         "details": [
-          {
-           "origin": "number",
-           "code": "too_small",
-           "minimum": 1,
-           "inclusive": true,
-           "path": [
-            "limit"
-           ],
-           "message": "Too small: expected number to be >=1"
-          }
-         ]
+          error: 'invalid_query',
+          message: 'Invalid query parameters',
+          details: [
+            {
+              origin: 'number',
+              code: 'too_small',
+              minimum: 1,
+              inclusive: true,
+              path: ['limit'],
+              message: 'Too small: expected number to be >=1',
+            },
+          ],
         },
       },
       ...limitedAndDown(),
@@ -674,45 +659,51 @@ export const API_DOCS: Record<string, OperationDoc> = {
     ok: {
       description:
         'One clinic, its registry state and its full service catalogue. This ' +
-        'is the object `?include=provider` embeds on the voucher routes.',
+        'is the object `?include=provider` embeds on the voucher routes. ' +
+        '`capacity` is the cap indexed from the registry (`null` before the ' +
+        'clinic has set one, `0` for unlimited) and `openVouchers` its ' +
+        'current `Funded` plus `Claimed` count, so a funder can see a clinic ' +
+        'at capacity before sending a transaction that reverts.',
       example: {
-       "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-       "name": "Kumasi Community Clinic",
-       "country": "GH",
-       "status": "Active",
-       "registeredAt": "2026-01-08T10:00:00.000Z",
-       "metadata": null,
-       "services": [
-        {
-         "code": 101,
-         "label": "Outpatient consult",
-         "price": "33600000",
-         "priceDisplay": "3.3600000",
-         "active": true
-        },
-        {
-         "code": 201,
-         "label": "Routine bloodwork",
-         "price": "27250000",
-         "priceDisplay": "2.7250000",
-         "active": true
-        },
-        {
-         "code": 404,
-         "label": "Paediatric vaccination",
-         "price": "23800000",
-         "priceDisplay": "2.3800000",
-         "active": true
-        }
-       ]
+        address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+        name: 'Kumasi Community Clinic',
+        country: 'GH',
+        status: 'Active',
+        registeredAt: '2026-01-08T10:00:00.000Z',
+        metadata: null,
+        capacity: null,
+        openVouchers: 2,
+        services: [
+          {
+            code: 101,
+            label: 'Outpatient consult',
+            price: '33600000',
+            priceDisplay: '3.3600000',
+            active: true,
+          },
+          {
+            code: 201,
+            label: 'Routine bloodwork',
+            price: '27250000',
+            priceDisplay: '2.7250000',
+            active: true,
+          },
+          {
+            code: 404,
+            label: 'Paediatric vaccination',
+            price: '23800000',
+            priceDisplay: '2.3800000',
+            active: true,
+          },
+        ],
       },
     },
     errors: {
       '404': {
         description: '`error: provider_not_found` for an address the registry event never carried.',
         example: {
-         "error": "provider_not_found",
-         "message": "Provider not found"
+          error: 'provider_not_found',
+          message: 'Provider not found',
         },
       },
       ...limitedAndDown(),
@@ -726,23 +717,23 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'value in base units, and median claim and attestation times. ' +
         'A median is `null` when the clinic has no complete interval.',
       example: {
-       "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-       "name": "Kumasi Community Clinic",
-       "status": "Active",
-       "vouchers": 3,
-       "byStatus": {
-        "Funded": 1,
-        "Claimed": 1,
-        "Attested": 0,
-        "Settled": 1,
-        "Disputed": 0,
-        "Refunded": 0
-       },
-       "settledVouchers": 1,
-       "settledValue": "25000000",
-       "settledValueDisplay": "2.5000000",
-       "medianClaimSeconds": 259200,
-       "medianAttestationSeconds": 86400
+        address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+        name: 'Kumasi Community Clinic',
+        status: 'Active',
+        vouchers: 3,
+        byStatus: {
+          Funded: 1,
+          Claimed: 1,
+          Attested: 0,
+          Settled: 1,
+          Disputed: 0,
+          Refunded: 0,
+        },
+        settledVouchers: 1,
+        settledValue: '25000000',
+        settledValueDisplay: '2.5000000',
+        medianClaimSeconds: 259200,
+        medianAttestationSeconds: 86400,
       },
     },
     errors: {
@@ -752,7 +743,7 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'the miss directly instead of throwing `ApiError`, so the envelope ' +
           'arrives with only its required key.',
         example: {
-         "error": "provider_not_found"
+          error: 'provider_not_found',
         },
       },
       ...limitedAndDown(),
@@ -767,22 +758,22 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'twice reads differently from one never suspended, and the current ' +
         'status alone cannot say that.',
       example: {
-       "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-       "history": [
-        {
-         "status": "Active",
-         "ledger": 1980441,
-         "changedAt": "2026-01-08T10:00:00.000Z"
-        }
-       ]
+        address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+        history: [
+          {
+            status: 'Active',
+            ledger: 1980441,
+            changedAt: '2026-01-08T10:00:00.000Z',
+          },
+        ],
       },
     },
     errors: {
       '404': {
         description: '`error: provider_not_found`.',
         example: {
-         "error": "provider_not_found",
-         "message": "Provider not found"
+          error: 'provider_not_found',
+          message: 'Provider not found',
         },
       },
       ...limitedAndDown(),
@@ -795,24 +786,24 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'Every price this clinic has published for one service, oldest ' +
         'first. A service it never listed has an empty history.',
       example: {
-       "providerAddress": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-       "code": 101,
-       "history": []
+        providerAddress: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+        code: 101,
+        history: [],
       },
     },
     errors: {
       '400': {
         description: '`error: invalid_code` when `code` is not a non-negative integer.',
         example: {
-         "error": "invalid_code",
-         "message": "code must be a non-negative integer"
+          error: 'invalid_code',
+          message: 'code must be a non-negative integer',
         },
       },
       '404': {
         description: '`error: provider_not_found`.',
         example: {
-         "error": "provider_not_found",
-         "message": "Provider not found"
+          error: 'provider_not_found',
+          message: 'Provider not found',
         },
       },
       ...limitedAndDown(),
@@ -825,24 +816,24 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'Active clinics per country code, sorted by code. Countries with no ' +
         'active clinic are absent rather than listed as zero.',
       example: {
-       "countries": [
-        {
-         "code": "GH",
-         "clinicCount": 2
-        },
-        {
-         "code": "KE",
-         "clinicCount": 1
-        },
-        {
-         "code": "NG",
-         "clinicCount": 7
-        },
-        {
-         "code": "RW",
-         "clinicCount": 1
-        }
-       ]
+        countries: [
+          {
+            code: 'GH',
+            clinicCount: 2,
+          },
+          {
+            code: 'KE',
+            clinicCount: 1,
+          },
+          {
+            code: 'NG',
+            clinicCount: 7,
+          },
+          {
+            code: 'RW',
+            clinicCount: 1,
+          },
+        ],
       },
     },
     errors: limitedAndDown(),
@@ -854,100 +845,86 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'The catalogue observed across every clinic: one entry per service ' +
         'code, with the price range clinics actually charge.',
       example: {
-       "total": 7,
-       "services": [
-        {
-         "code": 101,
-         "labels": [
-          "Outpatient consult"
-         ],
-         "clinicCount": 6,
-         "minPrice": "30600000",
-         "maxPrice": "36600000",
-         "medianPrice": "33450000",
-         "minPriceDisplay": "3.0600000",
-         "maxPriceDisplay": "3.6600000",
-         "medianPriceDisplay": "3.3450000"
-        },
-        {
-         "code": 102,
-         "labels": [
-          "Follow-up consult"
-         ],
-         "clinicCount": 7,
-         "minPrice": "14100000",
-         "maxPrice": "17550000",
-         "medianPrice": "16950000",
-         "minPriceDisplay": "1.4100000",
-         "maxPriceDisplay": "1.7550000",
-         "medianPriceDisplay": "1.6950000"
-        },
-        {
-         "code": 201,
-         "labels": [
-          "Routine bloodwork"
-         ],
-         "clinicCount": 7,
-         "minPrice": "23250000",
-         "maxPrice": "29750000",
-         "medianPrice": "25250000",
-         "minPriceDisplay": "2.3250000",
-         "maxPriceDisplay": "2.9750000",
-         "medianPriceDisplay": "2.5250000"
-        },
-        {
-         "code": 202,
-         "labels": [
-          "Malaria rapid test"
-         ],
-         "clinicCount": 4,
-         "minPrice": "9200000",
-         "maxPrice": "11700000",
-         "medianPrice": "10400000",
-         "minPriceDisplay": "0.9200000",
-         "maxPriceDisplay": "1.1700000",
-         "medianPriceDisplay": "1.0400000"
-        },
-        {
-         "code": 303,
-         "labels": [
-          "Antenatal visit"
-         ],
-         "clinicCount": 6,
-         "minPrice": "48000000",
-         "maxPrice": "57000000",
-         "medianPrice": "55000000",
-         "minPriceDisplay": "4.8000000",
-         "maxPriceDisplay": "5.7000000",
-         "medianPriceDisplay": "5.5000000"
-        },
-        {
-         "code": 404,
-         "labels": [
-          "Paediatric vaccination"
-         ],
-         "clinicCount": 6,
-         "minPrice": "19000000",
-         "maxPrice": "24400000",
-         "medianPrice": "21300000",
-         "minPriceDisplay": "1.9000000",
-         "maxPriceDisplay": "2.4400000",
-         "medianPriceDisplay": "2.1300000"
-        },
-        {
-         "code": 505,
-         "labels": [
-          "Physiotherapy session"
-         ],
-         "clinicCount": 7,
-         "minPrice": "45000000",
-         "maxPrice": "52650000",
-         "medianPrice": "50850000",
-         "minPriceDisplay": "4.5000000",
-         "maxPriceDisplay": "5.2650000",
-         "medianPriceDisplay": "5.0850000"
-        }
-       ]
+        total: 7,
+        services: [
+          {
+            code: 101,
+            labels: ['Outpatient consult'],
+            clinicCount: 6,
+            minPrice: '30600000',
+            maxPrice: '36600000',
+            medianPrice: '33450000',
+            minPriceDisplay: '3.0600000',
+            maxPriceDisplay: '3.6600000',
+            medianPriceDisplay: '3.3450000',
+          },
+          {
+            code: 102,
+            labels: ['Follow-up consult'],
+            clinicCount: 7,
+            minPrice: '14100000',
+            maxPrice: '17550000',
+            medianPrice: '16950000',
+            minPriceDisplay: '1.4100000',
+            maxPriceDisplay: '1.7550000',
+            medianPriceDisplay: '1.6950000',
+          },
+          {
+            code: 201,
+            labels: ['Routine bloodwork'],
+            clinicCount: 7,
+            minPrice: '23250000',
+            maxPrice: '29750000',
+            medianPrice: '25250000',
+            minPriceDisplay: '2.3250000',
+            maxPriceDisplay: '2.9750000',
+            medianPriceDisplay: '2.5250000',
+          },
+          {
+            code: 202,
+            labels: ['Malaria rapid test'],
+            clinicCount: 4,
+            minPrice: '9200000',
+            maxPrice: '11700000',
+            medianPrice: '10400000',
+            minPriceDisplay: '0.9200000',
+            maxPriceDisplay: '1.1700000',
+            medianPriceDisplay: '1.0400000',
+          },
+          {
+            code: 303,
+            labels: ['Antenatal visit'],
+            clinicCount: 6,
+            minPrice: '48000000',
+            maxPrice: '57000000',
+            medianPrice: '55000000',
+            minPriceDisplay: '4.8000000',
+            maxPriceDisplay: '5.7000000',
+            medianPriceDisplay: '5.5000000',
+          },
+          {
+            code: 404,
+            labels: ['Paediatric vaccination'],
+            clinicCount: 6,
+            minPrice: '19000000',
+            maxPrice: '24400000',
+            medianPrice: '21300000',
+            minPriceDisplay: '1.9000000',
+            maxPriceDisplay: '2.4400000',
+            medianPriceDisplay: '2.1300000',
+          },
+          {
+            code: 505,
+            labels: ['Physiotherapy session'],
+            clinicCount: 7,
+            minPrice: '45000000',
+            maxPrice: '52650000',
+            medianPrice: '50850000',
+            minPriceDisplay: '4.5000000',
+            maxPriceDisplay: '5.2650000',
+            medianPriceDisplay: '5.0850000',
+          },
+        ],
       },
     },
     errors: limitedAndDown(),
@@ -957,67 +934,67 @@ export const API_DOCS: Record<string, OperationDoc> = {
     ok: {
       description: 'One service code, priced by clinic.',
       example: {
-       "code": 101,
-       "clinicCount": 6,
-       "clinics": [
-        {
-         "address": "GSEED3D6BKN4KDMSDXTYRSARP3LGRR3DPQL5NZSMUBKAFKTKCNWSUOIP",
-         "name": "Abuja Central Medical",
-         "country": "NG",
-         "price": "30600000",
-         "priceDisplay": "3.0600000"
-        },
-        {
-         "address": "GSEEDHZ5WGPTCONWXYS26U2EHQSR762TPBL6QKZAPRAAFV6CWA7G7VBT",
-         "name": "Port Harcourt Riverside Medical",
-         "country": "NG",
-         "price": "31800000",
-         "priceDisplay": "3.1800000"
-        },
-        {
-         "address": "GSEEDHLHDGP3X4PZVQJB7E6SFVLKPNAAL62FEBNBSSDHCXONSOMNMTTB",
-         "name": "Enugu Unity Clinic",
-         "country": "NG",
-         "price": "33300000",
-         "priceDisplay": "3.3300000"
-        },
-        {
-         "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-         "name": "Kumasi Community Clinic",
-         "country": "GH",
-         "price": "33600000",
-         "priceDisplay": "3.3600000"
-        },
-        {
-         "address": "GSEED3GCT4EID5I6AJESSWYEPWI7OYIQ7Y2X5DIGZYRGI5P6ANNAC2ZW",
-         "name": "Surulere Family Clinic",
-         "country": "NG",
-         "price": "35700000",
-         "priceDisplay": "3.5700000"
-        },
-        {
-         "address": "GSEEDLWSNGRO3NS7A7ON6MBUQBH2TUYZL5CF723PP7R2MZPKRERZGRMS",
-         "name": "Kano North Health Post",
-         "country": "NG",
-         "price": "36600000",
-         "priceDisplay": "3.6600000"
-        }
-       ]
+        code: 101,
+        clinicCount: 6,
+        clinics: [
+          {
+            address: 'GSEED3D6BKN4KDMSDXTYRSARP3LGRR3DPQL5NZSMUBKAFKTKCNWSUOIP',
+            name: 'Abuja Central Medical',
+            country: 'NG',
+            price: '30600000',
+            priceDisplay: '3.0600000',
+          },
+          {
+            address: 'GSEEDHZ5WGPTCONWXYS26U2EHQSR762TPBL6QKZAPRAAFV6CWA7G7VBT',
+            name: 'Port Harcourt Riverside Medical',
+            country: 'NG',
+            price: '31800000',
+            priceDisplay: '3.1800000',
+          },
+          {
+            address: 'GSEEDHLHDGP3X4PZVQJB7E6SFVLKPNAAL62FEBNBSSDHCXONSOMNMTTB',
+            name: 'Enugu Unity Clinic',
+            country: 'NG',
+            price: '33300000',
+            priceDisplay: '3.3300000',
+          },
+          {
+            address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+            name: 'Kumasi Community Clinic',
+            country: 'GH',
+            price: '33600000',
+            priceDisplay: '3.3600000',
+          },
+          {
+            address: 'GSEED3GCT4EID5I6AJESSWYEPWI7OYIQ7Y2X5DIGZYRGI5P6ANNAC2ZW',
+            name: 'Surulere Family Clinic',
+            country: 'NG',
+            price: '35700000',
+            priceDisplay: '3.5700000',
+          },
+          {
+            address: 'GSEEDLWSNGRO3NS7A7ON6MBUQBH2TUYZL5CF723PP7R2MZPKRERZGRMS',
+            name: 'Kano North Health Post',
+            country: 'NG',
+            price: '36600000',
+            priceDisplay: '3.6600000',
+          },
+        ],
       },
     },
     errors: {
       '400': {
         description: '`error: invalid_code` when `code` is not a non-negative integer.',
         example: {
-         "error": "invalid_code",
-         "message": "code must be a non-negative integer"
+          error: 'invalid_code',
+          message: 'code must be a non-negative integer',
         },
       },
       '404': {
         description: '`error: service_not_found` for a code no clinic has ever listed.',
         example: {
-         "error": "service_not_found",
-         "message": "Service not found"
+          error: 'service_not_found',
+          message: 'Service not found',
         },
       },
       ...limitedAndDown(),
@@ -1032,72 +1009,73 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'from the same contract timing rules the app uses to choose which ' +
         'buttons to show.',
       example: {
-       "total": 3,
-       "limit": 2,
-       "offset": 0,
-       "nextCursor": "eyJjcmVhdGVkQXQiOiIyMDI2LTA2LTAyVDA0OjAzOjU1LjgzN1oiLCJpZCI6IjkxMDAwMDAwMDAwMDIifQ",
-       "vouchers": [
-        {
-         "id": "9100000000003",
-         "funder": "GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP",
-         "beneficiaryRef": "7f3c1e5a9d2b4c6081a3f5e7d9c1b3a5f7e9d1c3b5a7f9e1d3c5b7a9f1e3d5c7",
-         "provider": {
-          "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-          "name": "Kumasi Community Clinic",
-          "country": "GH"
-         },
-         "serviceCode": 101,
-         "serviceLabel": "Outpatient consult",
-         "amount": "15000000",
-         "amountDisplay": "1.5000000",
-         "status": "Funded",
-         "createdAt": "2026-11-17T14:26:16.389Z",
-         "expiresAt": "2026-11-19T04:26:16.389Z",
-         "claimedAt": null,
-         "attestedAt": null,
-         "attestedBy": null,
-         "disputeDeadline": null,
-         "disputeReason": null,
-         "disputeResolvedAt": null,
-         "disputeResolvedBy": null,
-         "disputeOutcome": null,
-         "settledNet": null,
-         "settledFee": null,
-         "refundableAt": "2026-11-19T04:26:16.389Z",
-         "isSettleable": false,
-         "isRefundable": false
-        },
-        {
-         "id": "9100000000002",
-         "funder": "GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP",
-         "beneficiaryRef": "a1a361538f2d9be469716f54a1e0f3f5081470b0cddc184d08cd864053a78443",
-         "provider": {
-          "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-          "name": "Kumasi Community Clinic",
-          "country": "GH"
-         },
-         "serviceCode": 201,
-         "serviceLabel": "Routine bloodwork",
-         "amount": "25000000",
-         "amountDisplay": "2.5000000",
-         "status": "Settled",
-         "createdAt": "2026-06-02T04:03:55.837Z",
-         "expiresAt": "2026-07-06T04:03:55.837Z",
-         "claimedAt": "2026-06-05T04:03:55.837Z",
-         "attestedAt": "2026-06-06T04:03:55.837Z",
-         "attestedBy": null,
-         "disputeDeadline": "2026-06-09T04:03:55.837Z",
-         "disputeReason": null,
-         "disputeResolvedAt": null,
-         "disputeResolvedBy": null,
-         "disputeOutcome": null,
-         "settledNet": "24375000",
-         "settledFee": "625000",
-         "refundableAt": null,
-         "isSettleable": false,
-         "isRefundable": false
-        }
-       ]
+        total: 3,
+        limit: 2,
+        offset: 0,
+        nextCursor:
+          'eyJjcmVhdGVkQXQiOiIyMDI2LTA2LTAyVDA0OjAzOjU1LjgzN1oiLCJpZCI6IjkxMDAwMDAwMDAwMDIifQ',
+        vouchers: [
+          {
+            id: '9100000000003',
+            funder: 'GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP',
+            beneficiaryRef: '7f3c1e5a9d2b4c6081a3f5e7d9c1b3a5f7e9d1c3b5a7f9e1d3c5b7a9f1e3d5c7',
+            provider: {
+              address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+              name: 'Kumasi Community Clinic',
+              country: 'GH',
+            },
+            serviceCode: 101,
+            serviceLabel: 'Outpatient consult',
+            amount: '15000000',
+            amountDisplay: '1.5000000',
+            status: 'Funded',
+            createdAt: '2026-11-17T14:26:16.389Z',
+            expiresAt: '2026-11-19T04:26:16.389Z',
+            claimedAt: null,
+            attestedAt: null,
+            attestedBy: null,
+            disputeDeadline: null,
+            disputeReason: null,
+            disputeResolvedAt: null,
+            disputeResolvedBy: null,
+            disputeOutcome: null,
+            settledNet: null,
+            settledFee: null,
+            refundableAt: '2026-11-19T04:26:16.389Z',
+            isSettleable: false,
+            isRefundable: false,
+          },
+          {
+            id: '9100000000002',
+            funder: 'GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP',
+            beneficiaryRef: 'a1a361538f2d9be469716f54a1e0f3f5081470b0cddc184d08cd864053a78443',
+            provider: {
+              address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+              name: 'Kumasi Community Clinic',
+              country: 'GH',
+            },
+            serviceCode: 201,
+            serviceLabel: 'Routine bloodwork',
+            amount: '25000000',
+            amountDisplay: '2.5000000',
+            status: 'Settled',
+            createdAt: '2026-06-02T04:03:55.837Z',
+            expiresAt: '2026-07-06T04:03:55.837Z',
+            claimedAt: '2026-06-05T04:03:55.837Z',
+            attestedAt: '2026-06-06T04:03:55.837Z',
+            attestedBy: null,
+            disputeDeadline: '2026-06-09T04:03:55.837Z',
+            disputeReason: null,
+            disputeResolvedAt: null,
+            disputeResolvedBy: null,
+            disputeOutcome: null,
+            settledNet: '24375000',
+            settledFee: '625000',
+            refundableAt: null,
+            isSettleable: false,
+            isRefundable: false,
+          },
+        ],
       },
     },
     errors: {
@@ -1108,20 +1086,18 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'walk the whole read model, or `invalid_cursor` for a `cursor` this ' +
           'route did not issue.',
         example: {
-         "error": "invalid_query",
-         "message": "Invalid query parameters",
-         "details": [
-          {
-           "origin": "number",
-           "code": "too_small",
-           "minimum": 1,
-           "inclusive": true,
-           "path": [
-            "limit"
-           ],
-           "message": "Too small: expected number to be >=1"
-          }
-         ]
+          error: 'invalid_query',
+          message: 'Invalid query parameters',
+          details: [
+            {
+              origin: 'number',
+              code: 'too_small',
+              minimum: 1,
+              inclusive: true,
+              path: ['limit'],
+              message: 'Too small: expected number to be >=1',
+            },
+          ],
         },
       },
       ...limitedAndDown(),
@@ -1139,7 +1115,7 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'id,funder,providerAddress,providerName,providerCountry,serviceCode,serviceLabel,amount,amountDisplay,status,createdAt,expiresAt,claimedAt,attestedAt,disputeDeadline,disputeReason,settledNet,settledFee,refundableAt,isSettleable,isRefundable\n' +
         '9100000000001,GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP,GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU,Kumasi Community Clinic,GH,201,Routine bloodwork,25000000,2.5000000,Claimed,2026-06-02T04:03:55.837Z,2026-11-18T22:23:09.725Z,2026-06-05T04:03:55.837Z,2026-06-06T04:03:55.837Z,2026-06-09T04:03:55.837Z,,24375000,625000,2026-11-25T22:23:09.725Z,false,false\n' +
         '9100000000002,GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP,GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU,Kumasi Community Clinic,GH,201,Routine bloodwork,25000000,2.5000000,Settled,2026-06-02T04:03:55.837Z,2026-07-06T04:03:55.837Z,2026-06-05T04:03:55.837Z,2026-06-06T04:03:55.837Z,2026-06-09T04:03:55.837Z,,24375000,625000,,false,false\n' +
-        '9100000000003,GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP,GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU,Kumasi Community Clinic,GH,101,Outpatient consult,15000000,1.5000000,Funded,2026-11-17T14:26:16.389Z,2026-11-19T04:26:16.389Z,,,,,,,2026-11-19T04:26:16.389Z,false,false\n'
+        '9100000000003,GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP,GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU,Kumasi Community Clinic,GH,101,Outpatient consult,15000000,1.5000000,Funded,2026-11-17T14:26:16.389Z,2026-11-19T04:26:16.389Z,,,,,,,2026-11-19T04:26:16.389Z,false,false\n',
     },
     errors: {
       '400': {
@@ -1148,8 +1124,8 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'given — an unfiltered export of every care voucher is exactly the ' +
           'walk this route refuses.',
         example: {
-         "error": "filter_required",
-         "message": "Provide at least one of: funder, provider, beneficiaryRef, status"
+          error: 'filter_required',
+          message: 'Provide at least one of: funder, provider, beneficiaryRef, status',
         },
       },
       ...limitedAndDown(),
@@ -1165,39 +1141,39 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'the call, which is why these are not simply the rows closest to ' +
         'expiry.',
       example: {
-       "total": 1,
-       "vouchers": [
-        {
-         "id": "9100000000003",
-         "funder": "GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP",
-         "beneficiaryRef": "7f3c1e5a9d2b4c6081a3f5e7d9c1b3a5f7e9d1c3b5a7f9e1d3c5b7a9f1e3d5c7",
-         "provider": {
-          "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-          "name": "Kumasi Community Clinic",
-          "country": "GH"
-         },
-         "serviceCode": 101,
-         "serviceLabel": "Outpatient consult",
-         "amount": "15000000",
-         "amountDisplay": "1.5000000",
-         "status": "Funded",
-         "createdAt": "2026-11-17T14:26:16.389Z",
-         "expiresAt": "2026-11-19T04:26:16.389Z",
-         "claimedAt": null,
-         "attestedAt": null,
-         "attestedBy": null,
-         "disputeDeadline": null,
-         "disputeReason": null,
-         "disputeResolvedAt": null,
-         "disputeResolvedBy": null,
-         "disputeOutcome": null,
-         "settledNet": null,
-         "settledFee": null,
-         "refundableAt": "2026-11-19T04:26:16.389Z",
-         "isSettleable": false,
-         "isRefundable": false
-        }
-       ]
+        total: 1,
+        vouchers: [
+          {
+            id: '9100000000003',
+            funder: 'GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP',
+            beneficiaryRef: '7f3c1e5a9d2b4c6081a3f5e7d9c1b3a5f7e9d1c3b5a7f9e1d3c5b7a9f1e3d5c7',
+            provider: {
+              address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+              name: 'Kumasi Community Clinic',
+              country: 'GH',
+            },
+            serviceCode: 101,
+            serviceLabel: 'Outpatient consult',
+            amount: '15000000',
+            amountDisplay: '1.5000000',
+            status: 'Funded',
+            createdAt: '2026-11-17T14:26:16.389Z',
+            expiresAt: '2026-11-19T04:26:16.389Z',
+            claimedAt: null,
+            attestedAt: null,
+            attestedBy: null,
+            disputeDeadline: null,
+            disputeReason: null,
+            disputeResolvedAt: null,
+            disputeResolvedBy: null,
+            disputeOutcome: null,
+            settledNet: null,
+            settledFee: null,
+            refundableAt: '2026-11-19T04:26:16.389Z',
+            isSettleable: false,
+            isRefundable: false,
+          },
+        ],
       },
     },
     errors: {
@@ -1207,8 +1183,8 @@ export const API_DOCS: Record<string, OperationDoc> = {
           '`h`, `m` or `d`, or `filter_required` without `funder` or ' +
           '`provider`.',
         example: {
-         "error": "filter_required",
-         "message": "Provide at least one of: funder, provider"
+          error: 'filter_required',
+          message: 'Provide at least one of: funder, provider',
         },
       },
       ...limitedAndDown(),
@@ -1222,64 +1198,58 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'the canonical receipt and clinic objects with `?include=receipt,' +
         'provider`.',
       example: {
-       "id": "9100000000001",
-       "funder": "GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP",
-       "beneficiaryRef": "a1a361538f2d9be469716f54a1e0f3f5081470b0cddc184d08cd864053a78443",
-       "provider": {
-        "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-        "name": "Kumasi Community Clinic",
-        "country": "GH"
-       },
-       "serviceCode": 201,
-       "serviceLabel": "Routine bloodwork",
-       "amount": "25000000",
-       "amountDisplay": "2.5000000",
-       "status": "Claimed",
-       "createdAt": "2026-06-02T04:03:55.837Z",
-       "expiresAt": "2026-11-18T22:23:09.725Z",
-       "claimedAt": "2026-06-05T04:03:55.837Z",
-       "attestedAt": "2026-06-06T04:03:55.837Z",
-       "attestedBy": null,
-       "disputeDeadline": "2026-06-09T04:03:55.837Z",
-       "disputeReason": null,
-       "disputeResolvedAt": null,
-       "disputeResolvedBy": null,
-       "disputeOutcome": null,
-       "settledNet": "24375000",
-       "settledFee": "625000",
-       "refundableAt": "2026-11-25T22:23:09.725Z",
-       "isSettleable": false,
-       "isRefundable": false,
-       "receipt": null
+        id: '9100000000001',
+        funder: 'GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP',
+        beneficiaryRef: 'a1a361538f2d9be469716f54a1e0f3f5081470b0cddc184d08cd864053a78443',
+        provider: {
+          address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+          name: 'Kumasi Community Clinic',
+          country: 'GH',
+        },
+        serviceCode: 201,
+        serviceLabel: 'Routine bloodwork',
+        amount: '25000000',
+        amountDisplay: '2.5000000',
+        status: 'Claimed',
+        createdAt: '2026-06-02T04:03:55.837Z',
+        expiresAt: '2026-11-18T22:23:09.725Z',
+        claimedAt: '2026-06-05T04:03:55.837Z',
+        attestedAt: '2026-06-06T04:03:55.837Z',
+        attestedBy: null,
+        disputeDeadline: '2026-06-09T04:03:55.837Z',
+        disputeReason: null,
+        disputeResolvedAt: null,
+        disputeResolvedBy: null,
+        disputeOutcome: null,
+        settledNet: '24375000',
+        settledFee: '625000',
+        refundableAt: '2026-11-25T22:23:09.725Z',
+        isSettleable: false,
+        isRefundable: false,
+        receipt: null,
       },
     },
     errors: {
       '400': {
         description: '`error: invalid_query` for an unknown `include` value.',
         example: {
-         "error": "invalid_query",
-         "message": "Invalid query parameters",
-         "details": [
-          {
-           "code": "invalid_value",
-           "values": [
-            "receipt",
-            "provider"
-           ],
-           "path": [
-            "include",
-            0
-           ],
-           "message": "Invalid option: expected one of \"receipt\"|\"provider\""
-          }
-         ]
+          error: 'invalid_query',
+          message: 'Invalid query parameters',
+          details: [
+            {
+              code: 'invalid_value',
+              values: ['receipt', 'provider'],
+              path: ['include', 0],
+              message: 'Invalid option: expected one of "receipt"|"provider"',
+            },
+          ],
         },
       },
       '404': {
         description: '`error: voucher_not_found` for an id the chain never minted.',
         example: {
-         "error": "voucher_not_found",
-         "message": "Voucher not found"
+          error: 'voucher_not_found',
+          message: 'Voucher not found',
         },
       },
       ...limitedAndDown(),
@@ -1293,22 +1263,22 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'This is where a voucher’s state came from, and what a `proof` ' +
         'refers to.',
       example: {
-       "voucherId": "9100000000002",
-       "total": 1,
-       "events": [
-        {
-         "id": "demo-settled-9100000000002",
-         "contract": "receipt",
-         "name": "voucher_settled",
-         "ledger": 2140512,
-         "txHash": "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
-         "closedAt": "2026-11-18T16:23:09.725Z",
-         "data": {
-          "voucher_id": "9100000000002",
-          "amount": "25000000"
-         }
-        }
-       ]
+        voucherId: '9100000000002',
+        total: 1,
+        events: [
+          {
+            id: 'demo-settled-9100000000002',
+            contract: 'receipt',
+            name: 'voucher_settled',
+            ledger: 2140512,
+            txHash: '3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f',
+            closedAt: '2026-11-18T16:23:09.725Z',
+            data: {
+              voucher_id: '9100000000002',
+              amount: '25000000',
+            },
+          },
+        ],
       },
     },
     errors: {
@@ -1317,7 +1287,7 @@ export const API_DOCS: Record<string, OperationDoc> = {
           '`error: voucher_not_found` — with no `message`, because this ' +
           'route answers the miss directly rather than throwing `ApiError`.',
         example: {
-         "error": "voucher_not_found"
+          error: 'voucher_not_found',
         },
       },
       ...limitedAndDown(),
@@ -1331,27 +1301,27 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'or one clinic. `totalSpend` is the whole filtered set, not the ' +
         'page.',
       example: {
-       "total": 1,
-       "limit": 2,
-       "offset": 0,
-       "totalSpend": "24375000",
-       "totalSpendDisplay": "2.4375000",
-       "receipts": [
-        {
-         "voucherId": "9100000000002",
-         "providerAddress": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-         "provider": {
-          "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-          "name": "Kumasi Community Clinic",
-          "country": "GH"
-         },
-         "serviceCode": 201,
-         "serviceLabel": "Routine bloodwork",
-         "amount": "24375000",
-         "amountDisplay": "2.4375000",
-         "settledAt": "2026-06-07T04:03:55.837Z"
-        }
-       ]
+        total: 1,
+        limit: 2,
+        offset: 0,
+        totalSpend: '24375000',
+        totalSpendDisplay: '2.4375000',
+        receipts: [
+          {
+            voucherId: '9100000000002',
+            providerAddress: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+            provider: {
+              address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+              name: 'Kumasi Community Clinic',
+              country: 'GH',
+            },
+            serviceCode: 201,
+            serviceLabel: 'Routine bloodwork',
+            amount: '24375000',
+            amountDisplay: '2.4375000',
+            settledAt: '2026-06-07T04:03:55.837Z',
+          },
+        ],
       },
     },
     errors: {
@@ -1362,18 +1332,15 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'this route did not issue. A `beneficiaryRef` that is not 64 hex ' +
           'characters is also a 400.',
         example: {
-         "error": "invalid_query",
-         "message": "Invalid query parameters",
-         "details": [
-          {
-           "code": "custom",
-           "path": [
-            "beneficiaryRef",
-            "provider"
-           ],
-           "message": "Provide exactly one of: beneficiaryRef, provider"
-          }
-         ]
+          error: 'invalid_query',
+          message: 'Invalid query parameters',
+          details: [
+            {
+              code: 'custom',
+              path: ['beneficiaryRef', 'provider'],
+              message: 'Provide exactly one of: beneficiaryRef, provider',
+            },
+          ],
         },
       },
       ...limitedAndDown(),
@@ -1387,135 +1354,134 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'the clinics attended. The reference is an opaque HMAC, so this is ' +
         'only answerable by someone who already knows it.',
       example: {
-       "count": 22,
-       "total": "1189500000",
-       "totalDisplay": "118.9500000",
-       "firstVisit": "2026-06-07T04:03:55.837Z",
-       "lastVisit": "2026-09-22T06:47:51.060Z",
-       "clinics": [
-        {
-         "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-         "name": "Kumasi Community Clinic",
-         "country": "GH",
-         "visits": 1,
-         "spend": "24375000",
-         "spendDisplay": "2.4375000"
-        },
-        {
-         "address": "GSEED3D6BKN4KDMSDXTYRSARP3LGRR3DPQL5NZSMUBKAFKTKCNWSUOIP",
-         "name": "Abuja Central Medical",
-         "country": "NG",
-         "visits": 1,
-         "spend": "48750000",
-         "spendDisplay": "4.8750000"
-        },
-        {
-         "address": "GSEED3GCT4EID5I6AJESSWYEPWI7OYIQ7Y2X5DIGZYRGI5P6ANNAC2ZW",
-         "name": "Surulere Family Clinic",
-         "country": "NG",
-         "visits": 2,
-         "spend": "146250000",
-         "spendDisplay": "14.6250000"
-        },
-        {
-         "address": "GSEED4CNMTBFAPUOKK6SXQWXS6EIMJFO5II44E7JRA3SAIVXDWUEY4KI",
-         "name": "Ikeja General Clinic",
-         "country": "NG",
-         "visits": 2,
-         "spend": "43875000",
-         "spendDisplay": "4.3875000"
-        },
-        {
-         "address": "GSEED6FLTN7YK3HEFGCQU3BNM5J25SC32LYIP6AHTENPLYK5LQGNY47R",
-         "name": "Nairobi Westlands Clinic",
-         "country": "KE",
-         "visits": 1,
-         "spend": "87750000",
-         "spendDisplay": "8.7750000"
-        },
-        {
-         "address": "GSEEDCRNURSDBVNE3HWUEHAEWSORXYUBS5BUKQS4QMDCYRQODCF3MULN",
-         "name": "Lekki Primary Care",
-         "country": "NG",
-         "visits": 1,
-         "spend": "24375000",
-         "spendDisplay": "2.4375000"
-        },
-        {
-         "address": "GSEEDCWGZIBC4K4C42VS67FNRMTMBS6AJVVSIDAKMIBD66WWWGEUTPQG",
-         "name": "Yaba Community Health Centre",
-         "country": "NG",
-         "visits": 1,
-         "spend": "87750000",
-         "spendDisplay": "8.7750000"
-        },
-        {
-         "address": "GSEEDEDUNBJDIW5MUB7HHSF55VUY63NJUMDWKTNM7OOYMIA3F7FQNAY6",
-         "name": "Kumasi Adum Care Centre",
-         "country": "GH",
-         "visits": 3,
-         "spend": "321750000",
-         "spendDisplay": "32.1750000"
-        },
-        {
-         "address": "GSEEDHLHDGP3X4PZVQJB7E6SFVLKPNAAL62FEBNBSSDHCXONSOMNMTTB",
-         "name": "Enugu Unity Clinic",
-         "country": "NG",
-         "visits": 1,
-         "spend": "43875000",
-         "spendDisplay": "4.3875000"
-        },
-        {
-         "address": "GSEEDHZ5WGPTCONWXYS26U2EHQSR762TPBL6QKZAPRAAFV6CWA7G7VBT",
-         "name": "Port Harcourt Riverside Medical",
-         "country": "NG",
-         "visits": 2,
-         "spend": "68250000",
-         "spendDisplay": "6.8250000"
-        },
-        {
-         "address": "GSEEDLWSNGRO3NS7A7ON6MBUQBH2TUYZL5CF723PP7R2MZPKRERZGRMS",
-         "name": "Kano North Health Post",
-         "country": "NG",
-         "visits": 1,
-         "spend": "29250000",
-         "spendDisplay": "2.9250000"
-        },
-        {
-         "address": "GSEEDMTXO4RK26VKKTRJ23LTXRBQUWVQ6XZLR2G6HHCZE277QHEYRNVV",
-         "name": "Kigali Heights Polyclinic",
-         "country": "RW",
-         "visits": 3,
-         "spend": "121875000",
-         "spendDisplay": "12.1875000"
-        },
-        {
-         "address": "GSEEDTSKDU7WTFEDAQETELQXAKNULXO2O3E3QJBI2VBCQ7MUIUWQ3ZW5",
-         "name": "Accra East Legon Health",
-         "country": "GH",
-         "visits": 3,
-         "spend": "141375000",
-         "spendDisplay": "14.1375000"
-        }
-       ]
+        count: 22,
+        total: '1189500000',
+        totalDisplay: '118.9500000',
+        firstVisit: '2026-06-07T04:03:55.837Z',
+        lastVisit: '2026-09-22T06:47:51.060Z',
+        clinics: [
+          {
+            address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+            name: 'Kumasi Community Clinic',
+            country: 'GH',
+            visits: 1,
+            spend: '24375000',
+            spendDisplay: '2.4375000',
+          },
+          {
+            address: 'GSEED3D6BKN4KDMSDXTYRSARP3LGRR3DPQL5NZSMUBKAFKTKCNWSUOIP',
+            name: 'Abuja Central Medical',
+            country: 'NG',
+            visits: 1,
+            spend: '48750000',
+            spendDisplay: '4.8750000',
+          },
+          {
+            address: 'GSEED3GCT4EID5I6AJESSWYEPWI7OYIQ7Y2X5DIGZYRGI5P6ANNAC2ZW',
+            name: 'Surulere Family Clinic',
+            country: 'NG',
+            visits: 2,
+            spend: '146250000',
+            spendDisplay: '14.6250000',
+          },
+          {
+            address: 'GSEED4CNMTBFAPUOKK6SXQWXS6EIMJFO5II44E7JRA3SAIVXDWUEY4KI',
+            name: 'Ikeja General Clinic',
+            country: 'NG',
+            visits: 2,
+            spend: '43875000',
+            spendDisplay: '4.3875000',
+          },
+          {
+            address: 'GSEED6FLTN7YK3HEFGCQU3BNM5J25SC32LYIP6AHTENPLYK5LQGNY47R',
+            name: 'Nairobi Westlands Clinic',
+            country: 'KE',
+            visits: 1,
+            spend: '87750000',
+            spendDisplay: '8.7750000',
+          },
+          {
+            address: 'GSEEDCRNURSDBVNE3HWUEHAEWSORXYUBS5BUKQS4QMDCYRQODCF3MULN',
+            name: 'Lekki Primary Care',
+            country: 'NG',
+            visits: 1,
+            spend: '24375000',
+            spendDisplay: '2.4375000',
+          },
+          {
+            address: 'GSEEDCWGZIBC4K4C42VS67FNRMTMBS6AJVVSIDAKMIBD66WWWGEUTPQG',
+            name: 'Yaba Community Health Centre',
+            country: 'NG',
+            visits: 1,
+            spend: '87750000',
+            spendDisplay: '8.7750000',
+          },
+          {
+            address: 'GSEEDEDUNBJDIW5MUB7HHSF55VUY63NJUMDWKTNM7OOYMIA3F7FQNAY6',
+            name: 'Kumasi Adum Care Centre',
+            country: 'GH',
+            visits: 3,
+            spend: '321750000',
+            spendDisplay: '32.1750000',
+          },
+          {
+            address: 'GSEEDHLHDGP3X4PZVQJB7E6SFVLKPNAAL62FEBNBSSDHCXONSOMNMTTB',
+            name: 'Enugu Unity Clinic',
+            country: 'NG',
+            visits: 1,
+            spend: '43875000',
+            spendDisplay: '4.3875000',
+          },
+          {
+            address: 'GSEEDHZ5WGPTCONWXYS26U2EHQSR762TPBL6QKZAPRAAFV6CWA7G7VBT',
+            name: 'Port Harcourt Riverside Medical',
+            country: 'NG',
+            visits: 2,
+            spend: '68250000',
+            spendDisplay: '6.8250000',
+          },
+          {
+            address: 'GSEEDLWSNGRO3NS7A7ON6MBUQBH2TUYZL5CF723PP7R2MZPKRERZGRMS',
+            name: 'Kano North Health Post',
+            country: 'NG',
+            visits: 1,
+            spend: '29250000',
+            spendDisplay: '2.9250000',
+          },
+          {
+            address: 'GSEEDMTXO4RK26VKKTRJ23LTXRBQUWVQ6XZLR2G6HHCZE277QHEYRNVV',
+            name: 'Kigali Heights Polyclinic',
+            country: 'RW',
+            visits: 3,
+            spend: '121875000',
+            spendDisplay: '12.1875000',
+          },
+          {
+            address: 'GSEEDTSKDU7WTFEDAQETELQXAKNULXO2O3E3QJBI2VBCQ7MUIUWQ3ZW5',
+            name: 'Accra East Legon Health',
+            country: 'GH',
+            visits: 3,
+            spend: '141375000',
+            spendDisplay: '14.1375000',
+          },
+        ],
       },
     },
     errors: {
       '400': {
-        description: '`error: invalid_query` when `beneficiaryRef` is missing or not 64 hex characters.',
+        description:
+          '`error: invalid_query` when `beneficiaryRef` is missing or not 64 hex characters.',
         example: {
-         "error": "invalid_query",
-         "message": "Invalid query parameters",
-         "details": [
-          {
-           "expected": "string",
-           "code": "invalid_type",
-           "path": [
-            "beneficiaryRef"
-           ],
-           "message": "Invalid input: expected string, received undefined"
-          }
-         ]
+          error: 'invalid_query',
+          message: 'Invalid query parameters',
+          details: [
+            {
+              expected: 'string',
+              code: 'invalid_type',
+              path: ['beneficiaryRef'],
+              message: 'Invalid input: expected string, received undefined',
+            },
+          ],
         },
       },
       ...limitedAndDown(),
@@ -1528,18 +1494,18 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'The care receipt for one settled voucher. No beneficiary reference: ' +
         'a receipt is shareable, and the patient identifier is not.',
       example: {
-       "voucherId": "9100000000002",
-       "providerAddress": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-       "provider": {
-        "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
-        "name": "Kumasi Community Clinic",
-        "country": "GH"
-       },
-       "serviceCode": 201,
-       "serviceLabel": "Routine bloodwork",
-       "amount": "24375000",
-       "amountDisplay": "2.4375000",
-       "settledAt": "2026-06-07T04:03:55.837Z"
+        voucherId: '9100000000002',
+        providerAddress: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+        provider: {
+          address: 'GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU',
+          name: 'Kumasi Community Clinic',
+          country: 'GH',
+        },
+        serviceCode: 201,
+        serviceLabel: 'Routine bloodwork',
+        amount: '24375000',
+        amountDisplay: '2.4375000',
+        settledAt: '2026-06-07T04:03:55.837Z',
       },
     },
     errors: {
@@ -1549,8 +1515,8 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'voucher id that does not exist. This route does not distinguish ' +
           'the two, and a client should not learn which it was.',
         example: {
-         "error": "receipt_not_found",
-         "message": "Receipt not found"
+          error: 'receipt_not_found',
+          message: 'Receipt not found',
         },
       },
       ...limitedAndDown(),
@@ -1565,10 +1531,10 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'emitted it — enough to re-check the claim against a public ' +
         'explorer or an RPC.',
       example: {
-       "txHash": "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
-       "ledger": 2140512,
-       "eventId": "demo-settled-9100000000002",
-       "contractId": "CRECEIPTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        txHash: '3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f',
+        ledger: 2140512,
+        eventId: 'demo-settled-9100000000002',
+        contractId: 'CRECEIPTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       },
     },
     errors: {
@@ -1577,8 +1543,8 @@ export const API_DOCS: Record<string, OperationDoc> = {
           '`error: receipt_not_found`, either for a receipt that does not ' +
           'exist or for one whose settling event is not in the read model.',
         example: {
-         "error": "receipt_not_found",
-         "message": "Receipt not found"
+          error: 'receipt_not_found',
+          message: 'Receipt not found',
         },
       },
       ...limitedAndDown(),
@@ -1605,29 +1571,29 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'can have a sitting admin, a nominated successor, both or neither, ' +
         'so every field is nullable.',
       example: {
-       "contracts": [
-        {
-         "contract": "registry",
-         "contractId": null,
-         "currentAdmin": null,
-         "pendingAdmin": null,
-         "history": []
-        },
-        {
-         "contract": "voucher",
-         "contractId": null,
-         "currentAdmin": null,
-         "pendingAdmin": null,
-         "history": []
-        },
-        {
-         "contract": "receipt",
-         "contractId": null,
-         "currentAdmin": null,
-         "pendingAdmin": null,
-         "history": []
-        }
-       ]
+        contracts: [
+          {
+            contract: 'registry',
+            contractId: null,
+            currentAdmin: null,
+            pendingAdmin: null,
+            history: [],
+          },
+          {
+            contract: 'voucher',
+            contractId: null,
+            currentAdmin: null,
+            pendingAdmin: null,
+            history: [],
+          },
+          {
+            contract: 'receipt',
+            contractId: null,
+            currentAdmin: null,
+            pendingAdmin: null,
+            history: [],
+          },
+        ],
       },
     },
     errors: limitedAndDown(),
@@ -1640,18 +1606,18 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'attester is not registered by any clinic flow: it appears here ' +
         'because the chain observed it signing.',
       example: {
-       "total": 1,
-       "limit": 50,
-       "offset": 0,
-       "attesters": [
-        {
-         "address": "GCW3WSJQTT4CYF4VZ42IEVT6M4WYDFFMDYLRJVSALNPLVJOXVFU4GJCH",
-         "active": true,
-         "addedAt": "2026-01-12T09:00:00.000Z",
-         "removedAt": null,
-         "attestations": 40
-        }
-       ]
+        total: 1,
+        limit: 50,
+        offset: 0,
+        attesters: [
+          {
+            address: 'GCW3WSJQTT4CYF4VZ42IEVT6M4WYDFFMDYLRJVSALNPLVJOXVFU4GJCH',
+            active: true,
+            addedAt: '2026-01-12T09:00:00.000Z',
+            removedAt: null,
+            attestations: 40,
+          },
+        ],
       },
     },
     errors: {
@@ -1660,19 +1626,17 @@ export const API_DOCS: Record<string, OperationDoc> = {
           '`error: invalid_query` for a `limit` outside 1–100, reported ' +
           'under `issues` rather than `details` (as in `GET /stats/daily`).',
         example: {
-         "error": "invalid_query",
-         "issues": [
-          {
-           "origin": "number",
-           "code": "too_small",
-           "minimum": 1,
-           "inclusive": true,
-           "path": [
-            "limit"
-           ],
-           "message": "Too small: expected number to be >=1"
-          }
-         ]
+          error: 'invalid_query',
+          issues: [
+            {
+              origin: 'number',
+              code: 'too_small',
+              minimum: 1,
+              inclusive: true,
+              path: ['limit'],
+              message: 'Too small: expected number to be >=1',
+            },
+          ],
         },
       },
       ...limitedAndDown(),
@@ -1683,11 +1647,11 @@ export const API_DOCS: Record<string, OperationDoc> = {
     ok: {
       description: 'One attester, as `GET /attesters` lists it.',
       example: {
-       "address": "GCW3WSJQTT4CYF4VZ42IEVT6M4WYDFFMDYLRJVSALNPLVJOXVFU4GJCH",
-       "active": true,
-       "addedAt": "2026-01-12T09:00:00.000Z",
-       "removedAt": null,
-       "attestations": 40
+        address: 'GCW3WSJQTT4CYF4VZ42IEVT6M4WYDFFMDYLRJVSALNPLVJOXVFU4GJCH',
+        active: true,
+        addedAt: '2026-01-12T09:00:00.000Z',
+        removedAt: null,
+        attestations: 40,
       },
     },
     errors: {
@@ -1697,7 +1661,7 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'checked against the StrKey rules on this route, so any well-formed ' +
           'path segment is answered with a 404 rather than a 400.',
         example: {
-         "error": "attester_not_found"
+          error: 'attester_not_found',
         },
       },
       ...limitedAndDown(),
@@ -1711,18 +1675,18 @@ export const API_DOCS: Record<string, OperationDoc> = {
         'many of those vouchers were later disputed, and the median seconds ' +
         'from claim to attestation (`null` before any timed attestation).',
       example: {
-       "address": "GCW3WSJQTT4CYF4VZ42IEVT6M4WYDFFMDYLRJVSALNPLVJOXVFU4GJCH",
-       "active": true,
-       "attestations": 40,
-       "disputedAfterAttestation": 0,
-       "medianSecondsFromClaim": 259200
+        address: 'GCW3WSJQTT4CYF4VZ42IEVT6M4WYDFFMDYLRJVSALNPLVJOXVFU4GJCH',
+        active: true,
+        attestations: 40,
+        disputedAfterAttestation: 0,
+        medianSecondsFromClaim: 259200,
       },
     },
     errors: {
       '404': {
         description: '`error: attester_not_found`, with no `message`.',
         example: {
-         "error": "attester_not_found"
+          error: 'attester_not_found',
         },
       },
       ...limitedAndDown(),
@@ -1752,18 +1716,15 @@ export const API_DOCS: Record<string, OperationDoc> = {
           'clinic’s patient volume in real time, so there is no way to ask ' +
           'for one.',
         example: {
-         "error": "invalid_query",
-         "message": "Invalid query parameters",
-         "details": [
-          {
-           "code": "custom",
-           "path": [
-            "voucher",
-            "provider"
-           ],
-           "message": "Provide exactly one of: voucher, provider"
-          }
-         ]
+          error: 'invalid_query',
+          message: 'Invalid query parameters',
+          details: [
+            {
+              code: 'custom',
+              path: ['voucher', 'provider'],
+              message: 'Provide exactly one of: voucher, provider',
+            },
+          ],
         },
       },
       '503': {
@@ -1850,7 +1811,7 @@ function documentStatus(
 ): void {
   const mediaType = doc.mediaType ?? JSON_MEDIA;
   const response = (responses[status] ??= {});
-  const media = (response.content ??= {})[mediaType] ??= {};
+  const media = ((response.content ??= {})[mediaType] ??= {});
 
   response.description = doc.description;
   if (media.schema === undefined && isErrorEnvelope(doc.example)) {
@@ -1859,4 +1820,3 @@ function documentStatus(
   media.example = doc.example;
   if (doc.headers !== undefined) response.headers = doc.headers;
 }
-

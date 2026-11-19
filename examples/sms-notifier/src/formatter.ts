@@ -27,7 +27,7 @@ const SHIFTED_ASCII = ['^', '[', ']', '{', '}', '|', '\\', '~', '`', '€'];
 /** One septet each: the GSM-7 basic alphabet, ASCII plus its accented letters. */
 const GSM_7_BASIC = new Set<string>([
   ...'\n\r',
-  ..." !\"#$%&'()*+,-./0123456789:;<=>?@_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+  ...' !"#$%&\'()*+,-./0123456789:;<=>?@_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
   ...'£$¥¡¿ÇØøÅÆæßÉÍÑÖÜàäåçèéìñòöùúü',
 ]);
 

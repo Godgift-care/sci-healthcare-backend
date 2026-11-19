@@ -45,7 +45,13 @@ function smsStub(
       SMSMessageData: {
         Message: 'Sent',
         Recipients: [
-          { messageId: 'abc-123', number: RECIPIENT, status: 'Queued', statusCode: 100, cost: 'KES0.8000' },
+          {
+            messageId: 'abc-123',
+            number: RECIPIENT,
+            status: 'Queued',
+            statusCode: 100,
+            cost: 'KES0.8000',
+          },
         ],
       },
     },
@@ -166,7 +172,14 @@ describe('examples/sms-notifier', () => {
 
   describe('message formatting', () => {
     it('sends one short message per event, each inside one segment', () => {
-      expect(KNOWN_STATUSES).toEqual(['Funded', 'Claimed', 'Attested', 'Settled', 'Disputed', 'Refunded']);
+      expect(KNOWN_STATUSES).toEqual([
+        'Funded',
+        'Claimed',
+        'Attested',
+        'Settled',
+        'Disputed',
+        'Refunded',
+      ]);
       for (const status of KNOWN_STATUSES) {
         const message = formatSmsMessage({ ...settled, status });
         expect(message, status).toContain(settled.voucherId);
@@ -192,9 +205,10 @@ describe('examples/sms-notifier', () => {
 
     it('refuses a payload that carries a beneficiary reference', () => {
       expect(() =>
-        formatSmsMessage(
-          { ...settled, beneficiaryRef: 'a1b2c3' } as unknown as WebhookVoucherPayload,
-        ),
+        formatSmsMessage({
+          ...settled,
+          beneficiaryRef: 'a1b2c3',
+        } as unknown as WebhookVoucherPayload),
       ).toThrow(/beneficiary references/);
     });
 
@@ -278,12 +292,23 @@ describe('examples/sms-notifier', () => {
         body: {
           SMSMessageData: {
             Recipients: [
-              { number: '1515000000', status: 'InvalidMobileNumber', errorMessage: 'Invalid mobile number format' },
+              {
+                number: '1515000000',
+                status: 'InvalidMobileNumber',
+                errorMessage: 'Invalid mobile number format',
+              },
             ],
           },
         },
       }));
-      expect(await sendSms({ ...CREDENTIALS, to: '1515000000', message: 'x', fetchImpl: stub.fetchImpl })).toEqual({
+      expect(
+        await sendSms({
+          ...CREDENTIALS,
+          to: '1515000000',
+          message: 'x',
+          fetchImpl: stub.fetchImpl,
+        }),
+      ).toEqual({
         ok: false,
         error: 'Invalid mobile number format',
       });
@@ -294,14 +319,18 @@ describe('examples/sms-notifier', () => {
         status: 403,
         body: { SMSMessageData: { Message: 'Invalid username or password' } },
       }));
-      expect(await sendSms({ ...CREDENTIALS, to: RECIPIENT, message: 'x', fetchImpl: stub.fetchImpl })).toEqual({
+      expect(
+        await sendSms({ ...CREDENTIALS, to: RECIPIENT, message: 'x', fetchImpl: stub.fetchImpl }),
+      ).toEqual({
         ok: false,
         error: 'Invalid username or password',
       });
     });
 
     it('fails closed on an unparseable body or a response with no recipient', async () => {
-      const broken = vi.fn(async () => new Response('<html>502</html>', { status: 502 })) as unknown as typeof fetch;
+      const broken = vi.fn(
+        async () => new Response('<html>502</html>', { status: 502 }),
+      ) as unknown as typeof fetch;
       expect(
         await sendSms({ ...CREDENTIALS, to: RECIPIENT, message: 'x', fetchImpl: broken }),
       ).toEqual({ ok: false, error: "Unparseable Africa's Talking response (HTTP 502)" });
@@ -309,7 +338,10 @@ describe('examples/sms-notifier', () => {
       const empty = smsStub(() => ({ status: 200, body: { SMSMessageData: { Recipients: [] } } }));
       expect(
         await sendSms({ ...CREDENTIALS, to: RECIPIENT, message: 'x', fetchImpl: empty.fetchImpl }),
-      ).toEqual({ ok: false, error: "Africa's Talking accepted the request but named no recipient" });
+      ).toEqual({
+        ok: false,
+        error: "Africa's Talking accepted the request but named no recipient",
+      });
     });
   });
 

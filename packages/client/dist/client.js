@@ -20,8 +20,7 @@ export class ApiError extends Error {
         this.error = error;
         this.details = details;
         this.issues = details;
-        this.envelope =
-            envelope ?? { error, message, ...(details === undefined ? {} : { details }) };
+        this.envelope = envelope ?? { error, message, ...(details === undefined ? {} : { details }) };
     }
 }
 /**

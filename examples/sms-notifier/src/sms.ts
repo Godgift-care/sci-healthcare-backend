@@ -93,7 +93,8 @@ export async function sendSms(options: SendSmsOptions): Promise<SendResult> {
   if (!ACCEPTED.has(status)) {
     return {
       ok: false,
-      error: recipient.errorMessage ?? `Number ${recipient.number ?? to} was not accepted (${status})`,
+      error:
+        recipient.errorMessage ?? `Number ${recipient.number ?? to} was not accepted (${status})`,
     };
   }
 

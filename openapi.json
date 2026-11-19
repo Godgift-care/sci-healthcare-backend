@@ -807,7 +807,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count.",
+            "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
             "content": {
               "application/json": {
                 "example": {
@@ -823,6 +823,8 @@
                       "status": "Active",
                       "registeredAt": "2026-01-08T10:00:00.000Z",
                       "metadata": null,
+                      "capacity": null,
+                      "openVouchers": 2,
                       "services": [
                         {
                           "code": 101,
@@ -959,7 +961,7 @@
         ],
         "responses": {
           "200": {
-            "description": "One clinic, its registry state and its full service catalogue. This is the object `?include=provider` embeds on the voucher routes.",
+            "description": "One clinic, its registry state and its full service catalogue. This is the object `?include=provider` embeds on the voucher routes. `capacity` is the cap indexed from the registry (`null` before the clinic has set one, `0` for unlimited) and `openVouchers` its current `Funded` plus `Claimed` count, so a funder can see a clinic at capacity before sending a transaction that reverts.",
             "content": {
               "application/json": {
                 "example": {
@@ -969,6 +971,8 @@
                   "status": "Active",
                   "registeredAt": "2026-01-08T10:00:00.000Z",
                   "metadata": null,
+                  "capacity": null,
+                  "openVouchers": 2,
                   "services": [
                     {
                       "code": 101,
@@ -4822,7 +4826,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count.",
+            "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
             "content": {
               "application/json": {
                 "example": {
@@ -4838,6 +4842,8 @@
                       "status": "Active",
                       "registeredAt": "2026-01-08T10:00:00.000Z",
                       "metadata": null,
+                      "capacity": null,
+                      "openVouchers": 2,
                       "services": [
                         {
                           "code": 101,
@@ -4974,7 +4980,7 @@
         ],
         "responses": {
           "200": {
-            "description": "One clinic, its registry state and its full service catalogue. This is the object `?include=provider` embeds on the voucher routes.",
+            "description": "One clinic, its registry state and its full service catalogue. This is the object `?include=provider` embeds on the voucher routes. `capacity` is the cap indexed from the registry (`null` before the clinic has set one, `0` for unlimited) and `openVouchers` its current `Funded` plus `Claimed` count, so a funder can see a clinic at capacity before sending a transaction that reverts.",
             "content": {
               "application/json": {
                 "example": {
@@ -4984,6 +4990,8 @@
                   "status": "Active",
                   "registeredAt": "2026-01-08T10:00:00.000Z",
                   "metadata": null,
+                  "capacity": null,
+                  "openVouchers": 2,
                   "services": [
                     {
                       "code": 101,

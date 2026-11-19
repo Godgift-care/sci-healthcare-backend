@@ -15,9 +15,7 @@ export interface SendTemplateOptions {
   fetchImpl?: typeof fetch;
 }
 
-export type SendResult =
-  | { ok: true; messageId: string }
-  | { ok: false; error: string };
+export type SendResult = { ok: true; messageId: string } | { ok: false; error: string };
 
 /**
  * Posts one approved template message through the WhatsApp Business Cloud
@@ -27,9 +25,7 @@ export type SendResult =
  * approved, or whose variable count does not match the approved body, is
  * rejected by the API with a 4xx and surfaces here as `{ ok: false }`.
  */
-export async function sendWhatsAppTemplate(
-  options: SendTemplateOptions,
-): Promise<SendResult> {
+export async function sendWhatsAppTemplate(options: SendTemplateOptions): Promise<SendResult> {
   const {
     phoneNumberId,
     accessToken,
@@ -80,7 +76,8 @@ export async function sendWhatsAppTemplate(
     const code = body.error?.code === undefined ? '' : ` (code ${body.error.code})`;
     return {
       ok: false,
-      error: body.error?.message ?? `Graph API rejected the message (HTTP ${response.status})${code}`,
+      error:
+        body.error?.message ?? `Graph API rejected the message (HTTP ${response.status})${code}`,
     };
   }
 

@@ -1,3 +1,4 @@
+import { Keypair } from '@stellar/stellar-sdk';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -187,8 +188,7 @@ describe('error responses for every route (#296)', () => {
 
   it('publishes the shared error schema with only `error` required', () => {
     const envelope = document.components?.schemas?.ErrorEnvelope as
-      | { required?: unknown; properties?: Record<string, unknown> }
-      | undefined;
+      { required?: unknown; properties?: Record<string, unknown> } | undefined;
     expect(envelope).toBeDefined();
     expect(envelope?.required).toEqual(['error']);
     expect(Object.keys(envelope?.properties ?? {})).toEqual(['error', 'message', 'details']);
@@ -243,6 +243,65 @@ describe('the documented examples are the bodies the API sends', () => {
     expect(res.statusCode).toBe(404);
     expect(Object.keys(res.json())).toEqual(['error']);
     expect(Object.keys(documented?.example as object)).toEqual(['error']);
+  });
+
+  it('documents every field the provider routes send', async () => {
+    // #316 added `capacity` and `openVouchers` to these two responses. The
+    // examples are captures, so nothing noticed the new fields until they were
+    // compared against a live body: an undocumented serialiser field is what
+    // this assertion exists to catch. The clinic is created here rather than
+    // hoped for from another file, the same way the readiness test above sets
+    // its own rows, and removed again so the shared database is as found.
+    const address = Keypair.random().publicKey();
+    await prisma.provider.create({
+      data: {
+        address,
+        name: 'Documentation Fixture Clinic',
+        country: 'GH',
+        status: 'Active',
+        registeredAt: new Date('2026-01-08T10:00:00.000Z'),
+        services: {
+          create: [
+            {
+              id: `${address}:201`,
+              code: 201,
+              label: 'Routine bloodwork',
+              price: '27250000',
+              active: true,
+            },
+          ],
+        },
+      },
+    });
+
+    try {
+      const detail = await app.inject({ method: 'GET', url: `/v1/providers/${address}` });
+      expect(detail.statusCode).toBe(200);
+      const documentedDetail = API_DOCS['GET /providers/{address}']!.ok.example as Record<
+        string,
+        unknown
+      >;
+      expect(Object.keys(detail.json()).sort()).toEqual(Object.keys(documentedDetail).sort());
+      const documentedService = (
+        documentedDetail.services as Record<string, unknown>[]
+      )[0] as Record<string, unknown>;
+      for (const service of detail.json().services as Record<string, unknown>[]) {
+        expect(Object.keys(service).sort()).toEqual(Object.keys(documentedService).sort());
+      }
+
+      // The list route serialises the same clinic slightly differently, so its
+      // example is checked against its own response.
+      const page = await app.inject({ method: 'GET', url: `/v1/providers?limit=1` });
+      expect(page.statusCode).toBe(200);
+      const documentedPage = API_DOCS['GET /providers']!.ok.example as Record<string, unknown>;
+      const documentedItem = (documentedPage.providers as Record<string, unknown>[])[0]!;
+      const items = page.json().providers as Record<string, unknown>[];
+      expect(items.length).toBeGreaterThan(0);
+      expect(Object.keys(items[0]!).sort()).toEqual(Object.keys(documentedItem).sort());
+    } finally {
+      await prisma.service.deleteMany({ where: { providerAddress: address } });
+      await prisma.provider.delete({ where: { address } });
+    }
   });
 
   it('builds the readiness report it documents when every check passes', async () => {

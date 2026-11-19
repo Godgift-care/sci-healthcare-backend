@@ -270,7 +270,11 @@ describe('examples/whatsapp-notifier', () => {
 
     it('skips a status with no approved template instead of inventing a template name', async () => {
       const server = await startServer();
-      const { body, signature } = webhook({ ...settled, status: 'Funded', event: 'voucher_created' });
+      const { body, signature } = webhook({
+        ...settled,
+        status: 'Funded',
+        event: 'voucher_created',
+      });
       const res = await post(server.url, body, signature);
 
       expect(res.status).toBe(200);
@@ -333,7 +337,10 @@ describe('examples/whatsapp-notifier', () => {
     });
 
     it('treats an accepted request with no message id as a failure', async () => {
-      const server = await startServer({}, () => ({ status: 200, body: { messaging_product: 'whatsapp' } }));
+      const server = await startServer({}, () => ({
+        status: 200,
+        body: { messaging_product: 'whatsapp' },
+      }));
       const { body, signature } = webhook(settled);
       const res = await post(server.url, body, signature);
 
@@ -376,7 +383,9 @@ describe('examples/whatsapp-notifier', () => {
     });
 
     it('reports a non-JSON response instead of throwing', async () => {
-      const fetchImpl = vi.fn(async () => new Response('<html>502 Bad Gateway</html>', { status: 502 })) as unknown as typeof fetch;
+      const fetchImpl = vi.fn(
+        async () => new Response('<html>502 Bad Gateway</html>', { status: 502 }),
+      ) as unknown as typeof fetch;
       const result = await sendWhatsAppTemplate({
         ...CREDENTIALS,
         to: RECIPIENT,

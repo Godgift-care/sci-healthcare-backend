@@ -1,6 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
-import { templateForPayload, type WhatsAppTemplate, type WebhookVoucherPayload } from './formatter.js';
+import {
+  templateForPayload,
+  type WhatsAppTemplate,
+  type WebhookVoucherPayload,
+} from './formatter.js';
 import { sendWhatsAppTemplate } from './whatsapp.js';
 import { verifySignature } from './verify.js';
 
@@ -32,8 +36,7 @@ export interface WebhookServerOptions {
 export function createWebhookServer(options: WebhookServerOptions): Server {
   // Read once so a later change to the environment cannot silently redirect
   // messages mid-process.
-  const configuredClinicNumber =
-    (process.env.WHATSAPP_CLINIC_NUMBER ?? '').trim() || undefined;
+  const configuredClinicNumber = (process.env.WHATSAPP_CLINIC_NUMBER ?? '').trim() || undefined;
 
   const {
     webhookSecret,

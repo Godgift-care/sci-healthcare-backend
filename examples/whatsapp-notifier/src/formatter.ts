@@ -46,7 +46,9 @@ const FORBIDDEN_KEYS = ['beneficiaryRef', 'beneficiary_ref', 'beneficiary', 'pat
 export function assertNoPatientReference(payload: Record<string, unknown>): void {
   const found = FORBIDDEN_KEYS.filter((key) => key in payload);
   if (found.length > 0) {
-    throw new Error(`Privacy violation: payload contains beneficiary references (${found.join(', ')})`);
+    throw new Error(
+      `Privacy violation: payload contains beneficiary references (${found.join(', ')})`,
+    );
   }
 }
 
