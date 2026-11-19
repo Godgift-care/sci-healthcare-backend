@@ -16,9 +16,7 @@ import { describe, expect, it } from 'vitest';
  *   `npm run db:seed` — reads `DATABASE_URL` from that file.
  */
 
-const pkg = JSON.parse(
-  readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
-) as {
+const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
   engines?: { node?: string };
   devDependencies?: Record<string, string | undefined>;
   scripts?: Record<string, string | undefined>;

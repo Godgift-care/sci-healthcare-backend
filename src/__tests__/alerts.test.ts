@@ -68,7 +68,12 @@ describe('ops/alerts.yml', () => {
   it('has the alerts this issue asks for (#131)', () => {
     const names = alerts.map((a) => a.name);
     // Indexer lag, failed events, 5xx rate and the webhook backlog (#130).
-    for (const required of ['SciIndexerLagging', 'SciFailedEvents', 'SciHigh5xxRate', 'SciWebhookBacklog']) {
+    for (const required of [
+      'SciIndexerLagging',
+      'SciFailedEvents',
+      'SciHigh5xxRate',
+      'SciWebhookBacklog',
+    ]) {
       expect(names, `missing alert ${required}`).toContain(required);
     }
   });

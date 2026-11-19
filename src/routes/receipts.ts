@@ -14,11 +14,7 @@ import { accountAddress } from '../lib/stellar-address.js';
 
 const listQuery = z
   .object({
-    beneficiaryRef: z
-      .string()
-      .max(64)
-      .refine(isValidRef, 'must be 64 hex characters')
-      .optional(),
+    beneficiaryRef: z.string().max(64).refine(isValidRef, 'must be 64 hex characters').optional(),
     provider: accountAddress.optional(),
     cursor: cursorParam,
     limit: limitParam,
@@ -55,7 +51,7 @@ const RECEIPT_FIELDS = [
   'beneficiaryRef',
 ] as const;
 
-export async function receiptRoutes(app: FastifyInstance): Promise<void> {
+export function receiptRoutes(app: FastifyInstance): void {
   /**
    * A patient's care history.
    *
@@ -75,9 +71,7 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
     const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
       fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
 
-    const baseWhere = beneficiaryRef
-      ? { beneficiaryRef }
-      : { providerAddress: provider! };
+    const baseWhere = beneficiaryRef ? { beneficiaryRef } : { providerAddress: provider! };
 
     const isProviderView = Boolean(provider);
 
@@ -121,13 +115,14 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       });
       const hasNext = rows.length > limit;
       const page = hasNext ? rows.slice(0, limit) : rows;
-      const [labels, clinics] = await Promise.all([
-        serviceLabels(page),
-        providerSummaries(page),
-      ]);
+      const [labels, clinics] = await Promise.all([serviceLabels(page), providerSummaries(page)]);
       const last = page[page.length - 1];
       const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : null;
-      return { limit, nextCursor, receipts: project(page.map((r) => formatReceipt(r, labels, clinics))) };
+      return {
+        limit,
+        nextCursor,
+        receipts: project(page.map((r) => formatReceipt(r, labels, clinics))),
+      };
     }
 
     const [rows, total, spend] = await Promise.all([
@@ -146,15 +141,10 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
 
     const hasNext = rows.length > limit;
     const page = hasNext ? rows.slice(0, limit) : rows;
-    const [labels, clinics] = await Promise.all([
-      serviceLabels(page),
-      providerSummaries(page),
-    ]);
+    const [labels, clinics] = await Promise.all([serviceLabels(page), providerSummaries(page)]);
     const last = page[page.length - 1];
     const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : undefined;
-    const totalSpend = spend
-      .reduce((acc, r) => acc + BigInt(r.amount), 0n)
-      .toString();
+    const totalSpend = spend.reduce((acc, r) => acc + BigInt(r.amount), 0n).toString();
 
     return {
       total,

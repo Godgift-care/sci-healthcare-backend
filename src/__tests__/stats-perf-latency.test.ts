@@ -161,8 +161,7 @@ describe('Issue #135: Pre-aggregated daily stats table maintained by indexer', (
     // Run backfill a second time - verify idempotency
     await backfillDailyStats(prisma);
     const statsAfterReplay = await prisma.dailyStat.findMany({ orderBy: { date: 'asc' } });
-    const stripUpdatedAt = (items: typeof stats) =>
-      items.map(({ updatedAt: _, ...rest }) => rest);
+    const stripUpdatedAt = (items: typeof stats) => items.map(({ updatedAt: _, ...rest }) => rest);
     expect(stripUpdatedAt(statsAfterReplay)).toEqual(stripUpdatedAt(stats));
   }, 30_000);
 

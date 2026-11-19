@@ -142,14 +142,18 @@ describe('Operational data retention (#142)', () => {
     expect(result.deletedFailedEvents).toBe(1);
 
     // Verify remaining webhooks
-    const remainingWhIds = (await prisma.webhookDelivery.findMany({ select: { id: true } })).map((w) => w.id);
+    const remainingWhIds = (await prisma.webhookDelivery.findMany({ select: { id: true } })).map(
+      (w) => w.id,
+    );
     expect(remainingWhIds).not.toContain('wh-old-delivered');
     expect(remainingWhIds).toContain('wh-recent-delivered');
     expect(remainingWhIds).toContain('wh-old-pending');
     expect(remainingWhIds).toContain('wh-recent-pending');
 
     // Verify remaining failed events
-    const remainingFeIds = (await prisma.failedEvent.findMany({ select: { id: true } })).map((f) => f.id);
+    const remainingFeIds = (await prisma.failedEvent.findMany({ select: { id: true } })).map(
+      (f) => f.id,
+    );
     expect(remainingFeIds).not.toContain('fe-old-resolved');
     expect(remainingFeIds).toContain('fe-recent-resolved');
     expect(remainingFeIds).toContain('fe-old-unresolved');
@@ -163,13 +167,22 @@ describe('Operational data retention (#142)', () => {
       ledger: 50,
       ledgerClosedAt: '2026-10-01T00:00:00Z',
       topic: ['AAAADwAAAA92b3VjaGVyX2NyZWF0ZWQA'], // symbol voucher_created
-      value: 'AAAAEQAAAAEAAAAFAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAAAABycOAAAAADwAAAApjcmVhdGVkX2F0AAAAAAAFAAAAAGraLtQAAAAPAAAACmV4cGlyZXNfYXQAAAAAAAUAAAAAatovRwAAAA8AAAAMc2VydmljZV9jb2RlAAAAAwAAAGUAAAAPAAAACnZvdWNoZXJfaWQAAAAAAAUAAAAAAAAAAw==',
+      value:
+        'AAAAEQAAAAEAAAAFAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAAAABycOAAAAADwAAAApjcmVhdGVkX2F0AAAAAAAFAAAAAGraLtQAAAAPAAAACmV4cGlyZXNfYXQAAAAAAAUAAAAAatovRwAAAA8AAAAMc2VydmljZV9jb2RlAAAAAwAAAGUAAAAPAAAACnZvdWNoZXJfaWQAAAAAAAUAAAAAAAAAAw==',
     };
 
     await recordFailure(
       prisma,
       raw as never,
-      { id: 'test-event-1', name: 'voucher_created', ledger: 50, contractId: 'C'.repeat(56), txHash: 'a'.repeat(64), ledgerClosedAt: new Date(), fields: {} },
+      {
+        id: 'test-event-1',
+        name: 'voucher_created',
+        ledger: 50,
+        contractId: 'C'.repeat(56),
+        txHash: 'a'.repeat(64),
+        ledgerClosedAt: new Date(),
+        fields: {},
+      },
       new Error('boom'),
     );
 
@@ -186,7 +199,9 @@ describe('Operational data retention (#142)', () => {
     expect(res.recovered).toBe(1);
     expect(res.remaining).toBe(0);
 
-    const afterRetry = await prisma.failedEvent.findUniqueOrThrow({ where: { id: 'test-event-1' } });
+    const afterRetry = await prisma.failedEvent.findUniqueOrThrow({
+      where: { id: 'test-event-1' },
+    });
     expect(afterRetry.resolvedAt).toBeInstanceOf(Date);
 
     // Re-running retryFailed should not re-attempt already resolved events

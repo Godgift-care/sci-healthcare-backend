@@ -121,7 +121,7 @@ function entryXml(entry: FeedEntry): string {
   ].join('\n    ');
 }
 
-export async function feedRoutes(app: FastifyInstance): Promise<void> {
+export function feedRoutes(app: FastifyInstance): void {
   app.get(
     '/feed.xml',
     {

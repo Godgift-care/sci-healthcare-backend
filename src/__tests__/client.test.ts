@@ -4,7 +4,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { prisma } from '../db.js';
 import { seedLocalData } from '../scripts/seed.js';
-import { ApiError, createClient, providerLocation, type Provider } from '../../packages/client/dist/index.js';
+import {
+  ApiError,
+  createClient,
+  providerLocation,
+  type Provider,
+} from '../../packages/client/dist/index.js';
 
 describe('@sci-healthcare/client', () => {
   let app: FastifyInstance;
@@ -29,13 +34,7 @@ describe('@sci-healthcare/client', () => {
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url,
       );
       const method = (init?.method ?? 'GET') as
-        | 'GET'
-        | 'POST'
-        | 'PUT'
-        | 'DELETE'
-        | 'OPTIONS'
-        | 'HEAD'
-        | 'PATCH';
+        'GET' | 'POST' | 'PUT' | 'DELETE' | 'OPTIONS' | 'HEAD' | 'PATCH';
 
       const headers: Record<string, string> = {};
       if (init?.headers) {
@@ -141,9 +140,7 @@ describe('@sci-healthcare/client', () => {
   });
 
   it('throws typed ApiError on validation failures', async () => {
-    await expect(
-      client.vouchers({ minAmount: '100', maxAmount: '50' }),
-    ).rejects.toThrow(ApiError);
+    await expect(client.vouchers({ minAmount: '100', maxAmount: '50' })).rejects.toThrow(ApiError);
 
     try {
       await client.vouchers({ minAmount: '100', maxAmount: '50' });

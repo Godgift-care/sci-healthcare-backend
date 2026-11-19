@@ -65,7 +65,14 @@ beforeEach(async () => {
   await prisma.indexerState.upsert({
     where: { id: 1 },
     create: { id: 1, lastLedger: 100 },
-    update: { lastLedger: 100, leaseOwner: null, leaseExpiresAt: null, gap: false, gapOldestLedger: null, gapCursorLedger: null },
+    update: {
+      lastLedger: 100,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      gap: false,
+      gapOldestLedger: null,
+      gapCursorLedger: null,
+    },
   });
 });
 

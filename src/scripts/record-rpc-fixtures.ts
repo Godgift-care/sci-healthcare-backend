@@ -96,7 +96,9 @@ export async function recordRpcPages(
 
 async function main(): Promise<void> {
   const args = parseRecordArgs(process.argv.slice(2));
-  console.log(`Recording RPC getEvents pages starting from ledger ${args.startLedger} into ${args.outDir}...`);
+  console.log(
+    `Recording RPC getEvents pages starting from ledger ${args.startLedger} into ${args.outDir}...`,
+  );
   const pages = await recordRpcPages(server, args);
   console.log(`Successfully recorded ${pages} RPC page(s).`);
 }

@@ -117,10 +117,14 @@ describe('provider_registered projection', () => {
 
   it('re-registration refreshes the profile without duplicating the row', async () => {
     await apply(
-      rawEvent('provider_registered', 101, { name: 'Old Name', country: 'CF', registered_at: 1n }, [addr(CLINIC)]),
+      rawEvent('provider_registered', 101, { name: 'Old Name', country: 'CF', registered_at: 1n }, [
+        addr(CLINIC),
+      ]),
     );
     await apply(
-      rawEvent('provider_registered', 102, { name: 'New Name', country: 'NG', registered_at: 1n }, [addr(CLINIC)]),
+      rawEvent('provider_registered', 102, { name: 'New Name', country: 'NG', registered_at: 1n }, [
+        addr(CLINIC),
+      ]),
     );
 
     expect(await prisma.provider.count()).toBe(1);
@@ -132,7 +136,9 @@ describe('provider_registered projection', () => {
 describe('provider_status_changed projection', () => {
   it('updates the clinic status and appends the transition to history', async () => {
     await apply(
-      rawEvent('provider_registered', 101, { name: 'Clinic', country: 'CF', registered_at: 1n }, [addr(CLINIC)]),
+      rawEvent('provider_registered', 101, { name: 'Clinic', country: 'CF', registered_at: 1n }, [
+        addr(CLINIC),
+      ]),
     );
 
     await apply(rawEvent('provider_status_changed', 105, { status: u32(1) }, [addr(CLINIC)]));
@@ -148,6 +154,47 @@ describe('provider_status_changed projection', () => {
       ledger: 105,
     });
     expect(change.changedAt.toISOString()).toBe(LEDGER_CLOSED_AT);
+  });
+});
+
+describe('capacity_changed projection', () => {
+  // registry `set_capacity` requires the clinic to be registered first, so
+  // the fixtures mirror that order.
+  async function registerClinic(): Promise<void> {
+    await apply(
+      rawEvent('provider_registered', 101, { name: 'Clinic', country: 'CF', registered_at: 1n }, [
+        addr(CLINIC),
+      ]),
+    );
+  }
+
+  it('leaves capacity null for a clinic that never set one', async () => {
+    await registerClinic();
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
+    expect(provider.capacity).toBeNull();
+  });
+
+  it('stores the max_outstanding cap the registry emits', async () => {
+    await registerClinic();
+    await apply(rawEvent('capacity_changed', 102, { max_outstanding: u32(3) }, [addr(CLINIC)]));
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
+    expect(provider.capacity).toBe(3);
+  });
+
+  it('stores the contract\'s "0 means unlimited" literally', async () => {
+    await registerClinic();
+    await apply(rawEvent('capacity_changed', 102, { max_outstanding: u32(5) }, [addr(CLINIC)]));
+    await apply(rawEvent('capacity_changed', 103, { max_outstanding: u32(0) }, [addr(CLINIC)]));
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
+    expect(provider.capacity).toBe(0);
+  });
+
+  it('is replay-idempotent: re-applying the same cap is a no-op', async () => {
+    await registerClinic();
+    await apply(rawEvent('capacity_changed', 102, { max_outstanding: u32(4) }, [addr(CLINIC)]));
+    await apply(rawEvent('capacity_changed', 102, { max_outstanding: u32(4) }, [addr(CLINIC)]));
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
+    expect(provider.capacity).toBe(4);
   });
 });
 
@@ -168,12 +215,10 @@ describe('service_upserted projection', () => {
   it('writes the service and starts its price history', async () => {
     await registerClinic();
     await apply(
-      rawEvent(
-        'service_upserted',
-        102,
-        { label: 'Outpatient consult', price: 30_000_000n },
-        [addr(CLINIC), u32(101)],
-      ),
+      rawEvent('service_upserted', 102, { label: 'Outpatient consult', price: 30_000_000n }, [
+        addr(CLINIC),
+        u32(101),
+      ]),
     );
 
     const service = await prisma.service.findUniqueOrThrow({ where: { id: `${CLINIC}:101` } });
@@ -192,16 +237,25 @@ describe('service_upserted projection', () => {
   it('records a price change but not a relabel', async () => {
     await registerClinic();
     await apply(
-      rawEvent('service_upserted', 102, { label: 'Outpatient consult', price: 30_000_000n }, [addr(CLINIC), u32(101)]),
+      rawEvent('service_upserted', 102, { label: 'Outpatient consult', price: 30_000_000n }, [
+        addr(CLINIC),
+        u32(101),
+      ]),
     );
     // Same price, new label: history must not grow.
     await apply(
-      rawEvent('service_upserted', 103, { label: 'OPD consult', price: 30_000_000n }, [addr(CLINIC), u32(101)]),
+      rawEvent('service_upserted', 103, { label: 'OPD consult', price: 30_000_000n }, [
+        addr(CLINIC),
+        u32(101),
+      ]),
     );
     expect(await prisma.servicePriceChange.count()).toBe(1);
 
     await apply(
-      rawEvent('service_upserted', 104, { label: 'OPD consult', price: 25_000_000n }, [addr(CLINIC), u32(101)]),
+      rawEvent('service_upserted', 104, { label: 'OPD consult', price: 25_000_000n }, [
+        addr(CLINIC),
+        u32(101),
+      ]),
     );
     expect(await prisma.servicePriceChange.count()).toBe(2);
     const service = await prisma.service.findUniqueOrThrow({ where: { id: `${CLINIC}:101` } });
@@ -212,7 +266,9 @@ describe('service_upserted projection', () => {
 describe('service_removed projection', () => {
   it('deactivates the service row instead of deleting it', async () => {
     await apply(
-      rawEvent('provider_registered', 100, { name: 'Clinic', country: 'CF', registered_at: 1n }, [addr(CLINIC)]),
+      rawEvent('provider_registered', 100, { name: 'Clinic', country: 'CF', registered_at: 1n }, [
+        addr(CLINIC),
+      ]),
     );
     await apply(
       rawEvent('service_upserted', 102, { label: 'Consult', price: 1n }, [addr(CLINIC), u32(101)]),
@@ -228,7 +284,13 @@ describe('service_removed projection', () => {
 describe('admin_proposed projection', () => {
   it('keeps the nomination as a Proposed governance row with both admins', async () => {
     await apply(
-      rawEvent('admin_proposed', 107, { pending_admin: OTHER_CLINIC }, [addr(CLINIC)], env.VOUCHER_CONTRACT_ID),
+      rawEvent(
+        'admin_proposed',
+        107,
+        { pending_admin: OTHER_CLINIC },
+        [addr(CLINIC)],
+        env.VOUCHER_CONTRACT_ID,
+      ),
     );
 
     const row = await prisma.governanceEvent.findUniqueOrThrow({
@@ -317,7 +379,13 @@ describe('voucher lifecycle projections', () => {
     await createVoucher();
 
     await apply(
-      rawEvent('voucher_claimed', 111, { voucher_id: 1n, claimed_at: 1_759_363_200n }, [addr(CLINIC)], env.VOUCHER_CONTRACT_ID),
+      rawEvent(
+        'voucher_claimed',
+        111,
+        { voucher_id: 1n, claimed_at: 1_759_363_200n },
+        [addr(CLINIC)],
+        env.VOUCHER_CONTRACT_ID,
+      ),
     );
 
     const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id: '1' } });
@@ -328,7 +396,13 @@ describe('voucher lifecycle projections', () => {
   it('voucher_attested stamps the attestation and the dispute deadline', async () => {
     await createVoucher();
     await apply(
-      rawEvent('voucher_claimed', 111, { voucher_id: 1n, claimed_at: 1n }, [addr(CLINIC)], env.VOUCHER_CONTRACT_ID),
+      rawEvent(
+        'voucher_claimed',
+        111,
+        { voucher_id: 1n, claimed_at: 1n },
+        [addr(CLINIC)],
+        env.VOUCHER_CONTRACT_ID,
+      ),
     );
 
     await apply(
@@ -351,7 +425,13 @@ describe('voucher lifecycle projections', () => {
     await createVoucher();
 
     await apply(
-      rawEvent('voucher_disputed', 113, { voucher_id: 1n, reason_code: u32(2) }, [addr(FUNDER)], env.VOUCHER_CONTRACT_ID),
+      rawEvent(
+        'voucher_disputed',
+        113,
+        { voucher_id: 1n, reason_code: u32(2) },
+        [addr(FUNDER)],
+        env.VOUCHER_CONTRACT_ID,
+      ),
     );
 
     const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id: '1' } });
@@ -382,10 +462,24 @@ describe('voucher lifecycle projections', () => {
   it('voucher_refunded flips the status and keeps the settled columns untouched', async () => {
     await createVoucher();
     await apply(
-      rawEvent('voucher_settled', 114, { voucher_id: 1n, net: 28_500_000n, fee: 1_500_000n }, [addr(CLINIC)], env.VOUCHER_CONTRACT_ID),
+      rawEvent(
+        'voucher_settled',
+        114,
+        { voucher_id: 1n, net: 28_500_000n, fee: 1_500_000n },
+        [addr(CLINIC)],
+        env.VOUCHER_CONTRACT_ID,
+      ),
     );
 
-    await apply(rawEvent('voucher_refunded', 115, { voucher_id: 1n }, [addr(FUNDER)], env.VOUCHER_CONTRACT_ID));
+    await apply(
+      rawEvent(
+        'voucher_refunded',
+        115,
+        { voucher_id: 1n },
+        [addr(FUNDER)],
+        env.VOUCHER_CONTRACT_ID,
+      ),
+    );
 
     const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id: '1' } });
     expect(voucher.status).toBe('Refunded');

@@ -18,6 +18,8 @@ export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   provider_status_changed: ['provider'],
   // The clinic repointed its off-chain metadata URI (contracts #10).
   provider_metadata_changed: ['provider'],
+  // The clinic set its outstanding-voucher cap (registry `set_capacity`).
+  capacity_changed: ['provider'],
   service_upserted: ['provider', 'code'],
   service_removed: ['provider'],
   attester_added: ['attester'],
@@ -93,7 +95,7 @@ export function decodeEvent(raw: {
     name,
     fields,
     contractId: String(raw.contractId),
-    txHash: raw.txHash ? String(raw.txHash) : '',
+    txHash: typeof raw.txHash === 'string' ? raw.txHash : '',
     ledger: raw.ledger,
     ledgerClosedAt: new Date(raw.ledgerClosedAt),
     id: raw.id,

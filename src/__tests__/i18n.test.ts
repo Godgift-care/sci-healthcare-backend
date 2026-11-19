@@ -64,9 +64,7 @@ describe('errorMessage', () => {
     expect(errorMessage('voucher_not_found', 'fr', 'Voucher not found')).toBe(
       'Bon de soins introuvable',
     );
-    expect(errorMessage('voucher_not_found', 'sw', 'Voucher not found')).toBe(
-      'Cheti haipatikani',
-    );
+    expect(errorMessage('voucher_not_found', 'sw', 'Voucher not found')).toBe('Cheti haipatikani');
   });
 
   it('falls back to the thrown message for a code with no entry', () => {
@@ -142,9 +140,9 @@ describe('errorEnvelope localisation', () => {
   });
 
   it('keeps Fastify’s own 4xx message and falls back to the localised one', () => {
-    expect(errorEnvelope({ statusCode: 400, message: 'body must match schema' }, 'fr').body).toEqual(
-      { error: 'bad_request', message: 'body must match schema' },
-    );
+    expect(
+      errorEnvelope({ statusCode: 400, message: 'body must match schema' }, 'fr').body,
+    ).toEqual({ error: 'bad_request', message: 'body must match schema' });
     expect(errorEnvelope({ statusCode: 400, message: '' }, 'fr').body.message).toBe(
       'Requête invalide',
     );

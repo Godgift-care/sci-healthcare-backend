@@ -9,7 +9,7 @@ import { ApiError } from '../lib/errors.js';
 import { applyFields, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { providerMetadataOf } from '../lib/provider-metadata.js';
-import { serialiseProviderDetail } from '../lib/providers.js';
+import { serialiseProviderDetail, openVoucherCounts } from '../lib/providers.js';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
@@ -32,6 +32,11 @@ const PROVIDER_FIELDS = [
   // field, so a clinic card asking only for hours and a phone number
   // does not also download every service price.
   'metadata',
+  // Clinic capacity read model (#316): the cap indexed from the registry and
+  // the live count of open (Funded + Claimed) vouchers, so a funder can see
+  // a clinic is full before funding it.
+  'capacity',
+  'openVouchers',
   'services',
 ] as const;
 
@@ -54,16 +59,24 @@ const providerStatsResponse = z.object({
   settledVouchers: z.number().int().nonnegative(),
   settledValue: z.string().describe('Total settled amount as a base-unit decimal string.'),
   settledValueDisplay: z.string(),
-  medianClaimSeconds: z.number().nonnegative().nullable().describe(
-    'Median seconds from voucher creation to claim (claimedAt - createdAt). ' +
-    'Only complete, non-negative intervals for this provider are included, regardless of current status. ' +
-    'Null when none exist; even sample counts average the middle two without rounding.',
-  ),
-  medianAttestationSeconds: z.number().nonnegative().nullable().describe(
-    'Median seconds from claim to attestation (attestedAt - claimedAt). ' +
-    'Only complete, non-negative intervals for this provider are included, regardless of current status. ' +
-    'Null when none exist; even sample counts average the middle two without rounding.',
-  ),
+  medianClaimSeconds: z
+    .number()
+    .nonnegative()
+    .nullable()
+    .describe(
+      'Median seconds from voucher creation to claim (claimedAt - createdAt). ' +
+        'Only complete, non-negative intervals for this provider are included, regardless of current status. ' +
+        'Null when none exist; even sample counts average the middle two without rounding.',
+    ),
+  medianAttestationSeconds: z
+    .number()
+    .nonnegative()
+    .nullable()
+    .describe(
+      'Median seconds from claim to attestation (attestedAt - claimedAt). ' +
+        'Only complete, non-negative intervals for this provider are included, regardless of current status. ' +
+        'Null when none exist; even sample counts average the middle two without rounding.',
+    ),
 });
 
 const providerStatsResponses = {
@@ -76,9 +89,7 @@ function median(values: number[]): number | null {
   if (values.length === 0) return null;
   values.sort((a, b) => a - b);
   const middle = Math.floor(values.length / 2);
-  return values.length % 2 === 1
-    ? values[middle]!
-    : (values[middle - 1]! + values[middle]!) / 2;
+  return values.length % 2 === 1 ? values[middle]! : (values[middle - 1]! + values[middle]!) / 2;
 }
 
 /** Case-insensitive on Postgres; SQLite's LIKE is already case-insensitive for ASCII. */
@@ -88,7 +99,7 @@ function nameContains(q: string): { contains: string; mode?: string } {
   return filter;
 }
 
-export async function providerRoutes(app: FastifyInstance): Promise<void> {
+export function providerRoutes(app: FastifyInstance): void {
   app.get('/providers', { config: { rateLimit: LIST_ROUTE_RATE_LIMIT } }, async (req) => {
     const parsed = listQuery.safeParse(req.query);
     if (!parsed.success) {
@@ -100,15 +111,19 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
       fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
 
-    const formatProvider = (p: {
-      address: string;
-      name: string;
-      country: string;
-      status: string;
-      registeredAt: Date;
-      metadata: string | null;
-      services: { code: number; label: string; price: string }[];
-    }) => ({
+    const formatProvider = (
+      p: {
+        address: string;
+        name: string;
+        country: string;
+        status: string;
+        registeredAt: Date;
+        metadata: string | null;
+        capacity: number | null;
+        services: { code: number; label: string; price: string }[];
+      },
+      openVouchers: number,
+    ) => ({
       address: p.address,
       name: p.name,
       country: p.country,
@@ -118,6 +133,10 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       // (#159); null until one was fetched, so clients treat it as
       // optional rather than a second request they must make.
       metadata: providerMetadataOf(p),
+      // #316: the cap indexed from the registry (`0` means unlimited, null
+      // when the clinic has never set one) and the vouchers open against it.
+      capacity: p.capacity,
+      openVouchers,
       services: p.services.map((s) => ({
         code: s.code,
         label: s.label,
@@ -125,6 +144,14 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
         priceDisplay: fromBaseUnits(s.price),
       })),
     });
+
+    // One grouped count for the whole page, never one per clinic (#316).
+    const formatPage = async (
+      page: Parameters<typeof formatProvider>[0][],
+    ): Promise<ReturnType<typeof formatProvider>[]> => {
+      const openBy = await openVoucherCounts(page.map((p) => p.address));
+      return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0));
+    };
 
     if (cursor) {
       const decoded = decodeCursor(cursor);
@@ -151,7 +178,7 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
       const page = hasNext ? rows.slice(0, limit) : rows;
       const last = page[page.length - 1];
       const nextCursor = hasNext && last ? encodeCursor(last.registeredAt, last.address) : null;
-      return { limit, nextCursor, providers: project(page.map(formatProvider)) };
+      return { limit, nextCursor, providers: project(await formatPage(page)) };
     }
 
     const where = {
@@ -176,7 +203,7 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     const last = page[page.length - 1];
     const nextCursor = hasNext && last ? encodeCursor(last.registeredAt, last.address) : undefined;
 
-    return { total, limit, offset, nextCursor, providers: project(page.map(formatProvider)) };
+    return { total, limit, offset, nextCursor, providers: project(await formatPage(page)) };
   });
 
   app.get('/providers/:address', async (req) => {
@@ -190,7 +217,8 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     // The same record `?include=provider` embeds on the voucher routes
     // (#167), so a clinic fetched on its own and one embedded in a voucher
     // page are identical.
-    return serialiseProviderDetail(p);
+    const openBy = await openVoucherCounts([address]);
+    return serialiseProviderDetail(p, openBy.get(address) ?? 0);
   });
 
   /**
@@ -201,92 +229,97 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
    * care, and a clinic desk wants its own numbers. Amounts are summed with
    * BigInt and returned as base-unit decimal strings, like everywhere else.
    */
-  app.get('/providers/:address/stats', {
-    schema: {
-      tags: ['providers'],
-      summary: 'Clinic throughput and response times',
-      response: providerStatsResponses,
+  app.get(
+    '/providers/:address/stats',
+    {
+      schema: {
+        tags: ['providers'],
+        summary: 'Clinic throughput and response times',
+        response: providerStatsResponses,
+      },
+      config: {
+        // The global Zod transform targets OpenAPI 3.0, where nullable is a
+        // keyword. This API advertises 3.1, so describe null as a schema type.
+        swaggerTransform: ({ schema, url }) => ({
+          schema: {
+            ...schema,
+            response: Object.fromEntries(
+              Object.entries(providerStatsResponses).map(([status, response]) => [
+                status,
+                z.toJSONSchema(response, { target: 'draft-7' }),
+              ]),
+            ),
+          },
+          url,
+        }),
+      },
     },
-    config: {
-      // The global Zod transform targets OpenAPI 3.0, where nullable is a
-      // keyword. This API advertises 3.1, so describe null as a schema type.
-      swaggerTransform: ({ schema, url }) => ({
-        schema: {
-          ...schema,
-          response: Object.fromEntries(Object.entries(providerStatsResponses).map(
-            ([status, response]) => [status, z.toJSONSchema(response, { target: 'draft-7' })],
-          )),
-        },
-        url,
-      }),
-    },
-  }, async (req, reply) => {
-    const { address } = req.params as { address: string };
-    const provider = await prisma.provider.findUnique({
-      where: { address },
-      select: { address: true, name: true, status: true },
-    });
-    if (!provider) return reply.code(404).send({ error: 'provider_not_found' });
+    async (req, reply) => {
+      const { address } = req.params as { address: string };
+      const provider = await prisma.provider.findUnique({
+        where: { address },
+        select: { address: true, name: true, status: true },
+      });
+      if (!provider) return reply.code(404).send({ error: 'provider_not_found' });
 
-    const [grouped, settled, timings] = await Promise.all([
-      prisma.voucher.groupBy({
-        by: ['status'],
-        where: { providerAddress: address },
-        _count: { _all: true },
-      }),
-      prisma.voucher.findMany({
-        where: { providerAddress: address, status: 'Settled' },
-        select: { amount: true },
-      }),
-      prisma.voucher.findMany({
-        where: { providerAddress: address, claimedAt: { not: null } },
-        select: { createdAt: true, claimedAt: true, attestedAt: true },
-      }),
-    ]);
+      const [grouped, settled, timings] = await Promise.all([
+        prisma.voucher.groupBy({
+          by: ['status'],
+          where: { providerAddress: address },
+          _count: { _all: true },
+        }),
+        prisma.voucher.findMany({
+          where: { providerAddress: address, status: 'Settled' },
+          select: { amount: true },
+        }),
+        prisma.voucher.findMany({
+          where: { providerAddress: address, claimedAt: { not: null } },
+          select: { createdAt: true, claimedAt: true, attestedAt: true },
+        }),
+      ]);
 
-    // Every status is present, zero included, so a client can render the
-    // full breakdown without filling gaps itself.
-    const byStatus: Record<string, number> = Object.fromEntries(
-      VOUCHER_STATUSES.map((status) => [status, 0]),
-    );
-    let vouchers = 0;
-    for (const row of grouped) {
-      byStatus[row.status] = (byStatus[row.status] ?? 0) + row._count._all;
-      vouchers += row._count._all;
-    }
-
-    const settledValue = settled
-      .reduce((acc, v) => acc + BigInt(v.amount), 0n)
-      .toString();
-
-    // Measure each completed stage independently, including vouchers that
-    // have since settled, been disputed or refunded. A missing timestamp
-    // is not zero; reversed timestamps are not valid response times.
-    const claimSeconds: number[] = [];
-    const attestationSeconds: number[] = [];
-    for (const v of timings) {
-      const claimedAt = v.claimedAt!.getTime(); // guaranteed by the query
-      const claim = (claimedAt - v.createdAt.getTime()) / 1000;
-      if (claim >= 0) claimSeconds.push(claim);
-      if (v.attestedAt !== null) {
-        const attestation = (v.attestedAt.getTime() - claimedAt) / 1000;
-        if (attestation >= 0) attestationSeconds.push(attestation);
+      // Every status is present, zero included, so a client can render the
+      // full breakdown without filling gaps itself.
+      const byStatus: Record<string, number> = Object.fromEntries(
+        VOUCHER_STATUSES.map((status) => [status, 0]),
+      );
+      let vouchers = 0;
+      for (const row of grouped) {
+        byStatus[row.status] = (byStatus[row.status] ?? 0) + row._count._all;
+        vouchers += row._count._all;
       }
-    }
 
-    return {
-      address: provider.address,
-      name: provider.name,
-      status: provider.status,
-      vouchers,
-      byStatus,
-      settledVouchers: settled.length,
-      settledValue,
-      settledValueDisplay: fromBaseUnits(settledValue),
-      medianClaimSeconds: median(claimSeconds),
-      medianAttestationSeconds: median(attestationSeconds),
-    };
-  });
+      const settledValue = settled.reduce((acc, v) => acc + BigInt(v.amount), 0n).toString();
+
+      // Measure each completed stage independently, including vouchers that
+      // have since settled, been disputed or refunded. A missing timestamp
+      // is not zero; reversed timestamps are not valid response times.
+      const claimSeconds: number[] = [];
+      const attestationSeconds: number[] = [];
+      for (const v of timings) {
+        const claimedAt = v.claimedAt!.getTime(); // guaranteed by the query
+        const claim = (claimedAt - v.createdAt.getTime()) / 1000;
+        if (claim >= 0) claimSeconds.push(claim);
+        if (v.attestedAt !== null) {
+          const attestation = (v.attestedAt.getTime() - claimedAt) / 1000;
+          if (attestation >= 0) attestationSeconds.push(attestation);
+        }
+      }
+
+      return {
+        address: provider.address,
+        name: provider.name,
+        status: provider.status,
+        vouchers,
+        byStatus,
+        settledVouchers: settled.length,
+        settledValue,
+        settledValueDisplay: fromBaseUnits(settledValue),
+        medianClaimSeconds: median(claimSeconds),
+        medianAttestationSeconds: median(attestationSeconds),
+      };
+    },
+  );
 
   /**
    * Every status transition observed for a clinic, oldest first.

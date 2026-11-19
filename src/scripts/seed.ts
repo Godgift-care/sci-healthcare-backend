@@ -62,7 +62,9 @@ export type SeedSummary = {
 export function assertLocalDatabase(url: string): void {
   if (/^(file|sqlite):/i.test(url)) return;
 
-  const match = /^postgres(?:ql)?:\/\/(?:[^@/?]*@)?(\[[^\]]+\]|[^:/?@]+)(?::\d+)?(?:[/?].*)?$/.exec(url);
+  const match = /^postgres(?:ql)?:\/\/(?:[^@/?]*@)?(\[[^\]]+\]|[^:/?@]+)(?::\d+)?(?:[/?].*)?$/.exec(
+    url,
+  );
   if (!match) {
     throw new Error(
       `Unrecognised DATABASE_URL; refusing to seed. It must be a SQLite file URL or a Postgres URL.\n  ${redact(url)}`,
@@ -114,9 +116,7 @@ function seedAddress(kind: string, index: number): string {
 
 /** The same HMAC shape the browser produces for a real beneficiary. */
 function seedBeneficiaryRef(index: number): string {
-  return createHmac('sha256', SEED_BENEFICIARY_KEY)
-    .update(`seed-patient-${index}`)
-    .digest('hex');
+  return createHmac('sha256', SEED_BENEFICIARY_KEY).update(`seed-patient-${index}`).digest('hex');
 }
 
 const CLINIC_NAMES = [
@@ -136,7 +136,22 @@ const CLINIC_NAMES = [
   'Freetown Hill Care Centre',
 ];
 
-const COUNTRIES = ['NG', 'NG', 'NG', 'NG', 'NG', 'NG', 'NG', 'NG', 'GH', 'KE', 'RW', 'GH', 'NG', 'SL'];
+const COUNTRIES = [
+  'NG',
+  'NG',
+  'NG',
+  'NG',
+  'NG',
+  'NG',
+  'NG',
+  'NG',
+  'GH',
+  'KE',
+  'RW',
+  'GH',
+  'NG',
+  'SL',
+];
 
 /** Service catalogue mirrored from the testnet deployment's codes. */
 const SERVICE_CATALOGUE = [
@@ -184,12 +199,11 @@ function buildVoucher(index: number, providerAddress: string, funder: string): S
 
   // Force the first six vouchers to cover every status, then draw the rest
   // from a lifecycle-realistic mix: most vouchers reach Settled.
-  const status =
-    index < STATUSES.length
-      ? STATUSES[index]!
-      : pickStatus(r());
+  const status = index < STATUSES.length ? STATUSES[index]! : pickStatus(r());
 
-  const createdAt = new Date(BASE_DATE_MS + Math.floor(r() * 120) * DAY_MS + Math.floor(r() * DAY_MS));
+  const createdAt = new Date(
+    BASE_DATE_MS + Math.floor(r() * 120) * DAY_MS + Math.floor(r() * DAY_MS),
+  );
   const expiresAt = new Date(createdAt.getTime() + (30 + Math.floor(r() * 60)) * DAY_MS);
 
   let claimedAt: Date | null = null;

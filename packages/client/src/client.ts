@@ -130,7 +130,12 @@ export class Client {
         headers,
       });
     } catch (cause) {
-      throw new ApiError(0, 'network_error', `Cannot reach the API at ${this.baseUrl}: ${cause}`, cause);
+      throw new ApiError(
+        0,
+        'network_error',
+        `Cannot reach the API at ${this.baseUrl}: ${cause}`,
+        cause,
+      );
     }
 
     if (!res.ok) {
@@ -185,10 +190,7 @@ export class Client {
     return this.request<ProviderHistory>(`/providers/${encodeURIComponent(address)}/history`);
   }
 
-  async providerServiceHistory(
-    address: string,
-    code: number,
-  ): Promise<ServicePriceChangeHistory> {
+  async providerServiceHistory(address: string, code: number): Promise<ServicePriceChangeHistory> {
     return this.request<ServicePriceChangeHistory>(
       `/providers/${encodeURIComponent(address)}/services/${code}/history`,
     );
@@ -215,7 +217,10 @@ export class Client {
   }
 
   async vouchersDue(params: DueVouchersParams): Promise<{ vouchers: Voucher[] }> {
-    return this.request<{ vouchers: Voucher[] }>('/vouchers/due', params as Record<string, unknown>);
+    return this.request<{ vouchers: Voucher[] }>(
+      '/vouchers/due',
+      params as Record<string, unknown>,
+    );
   }
 
   async vouchersCsv(params?: CsvVouchersParams): Promise<string> {
@@ -234,7 +239,11 @@ export class Client {
       headers: { ...this.defaultHeaders },
     });
     if (!res.ok) {
-      throw new ApiError(res.status, `http_${res.status}`, `Failed to export CSV: ${res.statusText}`);
+      throw new ApiError(
+        res.status,
+        `http_${res.status}`,
+        `Failed to export CSV: ${res.statusText}`,
+      );
     }
     return res.text();
   }

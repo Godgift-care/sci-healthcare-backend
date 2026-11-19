@@ -95,7 +95,11 @@ export async function enqueueWebhook(
 }
 
 /** Exponential backoff in milliseconds for the given attempt count. */
-export function backoffMs(attempt: number, base = WEBHOOK_BASE_BACKOFF_MS, max = WEBHOOK_MAX_BACKOFF_MS): number {
+export function backoffMs(
+  attempt: number,
+  base = WEBHOOK_BASE_BACKOFF_MS,
+  max = WEBHOOK_MAX_BACKOFF_MS,
+): number {
   const exponent = Math.max(0, attempt - 1);
   return Math.min(base * 2 ** exponent, max);
 }
@@ -230,10 +234,11 @@ export class WebhookDispatcher {
     this.schedule();
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    return Promise.resolve();
   }
 
   private schedule(): void {

@@ -38,11 +38,10 @@ async function main() {
   console.log('Wrote openapi.json to root and packages/client/');
 
   console.log('Compiling @sci-healthcare/client TypeScript...');
-  execFileSync(
-    'npx',
-    ['tsc', '-p', resolve(clientDir, 'tsconfig.json')],
-    { cwd: rootDir, stdio: 'inherit' },
-  );
+  execFileSync('npx', ['tsc', '-p', resolve(clientDir, 'tsconfig.json')], {
+    cwd: rootDir,
+    stdio: 'inherit',
+  });
 
   console.log('Client build completed successfully.');
 }
