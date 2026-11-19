@@ -222,7 +222,11 @@ describe('reading the voucher options from the chain (#319)', () => {
 
   it('reads a voucher the contract never heard of as nothing, not a failure', async () => {
     vi.mocked(readContract).mockRejectedValue(
-      new ContractReadError('C'.repeat(56), 'get_voucher_options', 'HostError: Error(Contract, #4)'),
+      new ContractReadError(
+        'C'.repeat(56),
+        'get_voucher_options',
+        'HostError: Error(Contract, #4)',
+      ),
     );
     await expect(readVoucherOptionsFromChain('1')).resolves.toBeNull();
   });
@@ -231,7 +235,11 @@ describe('reading the voucher options from the chain (#319)', () => {
     // A deployment old enough to have no such view lands here too, which is
     // why reconcile treats it as "do not compare" rather than as drift.
     vi.mocked(readContract).mockRejectedValue(
-      new ContractReadError('C'.repeat(56), 'get_voucher_options', 'Error(WasmRuntime, NotPresent)'),
+      new ContractReadError(
+        'C'.repeat(56),
+        'get_voucher_options',
+        'Error(WasmRuntime, NotPresent)',
+      ),
     );
     await expect(readVoucherOptionsFromChain('1')).rejects.toThrow('NotPresent');
   });
@@ -247,7 +255,10 @@ describe('normaliseChainVoucherOptions', () => {
 
   it('keeps the window and the presence proof a funder chose', () => {
     const chain = normaliseChainVoucherOptions(
-      chainOptions({ dispute_window: 86_400n, presence_commitment: Buffer.from(COMMITMENT, 'hex') }),
+      chainOptions({
+        dispute_window: 86_400n,
+        presence_commitment: Buffer.from(COMMITMENT, 'hex'),
+      }),
     );
     expect(chain).toEqual({ disputeWindowSecs: 86_400, presenceCommitment: COMMITMENT });
   });
@@ -267,9 +278,9 @@ describe('normaliseChainVoucherOptions', () => {
   });
 
   it('reads a commitment that is not bytes as a failure', () => {
-    expect(() =>
-      normaliseChainVoucherOptions(chainOptions({ presence_commitment: 7n })),
-    ).toThrow(TypeError);
+    expect(() => normaliseChainVoucherOptions(chainOptions({ presence_commitment: 7n }))).toThrow(
+      TypeError,
+    );
   });
 });
 
@@ -282,7 +293,10 @@ describe('diffVoucherOptions', () => {
   it('names each option the row is missing', async () => {
     const row = await seedVoucher('1');
     const chain = normaliseChainVoucherOptions(
-      chainOptions({ dispute_window: 86_400n, presence_commitment: Buffer.from(COMMITMENT, 'hex') }),
+      chainOptions({
+        dispute_window: 86_400n,
+        presence_commitment: Buffer.from(COMMITMENT, 'hex'),
+      }),
     );
     expect(diffVoucherOptions(row, chain)).toEqual([
       { field: 'disputeWindowSecs', db: null, chain: '86400' },
@@ -326,7 +340,10 @@ describe('reconciling the options no event announced (#319)', () => {
     await seedVoucher('1');
     const read = vi.fn(async () => chainVoucher());
     const readOptions = vi.fn(async () =>
-      chainOptions({ dispute_window: 259_200n, presence_commitment: Buffer.from(COMMITMENT, 'hex') }),
+      chainOptions({
+        dispute_window: 259_200n,
+        presence_commitment: Buffer.from(COMMITMENT, 'hex'),
+      }),
     );
 
     const result = await reconcile({ read, readOptions, fix: true, log: fakeLog() });
@@ -341,9 +358,7 @@ describe('reconciling the options no event announced (#319)', () => {
     await seedVoucher('1');
     await seedVoucher('2', { status: 'Claimed', claimedAt: new Date(1_765_000_000 * 1000) });
     const read = vi.fn(async (id: string) =>
-      id === '2'
-        ? chainVoucher({ id: 2n, status: 1, claimed_at: 1_765_000_000n })
-        : chainVoucher(),
+      id === '2' ? chainVoucher({ id: 2n, status: 1, claimed_at: 1_765_000_000n }) : chainVoucher(),
     );
     const readOptions = vi.fn(async () => chainOptions());
 
@@ -400,7 +415,10 @@ describe('reconciling the options no event announced (#319)', () => {
     await seedVoucher('1');
     const read = vi.fn(async () => chainVoucher());
     const readOptions = vi.fn(async () =>
-      chainOptions({ dispute_window: 86_400n, presence_commitment: Buffer.from(COMMITMENT, 'hex') }),
+      chainOptions({
+        dispute_window: 86_400n,
+        presence_commitment: Buffer.from(COMMITMENT, 'hex'),
+      }),
     );
 
     const result = await reconcile({ read, log: fakeLog() });
@@ -415,9 +433,7 @@ describe('reconcile', () => {
     await seedVoucher('1');
     await seedVoucher('2', { status: 'Claimed', claimedAt: new Date(1_765_000_000 * 1000) });
     const read = vi.fn(async (id: string) =>
-      id === '2'
-        ? chainVoucher({ id: 2n, status: 1, claimed_at: 1_765_000_000n })
-        : chainVoucher(),
+      id === '2' ? chainVoucher({ id: 2n, status: 1, claimed_at: 1_765_000_000n }) : chainVoucher(),
     );
 
     const result = await reconcile({ read, log: fakeLog() });

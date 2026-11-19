@@ -36,7 +36,9 @@ async function seed() {
       status: 'Active',
       registeredAt: new Date('2026-09-01T00:00:00Z'),
       services: {
-        create: [{ id: `${CLINIC}:101`, code: 101, label: 'Outpatient consult', price: '30000000' }],
+        create: [
+          { id: `${CLINIC}:101`, code: 101, label: 'Outpatient consult', price: '30000000' },
+        ],
       },
     },
   });
@@ -492,7 +494,11 @@ describe('every fieldable field is identical under ?fields= (#321)', () => {
       url: `/receipts?beneficiaryRef=${REF}`,
       list: 'receipts',
     },
-    { name: 'GET /receipts (provider view)', url: `/receipts?provider=${CLINIC}`, list: 'receipts' },
+    {
+      name: 'GET /receipts (provider view)',
+      url: `/receipts?provider=${CLINIC}`,
+      list: 'receipts',
+    },
   ] as const;
 
   for (const testCase of cases) {

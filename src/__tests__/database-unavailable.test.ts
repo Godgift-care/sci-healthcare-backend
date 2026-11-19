@@ -55,9 +55,9 @@ describe('isDatabaseUnavailable', () => {
     expect(isDatabaseUnavailable(null)).toBe(false);
     expect(isDatabaseUnavailable('P1001')).toBe(false);
     // Fastify's own errors carry string codes that are not Prisma's.
-    expect(isDatabaseUnavailable(Object.assign(new Error('x'), { code: 'FST_ERR_CTP_BODY_TOO_LARGE' }))).toBe(
-      false,
-    );
+    expect(
+      isDatabaseUnavailable(Object.assign(new Error('x'), { code: 'FST_ERR_CTP_BODY_TOO_LARGE' })),
+    ).toBe(false);
   });
 });
 

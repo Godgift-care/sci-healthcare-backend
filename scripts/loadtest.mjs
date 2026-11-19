@@ -56,11 +56,13 @@ const funderAt = (i) => accountAddress('funder', i);
 const providerAt = (i) => accountAddress('provider', i);
 
 function beneficiaryRefAt(i) {
-  return createHash('sha256').update(`loadtest-beneficiary:${i % 800}`).digest('hex');
+  return createHash('sha256')
+    .update(`loadtest-beneficiary:${i % 800}`)
+    .digest('hex');
 }
 
 function amountAt(i) {
-  return ((BigInt(1_000_000) + (BigInt(i) * 7_919n) % BigInt(9_000_000_000)) * 10n).toString();
+  return ((BigInt(1_000_000) + ((BigInt(i) * 7_919n) % BigInt(9_000_000_000))) * 10n).toString();
 }
 
 // 100-slot status cycle: Funded 30, Claimed 20, Attested 15, Settled 20,
@@ -239,9 +241,18 @@ async function startServer(port) {
       STELLAR_NETWORK: 'testnet',
       SOROBAN_RPC_URL: 'https://soroban-testnet.stellar.org',
       NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
-      REGISTRY_CONTRACT_ID: 'CDUMMY00000000000000000000000000000000000000000000LOADTEST'.slice(0, 56),
-      VOUCHER_CONTRACT_ID: 'CDUMMY00000000000000000000000000000000000000000001LOADTEST'.slice(0, 56),
-      RECEIPT_CONTRACT_ID: 'CDUMMY00000000000000000000000000000000000000000002LOADTEST'.slice(0, 56),
+      REGISTRY_CONTRACT_ID: 'CDUMMY00000000000000000000000000000000000000000000LOADTEST'.slice(
+        0,
+        56,
+      ),
+      VOUCHER_CONTRACT_ID: 'CDUMMY00000000000000000000000000000000000000000001LOADTEST'.slice(
+        0,
+        56,
+      ),
+      RECEIPT_CONTRACT_ID: 'CDUMMY00000000000000000000000000000000000000000002LOADTEST'.slice(
+        0,
+        56,
+      ),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -355,8 +366,10 @@ async function main() {
     }
   }
 
-  console.log(`\nhost: ${os.cpus()[0]?.model ?? 'unknown cpu'} x${os.cpus().length}, ` +
-    `${(os.totalmem() / 1024 ** 3).toFixed(0)} GiB RAM, ${os.platform()} ${os.release()}, node ${process.version}`);
+  console.log(
+    `\nhost: ${os.cpus()[0]?.model ?? 'unknown cpu'} x${os.cpus().length}, ` +
+      `${(os.totalmem() / 1024 ** 3).toFixed(0)} GiB RAM, ${os.platform()} ${os.release()}, node ${process.version}`,
+  );
   if (opts.out) {
     writeFileSync(opts.out, JSON.stringify({ opts, host: os.hostname(), results }, null, 2));
     console.log(`raw autocannon results written to ${opts.out}`);

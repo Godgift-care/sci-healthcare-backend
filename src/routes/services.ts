@@ -47,7 +47,9 @@ async function computeServiceStats() {
   return {
     total: byCode.size,
     ranked: [...byCode.values()]
-      .sort((a, b) => (a.value < b.value ? 1 : a.value > b.value ? -1 : a.serviceCode - b.serviceCode))
+      .sort((a, b) =>
+        a.value < b.value ? 1 : a.value > b.value ? -1 : a.serviceCode - b.serviceCode,
+      )
       .map((agg) => ({
         serviceCode: agg.serviceCode,
         // Clinics may name the same code differently: the first name
@@ -61,7 +63,7 @@ async function computeServiceStats() {
   };
 }
 
-export async function serviceRoutes(app: FastifyInstance): Promise<void> {
+export function serviceRoutes(app: FastifyInstance): void {
   app.get('/services', async () => {
     const rows = await prisma.service.findMany({
       where: { active: true, provider: { status: 'Active' } },
@@ -152,7 +154,5 @@ export async function serviceRoutes(app: FastifyInstance): Promise<void> {
 function median(prices: bigint[]): bigint {
   const sorted = [...prices].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1
-    ? sorted[mid]!
-    : (sorted[mid - 1]! + sorted[mid]!) / 2n;
+  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2n;
 }

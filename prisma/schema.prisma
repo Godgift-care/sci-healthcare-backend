@@ -56,6 +56,13 @@ model Provider {
   /// is retried once a day rather than on every cycle.
   metadataFetchedAt DateTime?
 
+  /// The clinic's `max_outstanding` voucher cap, indexed from the registry's
+  /// `capacity_changed` event. `0` means unlimited (the contract's own
+  /// convention); null until the registry is first observed setting it.
+  /// Paired with the live `openVouchers` count on the provider routes so a
+  /// funder can see a clinic is at capacity before the transaction fails.
+  capacity Int?
+
   /// Which deployment this provider was registered under.
   deployment Deployment? @relation(fields: [deploymentId], references: [id])
   deploymentId Int?

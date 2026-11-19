@@ -52,10 +52,7 @@ const geoSchema = z.object({
   lng: z.number().finite().min(-180).max(180),
 });
 
-const hoursSchema = z.union([
-  z.string().max(200),
-  z.record(z.string(), z.string().max(200)),
-]);
+const hoursSchema = z.union([z.string().max(200), z.record(z.string(), z.string().max(200))]);
 
 /**
  * The document a clinic may publish, keyed by the schema contracts #10
@@ -115,7 +112,7 @@ export function parseProviderMetadata(document: unknown): ProviderMetadata {
   const { geo, location, ...rest } = parsed;
   return {
     ...rest,
-    ...(location ?? geo ? { location: (location ?? geo)! } : {}),
+    ...((location ?? geo) ? { location: (location ?? geo)! } : {}),
   };
 }
 
@@ -236,7 +233,10 @@ async function readCappedBody(res: Response, maxBytes: number): Promise<string> 
   let size = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = (await reader.read()) as {
+        done: boolean;
+        value: Uint8Array;
+      };
       if (done) break;
       size += value.byteLength;
       if (size > maxBytes) {
@@ -282,9 +282,7 @@ export type RefreshResult = {
  * means a clinic whose host is down for an afternoon does not vanish from
  * the directory.
  */
-export async function refreshDueProviderMetadata(
-  opts: RefreshOptions,
-): Promise<RefreshResult> {
+export async function refreshDueProviderMetadata(opts: RefreshOptions): Promise<RefreshResult> {
   const { log } = opts;
   const fetchImpl = opts.fetchImpl ?? fetch;
   const now = opts.now?.() ?? new Date();

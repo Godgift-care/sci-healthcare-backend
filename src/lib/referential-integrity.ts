@@ -120,8 +120,7 @@ export async function verifyReferentialIntegrity(
     }
   }
 
-  const totalOrphans =
-    orphanedReceipts.length + orphanedServices.length + orphanedEvents.length;
+  const totalOrphans = orphanedReceipts.length + orphanedServices.length + orphanedEvents.length;
 
   return {
     orphanedReceipts,

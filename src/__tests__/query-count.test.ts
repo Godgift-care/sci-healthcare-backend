@@ -225,7 +225,7 @@ describe('aggregate routes compute once per ledger (#320)', () => {
     });
   });
 
-  it('does not answer one funnel filter from another filter\'s cached scope', async () => {
+  it("does not answer one funnel filter from another filter's cached scope", async () => {
     // A memo keyed on the ledger alone would serve whichever question was
     // asked first, and both answers are plausible numbers.
     expect((await get<FunnelBody>('/stats/funnel')).counts.funded).toBe(2);

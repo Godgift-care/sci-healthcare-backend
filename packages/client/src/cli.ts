@@ -199,7 +199,9 @@ const COMMANDS: Command[] = [
     examples: ['sci stats-daily --days 7'],
     run: async ({ client, flags }) => {
       const days = intFlag(flags, 'days');
-      return { data: days === undefined ? await client.dailyStats() : await client.dailyStats(days) };
+      return {
+        data: days === undefined ? await client.dailyStats() : await client.dailyStats(days),
+      };
     },
   },
   {
@@ -223,7 +225,8 @@ const COMMANDS: Command[] = [
   },
   {
     name: 'provider-stats',
-    summary: "A clinic's vouchers by status and total settled value (GET /providers/:address/stats)",
+    summary:
+      "A clinic's vouchers by status and total settled value (GET /providers/:address/stats)",
     usage: 'sci provider-stats <address>',
     run: async ({ client, positionals }) => ({
       data: await client.rawGet<unknown>(
@@ -241,7 +244,8 @@ const COMMANDS: Command[] = [
   },
   {
     name: 'provider-service-history',
-    summary: 'Every observed price for one service (GET /providers/:address/services/:code/history)',
+    summary:
+      'Every observed price for one service (GET /providers/:address/services/:code/history)',
     usage: 'sci provider-service-history <address> <code>',
     run: async ({ client, positionals }) => {
       const address = positional(positionals, 0, 'provider-service-history <address> <code>');
@@ -304,7 +308,7 @@ const COMMANDS: Command[] = [
       'sci vouchers [--funder G...] [--provider G...] [--beneficiary-ref <ref>] [--status Funded,Claimed] [--sort createdAt|expiresAt|amount] [--order asc|desc] [--limit <n>]',
     examples: [
       'sci vouchers --provider GDOO... --status Funded --limit 10',
-      'sci vouchers --funder GDUP... --sort expiresAt --order asc --json | jq -r \'.vouchers[].id\'',
+      "sci vouchers --funder GDUP... --sort expiresAt --order asc --json | jq -r '.vouchers[].id'",
     ],
     run: async ({ client, flags }) => ({
       data: await client.vouchers(
@@ -350,7 +354,8 @@ const COMMANDS: Command[] = [
   {
     name: 'vouchers-csv',
     summary: 'CSV export with the voucher filters (GET /vouchers.csv)',
-    usage: 'sci vouchers-csv (--funder G... | --provider G... | --beneficiary-ref <ref> | --status ...)',
+    usage:
+      'sci vouchers-csv (--funder G... | --provider G... | --beneficiary-ref <ref> | --status ...)',
     examples: ['sci vouchers-csv --funder GDUP... > vouchers.csv'],
     run: async ({ client, flags }) => ({
       text: await client.vouchersCsv(paramsFrom<CsvVouchersParams>(flags, VOUCHER_FILTER_FLAGS)),
@@ -361,7 +366,9 @@ const COMMANDS: Command[] = [
     summary: "A patient's or a clinic's settled care history (GET /receipts)",
     usage: 'sci receipts (--beneficiary-ref <ref> | --provider G...)',
     run: async ({ client, flags }) => ({
-      data: await client.receipts(paramsFrom<ListReceiptsParams>(flags, ['beneficiaryRef', 'provider'])),
+      data: await client.receipts(
+        paramsFrom<ListReceiptsParams>(flags, ['beneficiaryRef', 'provider']),
+      ),
     }),
   },
   {
@@ -409,7 +416,10 @@ export function renderTable(rows: Record<string, unknown>[]): string {
     Math.max(col.length, ...rows.map((row) => cell(row[col]).length)),
   );
   const line = (cells: string[]): string =>
-    cells.map((text, i) => text.padEnd(widths[i]!)).join('  ').trimEnd();
+    cells
+      .map((text, i) => text.padEnd(widths[i]!))
+      .join('  ')
+      .trimEnd();
   const lines = [line(columns), line(widths.map((w) => '-'.repeat(w)))];
   for (const row of rows) lines.push(line(columns.map((col) => cell(row[col]))));
   return `${lines.join('\n')}\n`;

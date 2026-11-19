@@ -33,7 +33,8 @@ describe('buildDatabaseUrl', () => {
   });
 
   it('overwrites existing parameters if already in the Postgres URL', () => {
-    const raw = 'postgresql://sci:sci@localhost:5432/sci_healthcare?connection_limit=2&statement_timeout=1000';
+    const raw =
+      'postgresql://sci:sci@localhost:5432/sci_healthcare?connection_limit=2&statement_timeout=1000';
     const result = buildDatabaseUrl(raw, {
       poolSize: 8,
       statementTimeoutMs: 15000,
@@ -45,11 +46,7 @@ describe('buildDatabaseUrl', () => {
   });
 
   it('leaves SQLite URLs completely untouched', () => {
-    const sqliteUrls = [
-      'file:./dev.db',
-      'file:../prisma/test.db',
-      'sqlite:./local.db',
-    ];
+    const sqliteUrls = ['file:./dev.db', 'file:../prisma/test.db', 'sqlite:./local.db'];
 
     for (const raw of sqliteUrls) {
       const result = buildDatabaseUrl(raw, {

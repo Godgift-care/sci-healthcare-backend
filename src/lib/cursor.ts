@@ -10,9 +10,9 @@ export function encodeCursor(createdAt: Date, id: string): string {
 export function decodeCursor(cursor: string): CursorPayload | null {
   try {
     const json = Buffer.from(cursor, 'base64url').toString('utf8');
-    const parsed = JSON.parse(json);
+    const parsed = JSON.parse(json) as CursorPayload;
     if (typeof parsed.createdAt === 'string' && typeof parsed.id === 'string') {
-      return parsed as CursorPayload;
+      return parsed;
     }
     return null;
   } catch {

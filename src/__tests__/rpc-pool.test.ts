@@ -79,9 +79,7 @@ describe('parseRpcUrls', () => {
 
 describe('redactRpcUrl', () => {
   it('hides credentials', () => {
-    expect(redactRpcUrl('https://user:secret@rpc.example.org')).toBe(
-      'https://***@rpc.example.org',
-    );
+    expect(redactRpcUrl('https://user:secret@rpc.example.org')).toBe('https://***@rpc.example.org');
   });
 
   it('leaves a plain URL alone', () => {

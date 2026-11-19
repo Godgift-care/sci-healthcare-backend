@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { prisma } from '../db.js';
-import { assertLocalDatabase, deleteSeedRows, seedLocalData, SEED_ADDRESS_PREFIX } from '../scripts/seed.js';
+import {
+  assertLocalDatabase,
+  deleteSeedRows,
+  seedLocalData,
+  SEED_ADDRESS_PREFIX,
+} from '../scripts/seed.js';
 
 /**
  * Seed data tests (issue #59) run against the same throwaway SQLite file as
@@ -14,16 +19,20 @@ const STATUSES = ['Funded', 'Claimed', 'Attested', 'Settled', 'Disputed', 'Refun
 describe('seed guard', () => {
   it('accepts local SQLite and loopback Postgres URLs', () => {
     expect(() => assertLocalDatabase('file:./dev.db')).not.toThrow();
-    expect(() => assertLocalDatabase('postgresql://postgres:postgres@localhost:5432/app')).not.toThrow();
+    expect(() =>
+      assertLocalDatabase('postgresql://postgres:postgres@localhost:5432/app'),
+    ).not.toThrow();
     expect(() => assertLocalDatabase('postgresql://user@127.0.0.1:5432/app')).not.toThrow();
     expect(() => assertLocalDatabase('postgresql://user@[::1]:5432/app')).not.toThrow();
   });
 
   it('refuses anything that is not local', () => {
-    expect(() => assertLocalDatabase('postgresql://user:pass@ep-xyz.pooler.aws.amazon.com/app')).toThrow(
-      /not a local database host/,
+    expect(() =>
+      assertLocalDatabase('postgresql://user:pass@ep-xyz.pooler.aws.amazon.com/app'),
+    ).toThrow(/not a local database host/);
+    expect(() => assertLocalDatabase('mysql://user@localhost/app')).toThrow(
+      /Unrecognised DATABASE_URL/,
     );
-    expect(() => assertLocalDatabase('mysql://user@localhost/app')).toThrow(/Unrecognised DATABASE_URL/);
     expect(() => assertLocalDatabase('not-a-url')).toThrow(/Unrecognised DATABASE_URL/);
   });
 
@@ -81,7 +90,10 @@ describe('seedLocalData', () => {
     });
     expect(summary.services).toBeGreaterThanOrEqual(5 * 3);
 
-    const byStatus = await prisma.voucher.groupBy({ by: ['status'], where: { providerAddress: { startsWith: SEED_ADDRESS_PREFIX } } });
+    const byStatus = await prisma.voucher.groupBy({
+      by: ['status'],
+      where: { providerAddress: { startsWith: SEED_ADDRESS_PREFIX } },
+    });
     expect(byStatus.map((s) => s.status).sort()).toEqual([...STATUSES].sort());
 
     const settled = await prisma.voucher.count({
@@ -96,7 +108,11 @@ describe('seedLocalData', () => {
       by: ['status'],
       where: { address: { startsWith: SEED_ADDRESS_PREFIX } },
     });
-    expect(providerStatuses.map((p) => p.status).sort()).toEqual(['Active', 'Pending', 'Suspended']);
+    expect(providerStatuses.map((p) => p.status).sort()).toEqual([
+      'Active',
+      'Pending',
+      'Suspended',
+    ]);
   });
 
   it('runs twice without errors and lands on identical state', async () => {
@@ -138,7 +154,9 @@ describe('seedLocalData', () => {
     expect(settled?.attestedAt).toBeInstanceOf(Date);
     expect(settled?.settledNet).not.toBeNull();
     expect(settled?.settledFee).not.toBeNull();
-    expect(BigInt(settled!.settledNet!) + BigInt(settled!.settledFee!)).toBe(BigInt(settled!.amount));
+    expect(BigInt(settled!.settledNet!) + BigInt(settled!.settledFee!)).toBe(
+      BigInt(settled!.amount),
+    );
 
     const funded = await prisma.voucher.findFirst({
       where: { providerAddress: { startsWith: SEED_ADDRESS_PREFIX }, status: 'Funded' },

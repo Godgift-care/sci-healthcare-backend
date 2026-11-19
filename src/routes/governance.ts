@@ -21,41 +21,45 @@ type Row = {
  * neither at any moment. The history is folded in ledger order so the
  * latest proposal or acceptance decides the current state.
  */
-export async function governanceRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/governance', {
-    schema: {
-      tags: ['governance'],
-      summary: 'Admin history for each contract',
-      description: 'Who controls each contract, and how that changed.',
+export function governanceRoutes(app: FastifyInstance): void {
+  app.get(
+    '/governance',
+    {
+      schema: {
+        tags: ['governance'],
+        summary: 'Admin history for each contract',
+        description: 'Who controls each contract, and how that changed.',
+      },
     },
-  }, async () => {
-    const events = await prisma.governanceEvent.findMany({
-      orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
-    });
+    async () => {
+      const events = await prisma.governanceEvent.findMany({
+        orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
+      });
 
-    const byContract = new Map<string, Row[]>();
-    for (const e of events) {
-      const list = byContract.get(e.contract) ?? [];
-      list.push(e);
-      byContract.set(e.contract, list);
-    }
+      const byContract = new Map<string, Row[]>();
+      for (const e of events) {
+        const list = byContract.get(e.contract) ?? [];
+        list.push(e);
+        byContract.set(e.contract, list);
+      }
 
-    // Every contract is reported, even one that has never had an admin
-    // event, so the absence itself is visible.
-    const contracts = CONTRACTS.map(({ contract }) => {
-      const history = byContract.get(contract) ?? [];
-      byContract.delete(contract);
-      return summarise(contract, history);
-    });
+      // Every contract is reported, even one that has never had an admin
+      // event, so the absence itself is visible.
+      const contracts = CONTRACTS.map(({ contract }) => {
+        const history = byContract.get(contract) ?? [];
+        byContract.delete(contract);
+        return summarise(contract, history);
+      });
 
-    // Events from a contract id not in this deployment's config still
-    // deserve to be shown rather than dropped.
-    for (const [contract, history] of byContract) {
-      contracts.push(summarise(contract, history));
-    }
+      // Events from a contract id not in this deployment's config still
+      // deserve to be shown rather than dropped.
+      for (const [contract, history] of byContract) {
+        contracts.push(summarise(contract, history));
+      }
 
-    return { contracts };
-  });
+      return { contracts };
+    },
+  );
 }
 
 function summarise(contract: string, history: Row[]) {

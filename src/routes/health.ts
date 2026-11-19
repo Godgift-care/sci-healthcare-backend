@@ -16,7 +16,11 @@ const dailyQuery = z.object({
 });
 
 const funnelQuery = z.object({
-  country: z.string().length(2).transform((country) => country.toUpperCase()).optional(),
+  country: z
+    .string()
+    .length(2)
+    .transform((country) => country.toUpperCase())
+    .optional(),
   clinic: z.string().min(1).max(56).optional(),
 });
 
@@ -56,9 +60,7 @@ function medianHours(values: number[]): number | null {
   if (values.length === 0) return null;
   values.sort((a, b) => a - b);
   const middle = Math.floor(values.length / 2);
-  return values.length % 2 === 1
-    ? values[middle]!
-    : (values[middle - 1]! + values[middle]!) / 2;
+  return values.length % 2 === 1 ? values[middle]! : (values[middle - 1]! + values[middle]!) / 2;
 }
 
 function elapsedHours(from: Date, to: Date): number | null {
@@ -161,20 +163,21 @@ export function resetStatsCache(): void {
  * Voucher stages and median time between them for one ledger, optionally
  * scoped to a country or a clinic.
  *
- * The whole response is a function of the cursor plus the two filters, which
- * is why it can be memoized by `funnelMemo` and answered without touching the
- * database twice in a row.
+ * The whole response is a function of the cursor plus these two filters, which
+ * is what lets `funnelMemo` answer a repeated question without a read.
  */
 async function funnelStats(country?: string, clinic?: string) {
-  const providerAddresses = country !== undefined || clinic !== undefined
-    ? (await prisma.provider.findMany({
-        where: { ...(country ? { country } : {}), ...(clinic ? { address: clinic } : {}) },
-        select: { address: true },
-      })).map((provider) => provider.address)
-    : undefined;
-  const providerFilter = providerAddresses === undefined
-    ? {}
-    : { providerAddress: { in: providerAddresses } };
+  const providerAddresses =
+    country !== undefined || clinic !== undefined
+      ? (
+          await prisma.provider.findMany({
+            where: { ...(country ? { country } : {}), ...(clinic ? { address: clinic } : {}) },
+            select: { address: true },
+          })
+        ).map((provider) => provider.address)
+      : undefined;
+  const providerFilter =
+    providerAddresses === undefined ? {} : { providerAddress: { in: providerAddresses } };
 
   const [vouchers, receipts] = await Promise.all([
     prisma.voucher.findMany({
@@ -182,9 +185,7 @@ async function funnelStats(country?: string, clinic?: string) {
       select: { id: true, createdAt: true, claimedAt: true, attestedAt: true },
     }),
     prisma.receipt.findMany({
-      where: providerAddresses === undefined
-        ? {}
-        : { providerAddress: { in: providerAddresses } },
+      where: providerAddresses === undefined ? {} : { providerAddress: { in: providerAddresses } },
       select: { voucherId: true, settledAt: true },
     }),
   ]);
@@ -224,12 +225,16 @@ async function funnelStats(country?: string, clinic?: string) {
   };
 }
 
-export async function healthRoutes(app: FastifyInstance): Promise<void> {
+export function healthRoutes(app: FastifyInstance): void {
   // The app-level onSend hook sends `Cache-Control: no-store` on this and
   // /ready; both are probed continuously and must reflect the current state.
-  app.get('/health', {
-    schema: { tags: ['health'], summary: 'Liveness check' },
-  }, async () => ({ status: 'ok' }));
+  app.get(
+    '/health',
+    {
+      schema: { tags: ['health'], summary: 'Liveness check' },
+    },
+    () => ({ status: 'ok' }),
+  );
 
   /**
    * Version and deployment metadata.
@@ -245,216 +250,230 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
    * here by accident; `DATABASE_URL` and any credential in an RPC URL are
    * never included.
    */
-  app.get('/version', {
-    schema: {
-      tags: ['health'],
-      summary: 'Version and deployment info',
-      description:
-        'Reports the build version and commit, the configured Stellar network, ' +
-        'the RPC endpoints in use (redacted), the indexed contract ids, the ' +
-        'configured indexer start ledger, and when this process started.',
-    },
-  }, async () => {
-    return {
-      // Read from package.json at startup, so it always matches the code.
-      version: APP_VERSION,
-      // RENDER_GIT_COMMIT on Render, GIT_COMMIT elsewhere; null when neither
-      // is set rather than a fabricated value.
-      commit: deployedCommit(),
-      network: env.STELLAR_NETWORK,
-      // The endpoint currently in use, which failover may have moved.
-      rpcUrl: server.activeUrl,
-      rpcUrls: server.allUrls,
-      contracts: {
-        registry: env.REGISTRY_CONTRACT_ID,
-        voucher: env.VOUCHER_CONTRACT_ID,
-        receipt: env.RECEIPT_CONTRACT_ID,
-        usdc: env.USDC_CONTRACT_ID ?? null,
-        faucet: env.FAUCET_CONTRACT_ID ?? null,
+  app.get(
+    '/version',
+    {
+      schema: {
+        tags: ['health'],
+        summary: 'Version and deployment info',
+        description:
+          'Reports the build version and commit, the configured Stellar network, ' +
+          'the RPC endpoints in use (redacted), the indexed contract ids, the ' +
+          'configured indexer start ledger, and when this process started.',
       },
-      // The configured first ledger for this deployment. 0 means "the tip
-      // when the indexer first ran", which is why the cursor itself stays
-      // on /ready as checks.indexedLedger.
-      indexerStartLedger: env.INDEXER_START_LEDGER,
-      // Process start, not the build time: with several replicas this tells
-      // an operator which one they are looking at and how long it has run.
-      startedAt: STARTED_AT,
-    };
-  });
+    },
+    () => {
+      return {
+        // Read from package.json at startup, so it always matches the code.
+        version: APP_VERSION,
+        // RENDER_GIT_COMMIT on Render, GIT_COMMIT elsewhere; null when neither
+        // is set rather than a fabricated value.
+        commit: deployedCommit(),
+        network: env.STELLAR_NETWORK,
+        // The endpoint currently in use, which failover may have moved.
+        rpcUrl: server.activeUrl,
+        rpcUrls: server.allUrls,
+        contracts: {
+          registry: env.REGISTRY_CONTRACT_ID,
+          voucher: env.VOUCHER_CONTRACT_ID,
+          receipt: env.RECEIPT_CONTRACT_ID,
+          usdc: env.USDC_CONTRACT_ID ?? null,
+          faucet: env.FAUCET_CONTRACT_ID ?? null,
+        },
+        // The configured first ledger for this deployment. 0 means "the tip
+        // when the indexer first ran", which is why the cursor itself stays
+        // on /ready as checks.indexedLedger.
+        indexerStartLedger: env.INDEXER_START_LEDGER,
+        // Process start, not the build time: with several replicas this tells
+        // an operator which one they are looking at and how long it has run.
+        startedAt: STARTED_AT,
+      };
+    },
+  );
 
   /**
    * Readiness, including how far the indexer trails the chain. A large or
    * growing lag is the first symptom of nearly every problem this service
    * can have, so it is surfaced rather than buried in logs.
    */
-  app.get('/ready', {
-    schema: {
-      tags: ['health'],
-      summary: 'Readiness check',
-      description:
-        'Reports indexer lag, RPC retention gaps, database connectivity, failed ' +
-        'events and the webhook outbox backlog.',
+  app.get(
+    '/ready',
+    {
+      schema: {
+        tags: ['health'],
+        summary: 'Readiness check',
+        description:
+          'Reports indexer lag, RPC retention gaps, database connectivity, failed ' +
+          'events and the webhook outbox backlog.',
+      },
     },
-  }, async (_req, reply) => {
-    const checks: Record<string, unknown> = {};
-    let healthy = true;
+    async (_req, reply) => {
+      const checks: Record<string, unknown> = {};
+      let healthy = true;
 
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-      checks.database = 'ok';
-      // A failed event is missing data in the read model, so it is a
-      // degradation until someone retries or investigates it.
-      const failedEvents = await prisma.failedEvent.count({ where: { resolvedAt: null } });
-      checks.failedEvents = failedEvents;
-      if (failedEvents > 0) healthy = false;
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+        checks.database = 'ok';
+        // A failed event is missing data in the read model, so it is a
+        // degradation until someone retries or investigates it.
+        const failedEvents = await prisma.failedEvent.count({ where: { resolvedAt: null } });
+        checks.failedEvents = failedEvents;
+        if (failedEvents > 0) healthy = false;
 
-      // Drift found by `npm run indexer:reconcile`. Reported but not fatal:
-      // unlike a failed event, which is a write the indexer knows it lost,
-      // a stale mismatch row says nothing about whether this instance can
-      // serve traffic, and 503 would pull a working API out of rotation.
-      const reconcileMismatches = await prisma.reconcileMismatch.count();
-      checks.reconcileMismatches = reconcileMismatches;
-      checks.reconcile = reconcileMismatches > 0 ? 'drift' : 'ok';
+        // Drift found by `npm run indexer:reconcile`. Reported but not fatal:
+        // unlike a failed event, which is a write the indexer knows it lost,
+        // a stale mismatch row says nothing about whether this instance can
+        // serve traffic, and 503 would pull a working API out of rotation.
+        const reconcileMismatches = await prisma.reconcileMismatch.count();
+        checks.reconcileMismatches = reconcileMismatches;
+        checks.reconcile = reconcileMismatches > 0 ? 'drift' : 'ok';
 
-      // Failed or stuck webhook deliveries pile up in the outbox without
-      // failing anything else: the indexer keeps indexing and the API keeps
-      // serving while clinics stop being notified. A delivery older than
-      // `READY_WEBHOOK_MAX_AGE_MS` cannot be normal retry traffic — every
-      // attempt resolves inside the backoff ceiling — so it is degraded.
-      const backlog = await webhookBacklog();
-      const webhookState = !WEBHOOKS_ENABLED
-        ? 'disabled'
-        : backlog.stale > 0
-          ? 'backlog'
-          : 'ok';
-      checks.webhooks = {
-        state: webhookState,
-        enabled: WEBHOOKS_ENABLED,
-        pending: backlog.pending,
-        abandoned: backlog.abandoned,
-        oldestPendingAgeSeconds: backlog.oldestPendingAgeSeconds,
-        maxPendingAgeSeconds: env.READY_WEBHOOK_MAX_AGE_MS / 1000,
-      };
-      if (webhookState === 'backlog') healthy = false;
-    } catch (err) {
-      healthy = false;
-      checks.database = `error: ${(err as Error).message}`;
-    }
-
-    try {
-      const [latest, state] = await Promise.all([
-        server.getLatestLedger(),
-        prisma.indexerState.findUnique({ where: { id: 1 } }),
-      ]);
-      const lag = state ? latest.sequence - state.lastLedger : null;
-      checks.rpc = 'ok';
-      checks.rpcUrl = server.activeUrl;
-      checks.latestLedger = latest.sequence;
-      checks.indexedLedger = state?.lastLedger ?? null;
-      checks.lagLedgers = lag;
-      checks.maxLagLedgers = env.READY_MAX_LAG_LEDGERS;
-      checks.paused = state?.paused ?? false;
-
-      if (state?.paused) {
-        healthy = false;
-        checks.indexer = 'paused';
-      } else if (state?.gap) {
-        healthy = false;
-        checks.indexer = 'gap';
-        checks.gap = {
-          detected: true,
-          cursorLedger: state.gapCursorLedger,
-          oldestAvailable: state.gapOldestLedger,
-          message:
-            'Indexer cursor fell outside the RPC retention window. ' +
-            'Restore a database snapshot at the cursor ledger, or ' +
-            'accept the gap and resume from the oldest available ledger. ' +
-            'See docs/RUNBOOK.md.',
+        // Failed or stuck webhook deliveries pile up in the outbox without
+        // failing anything else: the indexer keeps indexing and the API keeps
+        // serving while clinics stop being notified. A delivery older than
+        // `READY_WEBHOOK_MAX_AGE_MS` cannot be normal retry traffic — every
+        // attempt resolves inside the backoff ceiling — so it is degraded.
+        const backlog = await webhookBacklog();
+        const webhookState = !WEBHOOKS_ENABLED ? 'disabled' : backlog.stale > 0 ? 'backlog' : 'ok';
+        checks.webhooks = {
+          state: webhookState,
+          enabled: WEBHOOKS_ENABLED,
+          pending: backlog.pending,
+          abandoned: backlog.abandoned,
+          oldestPendingAgeSeconds: backlog.oldestPendingAgeSeconds,
+          maxPendingAgeSeconds: env.READY_WEBHOOK_MAX_AGE_MS / 1000,
         };
-      } else if (lag !== null && lag > env.READY_MAX_LAG_LEDGERS) {
+        if (webhookState === 'backlog') healthy = false;
+      } catch (err) {
         healthy = false;
-        checks.indexer = 'lagging';
-      } else {
-        checks.indexer = 'ok';
+        checks.database = `error: ${(err as Error).message}`;
       }
-    } catch (err) {
-      healthy = false;
-      // Every configured endpoint failed, not just the active one.
-      checks.rpc = `error: ${(err as Error).message}`;
-      checks.rpcUrl = server.activeUrl;
-      checks.rpcUrls = server.allUrls;
-    }
 
-    checks.network = env.STELLAR_NETWORK;
-    checks.contracts = {
-      registry: env.REGISTRY_CONTRACT_ID,
-      voucher: env.VOUCHER_CONTRACT_ID,
-      receipt: env.RECEIPT_CONTRACT_ID,
-    };
+      try {
+        const [latest, state] = await Promise.all([
+          server.getLatestLedger(),
+          prisma.indexerState.findUnique({ where: { id: 1 } }),
+        ]);
+        const lag = state ? latest.sequence - state.lastLedger : null;
+        checks.rpc = 'ok';
+        checks.rpcUrl = server.activeUrl;
+        checks.latestLedger = latest.sequence;
+        checks.indexedLedger = state?.lastLedger ?? null;
+        checks.lagLedgers = lag;
+        checks.maxLagLedgers = env.READY_MAX_LAG_LEDGERS;
+        checks.paused = state?.paused ?? false;
 
-    return reply.code(healthy ? 200 : 503).send({ status: healthy ? 'ready' : 'degraded', checks });
-  });
+        if (state?.paused) {
+          healthy = false;
+          checks.indexer = 'paused';
+        } else if (state?.gap) {
+          healthy = false;
+          checks.indexer = 'gap';
+          checks.gap = {
+            detected: true,
+            cursorLedger: state.gapCursorLedger,
+            oldestAvailable: state.gapOldestLedger,
+            message:
+              'Indexer cursor fell outside the RPC retention window. ' +
+              'Restore a database snapshot at the cursor ledger, or ' +
+              'accept the gap and resume from the oldest available ledger. ' +
+              'See docs/RUNBOOK.md.',
+          };
+        } else if (lag !== null && lag > env.READY_MAX_LAG_LEDGERS) {
+          healthy = false;
+          checks.indexer = 'lagging';
+        } else {
+          checks.indexer = 'ok';
+        }
+      } catch (err) {
+        healthy = false;
+        // Every configured endpoint failed, not just the active one.
+        checks.rpc = `error: ${(err as Error).message}`;
+        checks.rpcUrl = server.activeUrl;
+        checks.rpcUrls = server.allUrls;
+      }
 
-  app.get('/stats', {
-    schema: { tags: ['health'], summary: 'Aggregate dashboard counters' },
-  }, async () => {
-    const currentLedger = await lastIndexedLedger();
-    const cached = statsMemo.peek('', currentLedger);
-    if (cached !== undefined) return cached;
+      checks.network = env.STELLAR_NETWORK;
+      checks.contracts = {
+        registry: env.REGISTRY_CONTRACT_ID,
+        voucher: env.VOUCHER_CONTRACT_ID,
+        receipt: env.RECEIPT_CONTRACT_ID,
+      };
 
-    const [providers, activeProviders, vouchers, totals, receipts, faucetDrips, faucetWallets] =
-      await Promise.all([
-        prisma.provider.count(),
-        prisma.provider.count({ where: { status: 'Active' } }),
-        prisma.voucher.count(),
-        settledTotals(),
-        prisma.receipt.count(),
-        prisma.faucetDrip.count(),
-        // Distinct wallets, which is the figure worth reporting: one person
-        // pressing the faucet button four times is not four people.
-        prisma.faucetDrip.groupBy({ by: ['wallet'] }),
-      ]);
+      return reply
+        .code(healthy ? 200 : 503)
+        .send({ status: healthy ? 'ready' : 'degraded', checks });
+    },
+  );
 
-    const result: StatsResponse = {
-      providers,
-      activeProviders,
-      vouchers,
-      settledVouchers: totals.settledVouchers,
-      settledValue: totals.settledValue,
-      feesCollected: totals.feesCollected,
-      receipts,
-      // Both are 0 when no FAUCET_CONTRACT_ID is configured, because no
-      // drip event ever reaches the indexer.
-      faucetDrips,
-      faucetWallets: faucetWallets.length,
-    };
+  app.get(
+    '/stats',
+    {
+      schema: { tags: ['health'], summary: 'Aggregate dashboard counters' },
+    },
+    async () => {
+      const currentLedger = await lastIndexedLedger();
+      const cached = statsMemo.peek('', currentLedger);
+      if (cached !== undefined) return cached;
 
-    statsMemo.remember('', currentLedger, result);
-    return result;
-  });
+      const [providers, activeProviders, vouchers, totals, receipts, faucetDrips, faucetWallets] =
+        await Promise.all([
+          prisma.provider.count(),
+          prisma.provider.count({ where: { status: 'Active' } }),
+          prisma.voucher.count(),
+          settledTotals(),
+          prisma.receipt.count(),
+          prisma.faucetDrip.count(),
+          // Distinct wallets, which is the figure worth reporting: one person
+          // pressing the faucet button four times is not four people.
+          prisma.faucetDrip.groupBy({ by: ['wallet'] }),
+        ]);
+
+      const result: StatsResponse = {
+        providers,
+        activeProviders,
+        vouchers,
+        settledVouchers: totals.settledVouchers,
+        settledValue: totals.settledValue,
+        feesCollected: totals.feesCollected,
+        receipts,
+        // Both are 0 when no FAUCET_CONTRACT_ID is configured, because no
+        // drip event ever reaches the indexer.
+        faucetDrips,
+        faucetWallets: faucetWallets.length,
+      };
+
+      statsMemo.remember('', currentLedger, result);
+      return result;
+    },
+  );
 
   /** Voucher stages and median time between them, optionally scoped to a country or clinic. */
-  app.get('/stats/funnel', {
-    schema: {
-      tags: ['health'],
-      summary: 'Voucher funnel counts and median stage times',
-      querystring: funnelQuery,
-      response: { 200: funnelResponse },
+  app.get(
+    '/stats/funnel',
+    {
+      schema: {
+        tags: ['health'],
+        summary: 'Voucher funnel counts and median stage times',
+        querystring: funnelQuery,
+        response: { 200: funnelResponse },
+      },
     },
-  }, async (req) => {
-    const { country, clinic } = funnelQuery.parse(req.query);
-    const currentLedger = await lastIndexedLedger();
-    // The filters are part of the key: `?country=NG` and `?clinic=G…` are two
-    // different questions, and answering either from the other's cache would
-    // be a wrong number on a dashboard rather than a slow one.
-    const key = `${country ?? ''}|${clinic ?? ''}`;
-    const cached = funnelMemo.peek(key, currentLedger);
-    if (cached !== undefined) return cached;
+    async (req) => {
+      const { country, clinic } = funnelQuery.parse(req.query);
+      const currentLedger = await lastIndexedLedger();
+      // The filters are part of the key: `?country=NG` and `?clinic=G…` are two
+      // different questions, and answering either from the other's cache would
+      // be a wrong number on a dashboard rather than a slow one.
+      const key = `${country ?? ''}|${clinic ?? ''}`;
+      const cached = funnelMemo.peek(key, currentLedger);
+      if (cached !== undefined) return cached;
 
-    const result = await funnelStats(country, clinic);
-    funnelMemo.remember(key, currentLedger, result);
-    return result;
-  });
+      const result = await funnelStats(country, clinic);
+      funnelMemo.remember(key, currentLedger, result);
+      return result;
+    },
+  );
 
   /**
    * Protocol activity as a per-UTC-day time series.

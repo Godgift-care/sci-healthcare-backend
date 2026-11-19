@@ -14,11 +14,7 @@ import { accountAddress } from '../lib/stellar-address.js';
 
 const listQuery = z
   .object({
-    beneficiaryRef: z
-      .string()
-      .max(64)
-      .refine(isValidRef, 'must be 64 hex characters')
-      .optional(),
+    beneficiaryRef: z.string().max(64).refine(isValidRef, 'must be 64 hex characters').optional(),
     provider: accountAddress.optional(),
     cursor: cursorParam,
     limit: limitParam,
@@ -130,9 +126,7 @@ async function receiptLabels(
   rows: readonly { providerAddress: string; serviceCode: number }[],
   fieldSet: readonly string[] | null,
 ): Promise<Map<string, string>> {
-  return includesField(fieldSet, 'serviceLabel')
-    ? serviceLabels(rows)
-    : new Map<string, string>();
+  return includesField(fieldSet, 'serviceLabel') ? serviceLabels(rows) : new Map<string, string>();
 }
 
 /** The same for the one lookup that names the clinic behind the address. */
@@ -143,7 +137,7 @@ async function receiptClinics(
   return includesField(fieldSet, 'provider') ? providerSummaries(rows) : new Map();
 }
 
-export async function receiptRoutes(app: FastifyInstance): Promise<void> {
+export function receiptRoutes(app: FastifyInstance): void {
   /**
    * A patient's care history.
    *
@@ -163,9 +157,7 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
     const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
       fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
 
-    const baseWhere = beneficiaryRef
-      ? { beneficiaryRef }
-      : { providerAddress: provider! };
+    const baseWhere = beneficiaryRef ? { beneficiaryRef } : { providerAddress: provider! };
 
     const isProviderView = Boolean(provider);
 
@@ -209,7 +201,11 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
       ]);
       const last = page[page.length - 1];
       const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : null;
-      return { limit, nextCursor, receipts: project(page.map((r) => formatReceipt(r, labels, clinics))) };
+      return {
+        limit,
+        nextCursor,
+        receipts: project(page.map((r) => formatReceipt(r, labels, clinics))),
+      };
     }
 
     const [rows, total, spend] = await Promise.all([
@@ -235,9 +231,7 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
     ]);
     const last = page[page.length - 1];
     const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : undefined;
-    const totalSpend = spend
-      .reduce((acc, r) => acc + BigInt(r.amount), 0n)
-      .toString();
+    const totalSpend = spend.reduce((acc, r) => acc + BigInt(r.amount), 0n).toString();
 
     return {
       total,

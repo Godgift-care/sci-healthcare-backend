@@ -65,7 +65,12 @@ function sym(s: string): xdr.ScVal {
  * A raw contract event in the shape `decodeEvent` expects: the name and any
  * `#[topic]` fields in the topic list, the data fields in the value.
  */
-function rawEvent(name: string, ledger: number, data: Record<string, unknown>, topics: xdr.ScVal[] = []) {
+function rawEvent(
+  name: string,
+  ledger: number,
+  data: Record<string, unknown>,
+  topics: xdr.ScVal[] = [],
+) {
   return {
     id: `${name}-${ledger}`,
     contractId: env.VOUCHER_CONTRACT_ID,
@@ -213,9 +218,7 @@ describe('GET /stream', () => {
     expect(bare.status).toBe(400);
     expect(await readJson(bare)).toMatchObject({ error: 'invalid_query' });
 
-    const both = await openStream(
-      `/v1/stream?voucher=5001&provider=${CLINIC}`,
-    );
+    const both = await openStream(`/v1/stream?voucher=5001&provider=${CLINIC}`);
     expect(both.status).toBe(400);
     expect(await readJson(both)).toMatchObject({ error: 'invalid_query' });
 
@@ -224,7 +227,9 @@ describe('GET /stream', () => {
     expect(await readJson(shortProvider)).toMatchObject({ error: 'invalid_query' });
 
     // Right length, bad checksum (#171).
-    const badChecksum = await openStream(`/v1/stream?provider=${CLINIC.slice(0, -1)}${CLINIC.endsWith('A') ? 'B' : 'A'}`);
+    const badChecksum = await openStream(
+      `/v1/stream?provider=${CLINIC.slice(0, -1)}${CLINIC.endsWith('A') ? 'B' : 'A'}`,
+    );
     expect(badChecksum.status).toBe(400);
     expect(await readJson(badChecksum)).toMatchObject({ error: 'invalid_query' });
   });
@@ -258,18 +263,18 @@ describe('GET /stream', () => {
 
     stubEvents(
       [
-        rawEvent(
-          'voucher_claimed',
-          101,
-          { voucher_id: 5001n, claimed_at: 1_760_000_000n },
-          [Address.fromString(CLINIC).toScVal()],
-        ),
+        rawEvent('voucher_claimed', 101, { voucher_id: 5001n, claimed_at: 1_760_000_000n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
       ],
       101,
     );
     await new Indexer(fakeLog()).tick();
 
-    await vi.waitFor(() => expect(frames(legacy)).toHaveLength(1), { timeout: 4_000, interval: 10 });
+    await vi.waitFor(() => expect(frames(legacy)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
     expect(JSON.parse(frames(legacy)[0]!)).toMatchObject({
       type: 'voucher_claimed',
       voucherId: '5001',
@@ -285,12 +290,9 @@ describe('GET /stream', () => {
 
     stubEvents(
       [
-        rawEvent(
-          'voucher_settled',
-          101,
-          { voucher_id: 5001n, net: 29_700_000n, fee: 300_000n },
-          [Address.fromString(CLINIC).toScVal()],
-        ),
+        rawEvent('voucher_settled', 101, { voucher_id: 5001n, net: 29_700_000n, fee: 300_000n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
       ],
       101,
     );
@@ -349,7 +351,10 @@ describe('GET /stream', () => {
     );
     await new Indexer(fakeLog()).tick();
 
-    await vi.waitFor(() => expect(frames(stream)).toHaveLength(1), { timeout: 4_000, interval: 10 });
+    await vi.waitFor(() => expect(frames(stream)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
     expect(JSON.parse(frames(stream)[0]!)).toEqual({
       type: 'voucher_created',
       voucherId: '5002',
@@ -376,18 +381,18 @@ describe('GET /stream', () => {
     // clinic comes from the row the handler just committed.
     stubEvents(
       [
-        rawEvent(
-          'voucher_refunded',
-          101,
-          { voucher_id: 5001n },
-          [Address.fromString(FUNDER).toScVal()],
-        ),
+        rawEvent('voucher_refunded', 101, { voucher_id: 5001n }, [
+          Address.fromString(FUNDER).toScVal(),
+        ]),
       ],
       101,
     );
     await new Indexer(fakeLog()).tick();
 
-    await vi.waitFor(() => expect(frames(stream)).toHaveLength(1), { timeout: 4_000, interval: 10 });
+    await vi.waitFor(() => expect(frames(stream)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
     expect(JSON.parse(frames(stream)[0]!)).toMatchObject({
       type: 'voucher_refunded',
       status: 'Refunded',
@@ -426,12 +431,9 @@ describe('GET /stream', () => {
     // A client must never see the half of it that was discarded.
     stubEvents(
       [
-        rawEvent(
-          'voucher_settled',
-          101,
-          { voucher_id: 5001n },
-          [Address.fromString(CLINIC).toScVal()],
-        ),
+        rawEvent('voucher_settled', 101, { voucher_id: 5001n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
       ],
       101,
     );
@@ -455,12 +457,9 @@ describe('GET /stream', () => {
     // it into a dead letter. It falls back to the clinic on the row instead.
     stubEvents(
       [
-        rawEvent(
-          'voucher_settled',
-          101,
-          { voucher_id: 5001n, net: 29_700_000n, fee: 300_000n },
-          [nativeToScVal('not-an-address', { type: 'string' })],
-        ),
+        rawEvent('voucher_settled', 101, { voucher_id: 5001n, net: 29_700_000n, fee: 300_000n }, [
+          nativeToScVal('not-an-address', { type: 'string' }),
+        ]),
       ],
       101,
     );
@@ -470,7 +469,10 @@ describe('GET /stream', () => {
       status: 'Settled',
     });
 
-    await vi.waitFor(() => expect(frames(stream)).toHaveLength(1), { timeout: 4_000, interval: 10 });
+    await vi.waitFor(() => expect(frames(stream)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
     expect(JSON.parse(frames(stream)[0]!)).toMatchObject({
       type: 'voucher_settled',
       status: 'Settled',
@@ -484,12 +486,9 @@ describe('GET /stream', () => {
 
     stubEvents(
       [
-        rawEvent(
-          'voucher_settled',
-          101,
-          { voucher_id: 5001n, net: 1n, fee: 1n },
-          [Address.fromString(CLINIC).toScVal()],
-        ),
+        rawEvent('voucher_settled', 101, { voucher_id: 5001n, net: 1n, fee: 1n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
       ],
       101,
     );
@@ -505,12 +504,9 @@ describe('GET /stream', () => {
 
     stubEvents(
       [
-        rawEvent(
-          'voucher_claimed',
-          102,
-          { voucher_id: 5001n, claimed_at: 1_760_000_000n },
-          [Address.fromString(CLINIC).toScVal()],
-        ),
+        rawEvent('voucher_claimed', 102, { voucher_id: 5001n, claimed_at: 1_760_000_000n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
       ],
       102,
     );

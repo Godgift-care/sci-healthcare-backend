@@ -58,8 +58,7 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
   },
   fr: {
     internal_error: 'Erreur interne du serveur',
-    database_unavailable:
-      'La base de données est indisponible, réessayez dans {seconds} secondes',
+    database_unavailable: 'La base de données est indisponible, réessayez dans {seconds} secondes',
     rate_limited: 'Trop de requêtes',
     bad_request: 'Requête invalide',
     route_not_found: 'Route {method} {url} introuvable',
@@ -73,8 +72,7 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
     receipt_not_found: 'Reçu introuvable',
     voucher_not_found: 'Bon de soins introuvable',
     filter_required: 'Fournissez au moins l’un des éléments suivants : {filters}',
-    stream_full:
-      'Cette instance détient déjà trop de flux ouverts ; réessayez dans un instant.',
+    stream_full: 'Cette instance détient déjà trop de flux ouverts ; réessayez dans un instant.',
   },
   sw: {
     internal_error: 'Hitilafuo ya ndani ya seva',
@@ -91,8 +89,7 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
     receipt_not_found: 'Risiti haipatikani',
     voucher_not_found: 'Cheti haipatikani',
     filter_required: 'Toa angalau moja kati ya: {filters}',
-    stream_full:
-      'Kiolesura hiki kina mifumo mingi mno iliyowazi; jaribu tena baada ya muda mfupi.',
+    stream_full: 'Kiolesura hiki kina mifumo mingi mno iliyowazi; jaribu tena baada ya muda mfupi.',
   },
 };
 
@@ -108,9 +105,7 @@ export type MessageParams = Record<string, string>;
  * in particular and so falls through, and a tag nobody supported — or no
  * header at all — is English.
  */
-export function negotiateLanguage(
-  header: string | string[] | undefined | null,
-): Language {
+export function negotiateLanguage(header: string | string[] | undefined | null): Language {
   const raw = Array.isArray(header) ? header.join(',') : header;
   if (!raw) return DEFAULT_LANGUAGE;
 
@@ -118,9 +113,7 @@ export function negotiateLanguage(
     .split(',')
     .map((part, index) => {
       const [tag = '', ...params] = part.trim().split(';');
-      const qParam = params
-        .map((p) => p.trim())
-        .find((p) => p.toLowerCase().startsWith('q='));
+      const qParam = params.map((p) => p.trim()).find((p) => p.toLowerCase().startsWith('q='));
       const q = qParam === undefined ? 1 : Number.parseFloat(qParam.slice(2));
       return { tag: tag.trim().toLowerCase(), q: Number.isFinite(q) ? q : 0, index };
     })

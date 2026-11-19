@@ -16,7 +16,6 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-
 import { buildApp } from '../app.js';
 import { prisma } from '../db.js';
 import { env } from '../env.js';
@@ -173,21 +172,17 @@ describe('fetchProviderMetadata', () => {
   });
 
   it('rejects a document with no recognised fields', async () => {
-    await expect(fetchProviderMetadata(uri('/empty.json'))).rejects.toThrow(
-      /no recognised fields/,
-    );
+    await expect(fetchProviderMetadata(uri('/empty.json'))).rejects.toThrow(/no recognised fields/);
   });
 
   it('rejects a schema-invalid document, naming the failing field', async () => {
-    await expect(fetchProviderMetadata(uri('/invalid.json'))).rejects.toThrow(
-      /location\.lat/,
-    );
+    await expect(fetchProviderMetadata(uri('/invalid.json'))).rejects.toThrow(/location\.lat/);
   });
 
   it('refuses an oversized body while streaming, before buffering it', async () => {
-    await expect(
-      fetchProviderMetadata(uri('/big.json'), { maxBytes: 1024 }),
-    ).rejects.toThrow('exceeds 1024 bytes');
+    await expect(fetchProviderMetadata(uri('/big.json'), { maxBytes: 1024 })).rejects.toThrow(
+      'exceeds 1024 bytes',
+    );
   });
 
   it('refuses up front when the declared content-length is over the cap', async () => {
@@ -197,9 +192,9 @@ describe('fetchProviderMetadata', () => {
   });
 
   it('times out a slow host and says so', async () => {
-    await expect(
-      fetchProviderMetadata(uri('/slow'), { timeoutMs: 50 }),
-    ).rejects.toThrow('timed out after 50ms');
+    await expect(fetchProviderMetadata(uri('/slow'), { timeoutMs: 50 })).rejects.toThrow(
+      'timed out after 50ms',
+    );
   });
 });
 
@@ -355,16 +350,12 @@ describe('metadata URI projections (#159)', () => {
 
   const register = (ledger = 101, metadataUri?: string) =>
     apply(
-      rawEvent(
-        'provider_registered',
-        ledger,
-        {
-          name: 'Katibangcuo Health Post',
-          country: 'CF',
-          registered_at: 1_759_276_800n,
-          ...(metadataUri !== undefined ? { metadata_uri: metadataUri } : {}),
-        },
-      ),
+      rawEvent('provider_registered', ledger, {
+        name: 'Katibangcuo Health Post',
+        country: 'CF',
+        registered_at: 1_759_276_800n,
+        ...(metadataUri !== undefined ? { metadata_uri: metadataUri } : {}),
+      }),
     );
 
   it('stores the URI announced at registration, leaving metadata unfetched', async () => {
