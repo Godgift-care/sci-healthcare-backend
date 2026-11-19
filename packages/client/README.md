@@ -116,3 +116,38 @@ try {
   }
 }
 ```
+
+## Verifying webhook deliveries
+
+`verifyWebhook(body, headers, secret)` answers "did the indexer sign these exact
+bytes with this secret" for a webhook endpoint, so the comparison is not
+something each receiver gets to invent. It returns a boolean and never throws on
+a malformed signature.
+
+```typescript
+import { verifyWebhook } from '@sci-healthcare/client';
+
+app.post('/hooks/sci', { parseBody: false }, async (req, reply) => {
+  // `req.headers`, a `Headers`, or the bare signature value: all fine.
+  if (!verifyWebhook(req.body, req.headers, process.env.WEBHOOK_SECRET!)) {
+    return reply.code(401).send();
+  }
+  const delivery = JSON.parse(req.body);
+  // ...
+});
+```
+
+The header defaults to `x-sci-signature` and takes either scheme:
+
+- a hex HMAC-SHA256 of the raw body, with or without a `sha256=` prefix, which
+  is what the indexer signs today (`src/lib/webhooks.ts`);
+- `t=<unix>,v1=<hex>[,v1=<hex>]`, signed over `` `${t}.${body}` ``, which is the
+  scheme that can be replay-proofed. A timestamp further from now than
+  `toleranceSec` (default 300 s, in either direction, so a skewed receiver still
+  works) fails even when its digest is correct.
+
+Both digests are validated as 64 hex characters and then compared with
+`crypto.timingSafeEqual`, so the time a request takes does not depend on how
+much of the signature was right. Pass `{ header }`, `{ toleranceSec }` or
+`{ now }` to override the defaults. `examples/telegram-bot` verifies through
+this function, which is the reference receiver.

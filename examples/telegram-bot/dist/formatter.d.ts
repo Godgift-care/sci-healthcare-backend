@@ -18,6 +18,11 @@ export type WebhookVoucherPayload = {
     [key: string]: unknown;
 };
 /**
+ * Formats a plain-text email notification body for clinic staff.
+ * Throws an Error if any beneficiary reference is present in the payload.
+ */
+export declare function formatEmailMessage(payload: WebhookVoucherPayload): string;
+/**
  * Formats a Telegram notification message for clinic staff.
  * Throws an Error if any beneficiary reference is present in the payload.
  */
