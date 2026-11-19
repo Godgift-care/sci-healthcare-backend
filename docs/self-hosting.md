@@ -51,18 +51,29 @@ ordering is the most common way to lose an hour to this guide.
 ## 2. Install Docker
 
 ```bash
-curl -fsSL https://get.docker.com | sh
+apt-get update
+apt-get install -y docker.io docker-compose-v2
 docker compose version
 ```
 
-The script is the upstream Docker one and adds its own apt repository. If you
-would rather not pipe a remote script into a root shell, the engine is in the
-distribution's own repositories as `docker.io`. The compose *plugin* is the
-part to check, because every command here is `docker compose` with a space
-rather than the older standalone `docker-compose`: it ships as
-`docker-compose-v2` on recent Ubuntu, and comes from Docker's repository as
-`docker-compose-plugin` elsewhere. `docker compose version` tells you which
-world you are in.
+Nothing is fetched and executed as root on the way in, which is the point: the
+engine and the compose plugin both come from the distribution's own archive.
+`docker-compose-v2` is the package that provides `docker compose` — with a
+space, the subcommand form every command in this guide uses — as opposed to the
+older standalone `docker-compose` binary, which will not do. If your release
+does not carry that name, the same plugin from Docker's repository is
+`docker-compose-plugin`; either is fine, and `docker compose version` is how you
+tell which one you have.
+
+Docker's own installer is the other route and is what most write-ups show. It
+adds Docker's apt repository, and it is a script you are about to run as root, so
+fetch it, read it, then run the file you read rather than a stream you did not:
+
+```bash
+curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+less /tmp/get-docker.sh
+sh /tmp/get-docker.sh
+```
 
 ## 3. Open the firewall
 

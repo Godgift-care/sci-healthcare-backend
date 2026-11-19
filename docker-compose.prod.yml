@@ -1,7 +1,7 @@
 # Production stack for one VPS: Postgres, the API, and Caddy terminating TLS.
 #
 #   docker compose -f docker-compose.prod.yml up -d
-#   curl https://your-host/ready
+#   curl https://api.example.org/ready
 #
 # The step-by-step version - DNS, the firewall, the first boot, backups and
 # upgrades - is docs/self-hosting.md. This file is the dev stack
