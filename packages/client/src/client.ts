@@ -110,12 +110,11 @@ async function sleep(ms: number, signal: AbortSignal | null): Promise<void> {
   }
   if (signal.aborted) throw abortFailure(signal);
   await new Promise<void>((resolve, reject) => {
-    let handle: ReturnType<typeof setTimeout> | undefined;
     const onAbort = (): void => {
-      if (handle !== undefined) clearTimeout(handle);
+      clearTimeout(handle);
       reject(abortFailure(signal));
     };
-    handle = setTimeout(() => {
+    const handle = setTimeout(() => {
       signal.removeEventListener('abort', onAbort);
       resolve();
     }, delay);
@@ -224,7 +223,9 @@ export class Client {
         });
         if (attempt > this.retries || !isRetryableStatus(res.status)) return res;
         // The server's own wait beats our guess at one.
-        const wait = retryAfterMs(res.headers.get('retry-after'), this.now()) ?? backoffMs(attempt, this.random);
+        const wait =
+          retryAfterMs(res.headers.get('retry-after'), this.now()) ??
+          backoffMs(attempt, this.random);
         // Nobody reads a response we are throwing away, so release its
         // stream: an unread body pins the connection until it is collected,
         // which is the opposite of what a retry during an outage needs.
@@ -312,10 +313,7 @@ export class Client {
     return this.request<ProviderHistory>(`/providers/${encodeURIComponent(address)}/history`);
   }
 
-  async providerServiceHistory(
-    address: string,
-    code: number,
-  ): Promise<ServicePriceChangeHistory> {
+  async providerServiceHistory(address: string, code: number): Promise<ServicePriceChangeHistory> {
     return this.request<ServicePriceChangeHistory>(
       `/providers/${encodeURIComponent(address)}/services/${code}/history`,
     );
@@ -342,7 +340,10 @@ export class Client {
   }
 
   async vouchersDue(params: DueVouchersParams): Promise<{ vouchers: Voucher[] }> {
-    return this.request<{ vouchers: Voucher[] }>('/vouchers/due', params as Record<string, unknown>);
+    return this.request<{ vouchers: Voucher[] }>(
+      '/vouchers/due',
+      params as Record<string, unknown>,
+    );
   }
 
   async vouchersCsv(params?: CsvVouchersParams): Promise<string> {
@@ -355,7 +356,11 @@ export class Client {
       undefined,
     );
     if (!res.ok) {
-      throw new ApiError(res.status, `http_${res.status}`, `Failed to export CSV: ${res.statusText}`);
+      throw new ApiError(
+        res.status,
+        `http_${res.status}`,
+        `Failed to export CSV: ${res.statusText}`,
+      );
     }
     return res.text();
   }

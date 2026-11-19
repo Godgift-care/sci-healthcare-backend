@@ -29,10 +29,7 @@ export const WEBHOOK_SIGNATURE_HEADER = 'x-sci-signature';
 export const WEBHOOK_TIMESTAMP_TOLERANCE_SEC = 300;
 
 export type WebhookHeaders =
-  | Headers
-  | Record<string, string | string[] | undefined>
-  | undefined
-  | null;
+  Headers | Record<string, string | string[] | undefined> | undefined | null;
 
 export interface VerifyWebhookOptions {
   /** Header carrying the signature. Defaults to `x-sci-signature`. */

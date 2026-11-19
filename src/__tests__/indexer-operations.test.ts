@@ -16,7 +16,12 @@ const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
 const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
 
 function log(): FastifyBaseLogger {
-  return { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as FastifyBaseLogger;
+  return {
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    debug: () => {},
+  } as unknown as FastifyBaseLogger;
 }
 
 async function clearDatabase(): Promise<void> {
@@ -56,9 +61,13 @@ describe('configured contract validation (#139)', () => {
   });
 
   it('fails with the selected network and contract id when RPC cannot find one', async () => {
-    await expect(validateContractIds(['wrong-contract'], {
-      getContractInstance: async () => { throw new Error('not found'); },
-    })).rejects.toThrow(`Configured contract wrong-contract was not found on ${env.STELLAR_NETWORK}`);
+    await expect(
+      validateContractIds(['wrong-contract'], {
+        getContractInstance: async () => {
+          throw new Error('not found');
+        },
+      }),
+    ).rejects.toThrow(`Configured contract wrong-contract was not found on ${env.STELLAR_NETWORK}`);
   });
 });
 
@@ -121,14 +130,26 @@ describe('missing voucher repair (#140)', () => {
 describe('read-model snapshots (#141)', () => {
   it('round-trips compressed tables and the cursor into an empty database', async () => {
     await prisma.provider.create({
-      data: { address: CLINIC, name: 'Clinic', country: 'NG', status: 'Active', registeredAt: new Date(0) },
+      data: {
+        address: CLINIC,
+        name: 'Clinic',
+        country: 'NG',
+        status: 'Active',
+        registeredAt: new Date(0),
+      },
     });
     await prisma.voucher.create({
       data: {
-        id: '18446744073709551615', funder: FUNDER, beneficiaryRef: REF,
-        providerAddress: CLINIC, serviceCode: 101, amount: '30000000', status: 'Funded',
+        id: '18446744073709551615',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '30000000',
+        status: 'Funded',
         seq: 9007199254740993n,
-        createdAt: new Date('2025-10-01T00:00:00Z'), expiresAt: new Date('2026-10-01T00:00:00Z'),
+        createdAt: new Date('2025-10-01T00:00:00Z'),
+        expiresAt: new Date('2026-10-01T00:00:00Z'),
       },
     });
     await prisma.indexerState.create({ data: { id: 1, lastLedger: 456, paused: true } });
@@ -141,7 +162,9 @@ describe('read-model snapshots (#141)', () => {
       await clearDatabase();
       await importSnapshot(snapshot);
 
-      expect(await prisma.voucher.findUniqueOrThrow({ where: { id: '18446744073709551615' } })).toMatchObject({
+      expect(
+        await prisma.voucher.findUniqueOrThrow({ where: { id: '18446744073709551615' } }),
+      ).toMatchObject({
         providerAddress: CLINIC,
         amount: '30000000',
         seq: 9007199254740993n,

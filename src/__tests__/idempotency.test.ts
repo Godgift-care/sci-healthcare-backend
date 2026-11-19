@@ -67,67 +67,121 @@ function lifecycleEvents() {
   const receiptContract = env.RECEIPT_CONTRACT_ID;
 
   return [
-    rawEvent('provider_registered', 100, registry, [address(PROVIDER)], nativeToScVal({
-      name: 'Kisumu Health Post',
-      country: 'KE',
-      registered_at: AT,
-    })),
-    rawEvent('provider_status_changed', 101, registry, [address(PROVIDER)], nativeToScVal({
-      status: 1, // Active
-    })),
-    rawEvent('service_upserted', 102, registry, [
-      address(PROVIDER),
-      nativeToScVal(101, { type: 'u32' }),
-    ], nativeToScVal({
-      label: 'Outpatient consult',
-      price: 30000000n,
-    })),
-    rawEvent('voucher_created', 103, voucherContract, [
-      address(FUNDER),
-      address(PROVIDER),
-      nativeToScVal(Buffer.from(BENEFICIARY_REF, 'hex')),
-    ], nativeToScVal({
-      voucher_id: 1n,
-      service_code: 101,
-      amount: 30000000n,
-      created_at: AT,
-      expires_at: AT + 30 * 86_400,
-    })),
-    rawEvent('voucher_claimed', 104, voucherContract, [address(PROVIDER)], nativeToScVal({
-      voucher_id: 1n,
-      claimed_at: AT + 60,
-    })),
-    rawEvent('voucher_attested', 105, voucherContract, [address(ATTESTER)], nativeToScVal({
-      voucher_id: 1n,
-      attested_at: AT + 120,
-      dispute_deadline: AT + 7 * 86_400,
-    })),
-    rawEvent('receipt_minted', 106, receiptContract, [
-      nativeToScVal(Buffer.from(BENEFICIARY_REF, 'hex')),
-      address(PROVIDER),
-    ], nativeToScVal({
-      voucher_id: 1n,
-      service_code: 101,
-      amount: 30000000n,
-      settled_at: AT + 180,
-    })),
-    rawEvent('voucher_settled', 107, voucherContract, [address(PROVIDER)], nativeToScVal({
-      voucher_id: 1n,
-      net: 29700000n,
-      fee: 300000n,
-    })),
-    rawEvent('admin_proposed', 108, registry, [address(FUNDER)], nativeToScVal({
-      pending_admin: ATTESTER,
-    })),
-    rawEvent('admin_changed', 109, registry, [], nativeToScVal({
-      new_admin: ATTESTER,
-    })),
-    rawEvent('dripped', 110, registry, [address(FUNDER)], nativeToScVal({
-      amount: 100000000n,
-    })),
-    rawEvent('service_removed', 111, registry, [
-      address(PROVIDER),
-    ], nativeToScVal({ code: 101 })),
+    rawEvent(
+      'provider_registered',
+      100,
+      registry,
+      [address(PROVIDER)],
+      nativeToScVal({
+        name: 'Kisumu Health Post',
+        country: 'KE',
+        registered_at: AT,
+      }),
+    ),
+    rawEvent(
+      'provider_status_changed',
+      101,
+      registry,
+      [address(PROVIDER)],
+      nativeToScVal({
+        status: 1, // Active
+      }),
+    ),
+    rawEvent(
+      'service_upserted',
+      102,
+      registry,
+      [address(PROVIDER), nativeToScVal(101, { type: 'u32' })],
+      nativeToScVal({
+        label: 'Outpatient consult',
+        price: 30000000n,
+      }),
+    ),
+    rawEvent(
+      'voucher_created',
+      103,
+      voucherContract,
+      [address(FUNDER), address(PROVIDER), nativeToScVal(Buffer.from(BENEFICIARY_REF, 'hex'))],
+      nativeToScVal({
+        voucher_id: 1n,
+        service_code: 101,
+        amount: 30000000n,
+        created_at: AT,
+        expires_at: AT + 30 * 86_400,
+      }),
+    ),
+    rawEvent(
+      'voucher_claimed',
+      104,
+      voucherContract,
+      [address(PROVIDER)],
+      nativeToScVal({
+        voucher_id: 1n,
+        claimed_at: AT + 60,
+      }),
+    ),
+    rawEvent(
+      'voucher_attested',
+      105,
+      voucherContract,
+      [address(ATTESTER)],
+      nativeToScVal({
+        voucher_id: 1n,
+        attested_at: AT + 120,
+        dispute_deadline: AT + 7 * 86_400,
+      }),
+    ),
+    rawEvent(
+      'receipt_minted',
+      106,
+      receiptContract,
+      [nativeToScVal(Buffer.from(BENEFICIARY_REF, 'hex')), address(PROVIDER)],
+      nativeToScVal({
+        voucher_id: 1n,
+        service_code: 101,
+        amount: 30000000n,
+        settled_at: AT + 180,
+      }),
+    ),
+    rawEvent(
+      'voucher_settled',
+      107,
+      voucherContract,
+      [address(PROVIDER)],
+      nativeToScVal({
+        voucher_id: 1n,
+        net: 29700000n,
+        fee: 300000n,
+      }),
+    ),
+    rawEvent(
+      'admin_proposed',
+      108,
+      registry,
+      [address(FUNDER)],
+      nativeToScVal({
+        pending_admin: ATTESTER,
+      }),
+    ),
+    rawEvent(
+      'admin_changed',
+      109,
+      registry,
+      [],
+      nativeToScVal({
+        new_admin: ATTESTER,
+      }),
+    ),
+    rawEvent(
+      'dripped',
+      110,
+      registry,
+      [address(FUNDER)],
+      nativeToScVal({
+        amount: 100000000n,
+      }),
+    ),
+    rawEvent('service_removed', 111, registry, [address(PROVIDER)], nativeToScVal({ code: 101 })),
   ];
 }
 
@@ -299,8 +353,9 @@ describe('indexer replay', () => {
     expect(await prisma.failedEvent.count()).toBe(0);
 
     // One row per on-chain id: the counters behind /stats must not double.
-    expect(await prisma.governanceEvent.findUnique({ where: { id: 'admin_proposed-108' } }))
-      .not.toBeNull();
+    expect(
+      await prisma.governanceEvent.findUnique({ where: { id: 'admin_proposed-108' } }),
+    ).not.toBeNull();
     expect(await prisma.faucetDrip.findUnique({ where: { id: 'dripped-110' } })).not.toBeNull();
   });
 });

@@ -76,13 +76,11 @@ async function sleep(ms, signal) {
     if (signal.aborted)
         throw abortFailure(signal);
     await new Promise((resolve, reject) => {
-        let handle;
         const onAbort = () => {
-            if (handle !== undefined)
-                clearTimeout(handle);
+            clearTimeout(handle);
             reject(abortFailure(signal));
         };
-        handle = setTimeout(() => {
+        const handle = setTimeout(() => {
             signal.removeEventListener('abort', onAbort);
             resolve();
         }, delay);
@@ -163,7 +161,8 @@ export class Client {
                 if (attempt > this.retries || !isRetryableStatus(res.status))
                     return res;
                 // The server's own wait beats our guess at one.
-                const wait = retryAfterMs(res.headers.get('retry-after'), this.now()) ?? backoffMs(attempt, this.random);
+                const wait = retryAfterMs(res.headers.get('retry-after'), this.now()) ??
+                    backoffMs(attempt, this.random);
                 // Nobody reads a response we are throwing away, so release its
                 // stream: an unread body pins the connection until it is collected,
                 // which is the opposite of what a retry during an outage needs.

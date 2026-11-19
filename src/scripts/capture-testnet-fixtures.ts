@@ -3,9 +3,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { scValToNative, xdr } from '@stellar/stellar-sdk';
-import type { rpc } from "@stellar/stellar-sdk";
+import type { rpc } from '@stellar/stellar-sdk';
 
-type GetEventsParams = Parameters<rpc.Server["getEvents"]>[0];
+type GetEventsParams = Parameters<rpc.Server['getEvents']>[0];
 
 import { env, INDEXED_CONTRACTS } from '../env.js';
 import { server } from '../stellar/client.js';
@@ -85,7 +85,7 @@ export function scValBase64(input: unknown): string {
 /** The event name in an RPC event's first topic entry (a symbol ScVal). */
 export function eventNameOf(raw: { topic: unknown[] }): string | null {
   try {
-    const name = scValToNative(xdr.ScVal.fromXDR(scValBase64(raw.topic[0]), 'base64'));
+    const name: unknown = scValToNative(xdr.ScVal.fromXDR(scValBase64(raw.topic[0]), 'base64'));
     return typeof name === 'string' ? name : null;
   } catch {
     return null;
@@ -144,7 +144,7 @@ export async function scanWindow(
 export async function getEventsWindow(
   lo: number,
   hi: number,
-  filters: GetEventsParams["filters"],
+  filters: GetEventsParams['filters'],
 ): Promise<Awaited<ReturnType<typeof server.getEvents>>> {
   const request = (from: number) =>
     server.getEvents({ startLedger: from, endLedger: hi, filters, limit: 200 });

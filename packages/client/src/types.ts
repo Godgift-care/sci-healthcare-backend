@@ -93,13 +93,7 @@ export type ServiceCatalogueItem = {
   }[];
 };
 
-export type VoucherStatus =
-  | 'Funded'
-  | 'Claimed'
-  | 'Attested'
-  | 'Settled'
-  | 'Disputed'
-  | 'Refunded';
+export type VoucherStatus = 'Funded' | 'Claimed' | 'Attested' | 'Settled' | 'Disputed' | 'Refunded';
 
 export type Voucher = {
   id: string;

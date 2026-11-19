@@ -169,7 +169,9 @@ describe('WebhookDispatcher delivery', () => {
   });
 
   it('retries a 500 and does not deliver again until the backoff elapses', async () => {
-    const fetchImpl = vi.fn(async () => new Response('boom', { status: 500 })) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(
+      async () => new Response('boom', { status: 500 }),
+    ) as unknown as typeof fetch;
     await queue({ event: 'voucher_created', voucherId: '7', status: 'Funded', ledger: 10 });
 
     const dispatcher = dispatcherWith(fetchImpl);
@@ -189,7 +191,9 @@ describe('WebhookDispatcher delivery', () => {
   });
 
   it('gives up immediately on a permanent client error', async () => {
-    const fetchImpl = vi.fn(async () => new Response('nope', { status: 404 })) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(
+      async () => new Response('nope', { status: 404 }),
+    ) as unknown as typeof fetch;
     await queue({ event: 'voucher_claimed', voucherId: '8', status: 'Claimed', ledger: 11 });
 
     await dispatcherWith(fetchImpl).deliverPending();
@@ -201,7 +205,9 @@ describe('WebhookDispatcher delivery', () => {
   });
 
   it('abandons after the attempt cap', async () => {
-    const fetchImpl = vi.fn(async () => new Response('down', { status: 503 })) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(
+      async () => new Response('down', { status: 503 }),
+    ) as unknown as typeof fetch;
     await queue({ event: 'voucher_refunded', voucherId: '9', status: 'Refunded', ledger: 12 });
 
     const dispatcher = dispatcherWith(fetchImpl, {
@@ -345,7 +351,9 @@ describe('webhook outbox and the indexer transaction', () => {
     expect(voucher.status).toBe('Refunded');
     expect(voucher.refundedAt).toEqual(closedAt);
 
-    const row = await prisma.webhookDelivery.findFirstOrThrow({ where: { event: 'voucher_refunded' } });
+    const row = await prisma.webhookDelivery.findFirstOrThrow({
+      where: { event: 'voucher_refunded' },
+    });
     expect(row.status).toBe('Refunded');
   });
 });
@@ -400,7 +408,11 @@ describe('WebhookDispatcher lifecycle', () => {
   it('does not schedule anything when no endpoint is configured', async () => {
     vi.useFakeTimers();
     try {
-      const dispatcher = new WebhookDispatcher(fakeLog(), { urls: [], secret: SECRET, intervalMs: 1_000 });
+      const dispatcher = new WebhookDispatcher(fakeLog(), {
+        urls: [],
+        secret: SECRET,
+        intervalMs: 1_000,
+      });
       const deliver = vi.spyOn(dispatcher, 'deliverPending').mockResolvedValue(0);
       dispatcher.start();
       await vi.advanceTimersByTimeAsync(5_000);

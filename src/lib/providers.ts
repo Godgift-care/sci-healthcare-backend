@@ -49,6 +49,17 @@ export type ProviderDetail = {
   status: string;
   registeredAt: Date;
   metadata: ProviderMetadata | null;
+  /**
+   * The clinic's `max_outstanding` cap from the registry (`0` means
+   * unlimited), or null until a `capacity_changed` event is observed.
+   */
+  capacity: number | null;
+  /**
+   * How many vouchers are open at this clinic right now: the count of
+   * Funded and Claimed vouchers. With `capacity` it lets a funder see a
+   * clinic is full before funding and the transaction reverts.
+   */
+  openVouchers: number;
   services: {
     code: number;
     label: string;
@@ -66,16 +77,24 @@ export type ProviderDetail = {
  * embedded clinic is the same object the separate endpoint serves. Services
  * are ordered by code here rather than left in storage order, which makes the
  * two responses comparable and the catalogue stable between calls.
+ *
+ * `openVouchers` is passed in rather than read here: the detail route counts
+ * one clinic and `providerDetails()` counts a whole page, and doing the count
+ * per clinic inside this pure function would turn the page into an N+1.
  */
-export function serialiseProviderDetail(p: {
-  address: string;
-  name: string;
-  country: string;
-  status: string;
-  registeredAt: Date;
-  metadata: string | null;
-  services: readonly { code: number; label: string; price: string; active: boolean }[];
-}): ProviderDetail {
+export function serialiseProviderDetail(
+  p: {
+    address: string;
+    name: string;
+    country: string;
+    status: string;
+    registeredAt: Date;
+    metadata: string | null;
+    capacity: number | null;
+    services: readonly { code: number; label: string; price: string; active: boolean }[];
+  },
+  openVouchers: number,
+): ProviderDetail {
   return {
     address: p.address,
     name: p.name,
@@ -83,6 +102,8 @@ export function serialiseProviderDetail(p: {
     status: p.status,
     registeredAt: p.registeredAt,
     metadata: providerMetadataOf(p),
+    capacity: p.capacity,
+    openVouchers,
     services: [...p.services]
       .sort((a, b) => a.code - b.code)
       .map((s) => ({
@@ -93,6 +114,23 @@ export function serialiseProviderDetail(p: {
         active: s.active,
       })),
   };
+}
+
+/**
+ * The Funded-plus-Claimed voucher count per clinic, resolved for a batch of
+ * addresses in one grouped query so a provider page never becomes one count
+ * per row.
+ */
+export async function openVoucherCounts(
+  addresses: readonly string[],
+): Promise<Map<string, number>> {
+  if (addresses.length === 0) return new Map();
+  const grouped = await prisma.voucher.groupBy({
+    by: ['providerAddress'],
+    where: { providerAddress: { in: [...addresses] }, status: { in: ['Funded', 'Claimed'] } },
+    _count: { _all: true },
+  });
+  return new Map(grouped.map((g) => [g.providerAddress, g._count._all]));
 }
 
 /**
@@ -110,9 +148,14 @@ export async function providerDetails(
   const addresses = [...new Set(rows.map((r) => r.providerAddress))];
   if (addresses.length === 0) return new Map();
 
-  const providers = await prisma.provider.findMany({
-    where: { address: { in: addresses } },
-    include: { services: true },
-  });
-  return new Map(providers.map((p) => [p.address, serialiseProviderDetail(p)]));
+  const [providers, openBy] = await Promise.all([
+    prisma.provider.findMany({
+      where: { address: { in: addresses } },
+      include: { services: true },
+    }),
+    openVoucherCounts(addresses),
+  ]);
+  return new Map(
+    providers.map((p) => [p.address, serialiseProviderDetail(p, openBy.get(p.address) ?? 0)]),
+  );
 }

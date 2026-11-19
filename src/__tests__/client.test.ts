@@ -40,13 +40,7 @@ describe('@sci-healthcare/client', () => {
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url,
       );
       const method = (init?.method ?? 'GET') as
-        | 'GET'
-        | 'POST'
-        | 'PUT'
-        | 'DELETE'
-        | 'OPTIONS'
-        | 'HEAD'
-        | 'PATCH';
+        'GET' | 'POST' | 'PUT' | 'DELETE' | 'OPTIONS' | 'HEAD' | 'PATCH';
 
       const headers: Record<string, string> = {};
       if (init?.headers) {
@@ -152,9 +146,7 @@ describe('@sci-healthcare/client', () => {
   });
 
   it('throws typed ApiError on validation failures', async () => {
-    await expect(
-      client.vouchers({ minAmount: '100', maxAmount: '50' }),
-    ).rejects.toThrow(ApiError);
+    await expect(client.vouchers({ minAmount: '100', maxAmount: '50' })).rejects.toThrow(ApiError);
 
     try {
       await client.vouchers({ minAmount: '100', maxAmount: '50' });
@@ -229,7 +221,11 @@ function scriptedFetch(make: ResponseFactory) {
   return { fetch: fetchImpl, calls: () => calls, times };
 }
 
-function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+function jsonResponse(
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify(body), {
     status,
     statusText: status === 200 ? 'OK' : 'Unavailable',
@@ -363,9 +359,13 @@ describe('@sci-healthcare/client retry backoff (#285)', () => {
   it('reads an HTTP-date Retry-After against its own clock', async () => {
     const scripted = scriptedFetch((attempt) =>
       attempt === 1
-        ? jsonResponse(429, { message: 'later' }, {
-            'retry-after': new Date('2026-01-01T00:00:05Z').toUTCString(),
-          })
+        ? jsonResponse(
+            429,
+            { message: 'later' },
+            {
+              'retry-after': new Date('2026-01-01T00:00:05Z').toUTCString(),
+            },
+          )
         : jsonResponse(200, HEALTH_OK),
     );
     const client = createClient({
@@ -385,7 +385,9 @@ describe('@sci-healthcare/client retry backoff (#285)', () => {
 
   it('retries a CSV export too, and still hands back the text', async () => {
     const scripted = scriptedFetch((attempt) =>
-      attempt === 1 ? jsonResponse(503, { message: 'cold start' }) : new Response('id,status\n', { status: 200 }),
+      attempt === 1
+        ? jsonResponse(503, { message: 'cold start' })
+        : new Response('id,status\n', { status: 200 }),
     );
     const client = createClient({
       baseUrl: 'http://api.invalid',
@@ -487,4 +489,3 @@ describe('@sci-healthcare/client retry helpers (#285)', () => {
     expect(retryAfterMs(stamp, Date.parse(stamp) + 60_000)).toBe(0);
   });
 });
-

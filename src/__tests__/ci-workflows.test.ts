@@ -85,7 +85,13 @@ describe('every workflow', () => {
     // would only widen what a compromised action could do to the repository.
     // automerge.yml and security.yml are excluded on purpose: they merge and
     // post statuses, which is the write they exist for.
-    for (const name of ['ci.yml', 'quickstart-integration.yml', 'codeql.yml', 'dependency-review.yml', 'monitor.yml']) {
+    for (const name of [
+      'ci.yml',
+      'quickstart-integration.yml',
+      'codeql.yml',
+      'dependency-review.yml',
+      'monitor.yml',
+    ]) {
       const yml = workflow(name);
       expect(yml).toMatch(/contents: read/);
       expect(yml).not.toMatch(/contents: write/);

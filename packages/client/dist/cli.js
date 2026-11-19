@@ -151,7 +151,9 @@ const COMMANDS = [
         examples: ['sci stats-daily --days 7'],
         run: async ({ client, flags }) => {
             const days = intFlag(flags, 'days');
-            return { data: days === undefined ? await client.dailyStats() : await client.dailyStats(days) };
+            return {
+                data: days === undefined ? await client.dailyStats() : await client.dailyStats(days),
+            };
         },
     },
     {
@@ -249,7 +251,7 @@ const COMMANDS = [
         usage: 'sci vouchers [--funder G...] [--provider G...] [--beneficiary-ref <ref>] [--status Funded,Claimed] [--sort createdAt|expiresAt|amount] [--order asc|desc] [--limit <n>]',
         examples: [
             'sci vouchers --provider GDOO... --status Funded --limit 10',
-            'sci vouchers --funder GDUP... --sort expiresAt --order asc --json | jq -r \'.vouchers[].id\'',
+            "sci vouchers --funder GDUP... --sort expiresAt --order asc --json | jq -r '.vouchers[].id'",
         ],
         run: async ({ client, flags }) => ({
             data: await client.vouchers(paramsFrom(flags, [
@@ -346,7 +348,10 @@ export function renderTable(rows) {
         }
     }
     const widths = columns.map((col) => Math.max(col.length, ...rows.map((row) => cell(row[col]).length)));
-    const line = (cells) => cells.map((text, i) => text.padEnd(widths[i])).join('  ').trimEnd();
+    const line = (cells) => cells
+        .map((text, i) => text.padEnd(widths[i]))
+        .join('  ')
+        .trimEnd();
     const lines = [line(columns), line(widths.map((w) => '-'.repeat(w)))];
     for (const row of rows)
         lines.push(line(columns.map((col) => cell(row[col]))));

@@ -132,9 +132,7 @@ export class FailoverRpcServer {
     return this.pool.allUrls;
   }
 
-  getHealth(
-    ...args: Parameters<rpc.Server['getHealth']>
-  ): ReturnType<rpc.Server['getHealth']> {
+  getHealth(...args: Parameters<rpc.Server['getHealth']>): ReturnType<rpc.Server['getHealth']> {
     return this.pool.run((s) => s.getHealth(...args));
   }
 
@@ -144,9 +142,7 @@ export class FailoverRpcServer {
     return this.pool.run((s) => s.getLatestLedger(...args));
   }
 
-  getEvents(
-    ...args: Parameters<rpc.Server['getEvents']>
-  ): ReturnType<rpc.Server['getEvents']> {
+  getEvents(...args: Parameters<rpc.Server['getEvents']>): ReturnType<rpc.Server['getEvents']> {
     return this.pool.run((s) => s.getEvents(...args));
   }
 

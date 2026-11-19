@@ -81,12 +81,7 @@ export function createWebhookServer(options: WebhookServerOptions): Server {
           onMessagePosted(message);
         }
 
-        const telegramRes = await sendTelegramNotification(
-          botToken,
-          chatId,
-          message,
-          fetchImpl,
-        );
+        const telegramRes = await sendTelegramNotification(botToken, chatId, message, fetchImpl);
 
         if (!telegramRes.ok) {
           logger(`Failed to post to Telegram: ${telegramRes.error}`);

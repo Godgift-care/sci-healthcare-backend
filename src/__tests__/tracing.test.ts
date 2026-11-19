@@ -8,11 +8,7 @@ import { prisma } from '../db.js';
 import { server } from '../stellar/client.js';
 import { Indexer } from '../stellar/indexer.js';
 import { collectEvents } from '../stellar/paging.js';
-import {
-  isTracingEnabled,
-  startTracingIfConfigured,
-  withSpan,
-} from '../tracing.js';
+import { isTracingEnabled, startTracingIfConfigured, withSpan } from '../tracing.js';
 
 /**
  * OpenTelemetry tracing (#54).
@@ -165,7 +161,14 @@ describe('withSpan', () => {
     await prisma.indexerState.upsert({
       where: { id: 1 },
       create: { id: 1, lastLedger: 100 },
-      update: { lastLedger: 100, leaseOwner: null, leaseExpiresAt: null, gap: false, gapOldestLedger: null, gapCursorLedger: null },
+      update: {
+        lastLedger: 100,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        gap: false,
+        gapOldestLedger: null,
+        gapCursorLedger: null,
+      },
     });
     vi.spyOn(server, 'getHealth').mockResolvedValue({
       oldestLedger: 1,

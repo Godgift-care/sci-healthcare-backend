@@ -42,8 +42,12 @@ function registered(address: string) {
 const failing = () => base('bad-1', [sym('provider_status_changed')], nativeToScVal({ status: 1 }));
 
 function fakeLog() {
-  return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as
-    FastifyBaseLogger;
+  return {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  } as unknown as FastifyBaseLogger;
 }
 
 function stub(events: unknown[], throughLedger = 101): void {

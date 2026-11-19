@@ -186,9 +186,7 @@ describe('reconcile', () => {
     await seedVoucher('1');
     await seedVoucher('2', { status: 'Claimed', claimedAt: new Date(1_765_000_000 * 1000) });
     const read = vi.fn(async (id: string) =>
-      id === '2'
-        ? chainVoucher({ id: 2n, status: 1, claimed_at: 1_765_000_000n })
-        : chainVoucher(),
+      id === '2' ? chainVoucher({ id: 2n, status: 1, claimed_at: 1_765_000_000n }) : chainVoucher(),
     );
 
     const result = await reconcile({ read, log: fakeLog() });

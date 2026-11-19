@@ -47,8 +47,18 @@ function declaredMetrics(): string[] {
 
 /** PromQL functions and labels the dashboard's expressions may use. */
 const promqlKeywords = new Set([
-  'rate', 'sum', 'histogram_quantile', 'by', 'le', 'name', 'route', 'method', 'status_code',
-  'A', 'B', 'C',
+  'rate',
+  'sum',
+  'histogram_quantile',
+  'by',
+  'le',
+  'name',
+  'route',
+  'method',
+  'status_code',
+  'A',
+  'B',
+  'C',
 ]);
 
 /**

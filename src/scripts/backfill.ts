@@ -5,7 +5,7 @@ import pino from 'pino';
 import { disconnect, prisma } from '../db.js';
 import { env, INDEXED_CONTRACTS } from '../env.js';
 import { server } from '../stellar/client.js';
-import { decodeEvent, type DecodedEvent } from '../stellar/events.js';
+import { decodeEvent } from '../stellar/events.js';
 import { recordFailure } from '../stellar/failed.js';
 import { Indexer } from '../stellar/indexer.js';
 import { collectEvents } from '../stellar/paging.js';
@@ -64,10 +64,7 @@ async function main(): Promise<void> {
         totalApplied += 1;
       } catch (err) {
         await recordFailure(prisma, raw as never, decoded, err);
-        log.warn(
-          { err, event: (decoded as DecodedEvent).name, ledger: (decoded as DecodedEvent).ledger },
-          'backfill: event skipped',
-        );
+        log.warn({ err, event: decoded.name, ledger: decoded.ledger }, 'backfill: event skipped');
       }
     }
 

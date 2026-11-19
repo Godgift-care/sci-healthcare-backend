@@ -19,6 +19,8 @@ import { asHex, decodeEvent, TOPIC_FIELDS } from '../stellar/events.js';
  * listed with their transaction hashes in the PR body for #64.
  */
 const BLOCKED_REASONS: Record<string, string> = {
+  capacity_changed:
+    'registry.set_capacity is signed by the clinic itself (`provider_addr.require_auth()`), not the admin; the only registered provider on the dormant deployment is the seeded clinic, whose key we do not hold, so no capacity_changed event exists in the retained testnet history to capture',
   provider_status_changed:
     'registry.set_provider_status is admin-only; the live admin GA64IEG…WS4P key is not held by us',
   provider_metadata_changed:
@@ -155,9 +157,7 @@ describe('testnet decoder fixtures', () => {
 
       it('carries provenance back to a real testnet transaction', () => {
         expect(fixture._provenance.source).toBe('soroban-rpc.getEvents');
-        expect(fixture._provenance.networkPassphrase).toBe(
-          'Test SDF Network ; September 2015',
-        );
+        expect(fixture._provenance.networkPassphrase).toBe('Test SDF Network ; September 2015');
         expect(fixture._provenance.txHash).toMatch(/^[0-9a-f]{64}$/);
         expect(Number.isInteger(fixture._provenance.ledger)).toBe(true);
         expect(fixture._provenance.ledger).toBeGreaterThan(0);

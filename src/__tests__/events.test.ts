@@ -87,10 +87,7 @@ describe('decodeEvent', () => {
 
   it('decodes an event whose only payload is topics', () => {
     const decoded = decodeEvent(
-      raw(
-        [sym('attester_added'), Address.fromString(CLINIC).toScVal()],
-        nativeToScVal({}),
-      ),
+      raw([sym('attester_added'), Address.fromString(CLINIC).toScVal()], nativeToScVal({})),
     );
     expect(decoded!.fields.attester).toBe(CLINIC);
   });

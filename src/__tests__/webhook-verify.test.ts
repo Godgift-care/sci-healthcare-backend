@@ -35,25 +35,43 @@ describe('verifyWebhook, body-only signatures (#288)', () => {
   });
 
   it('accepts the sha256= prefix and either header case', () => {
-    expect(verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: `sha256=${BODY_DIGEST}` }, SECRET)).toBe(true);
-    expect(verifyWebhook(BODY, { 'X-SCI-Signature': BODY_DIGEST.toUpperCase() }, SECRET)).toBe(true);
+    expect(
+      verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: `sha256=${BODY_DIGEST}` }, SECRET),
+    ).toBe(true);
+    expect(verifyWebhook(BODY, { 'X-SCI-Signature': BODY_DIGEST.toUpperCase() }, SECRET)).toBe(
+      true,
+    );
   });
 
   it('accepts a Headers instance and a repeated header', () => {
-    expect(verifyWebhook(BODY, new Headers({ [WEBHOOK_SIGNATURE_HEADER]: BODY_DIGEST }), SECRET)).toBe(true);
-    expect(verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: [BODY_DIGEST, 'junk'] }, SECRET)).toBe(true);
+    expect(
+      verifyWebhook(BODY, new Headers({ [WEBHOOK_SIGNATURE_HEADER]: BODY_DIGEST }), SECRET),
+    ).toBe(true);
+    expect(verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: [BODY_DIGEST, 'junk'] }, SECRET)).toBe(
+      true,
+    );
   });
 
   it('signs the bytes, not a re-serialisation of them', () => {
     const asBuffer = Buffer.from(BODY, 'utf8');
     expect(verifyWebhook(asBuffer, { [WEBHOOK_SIGNATURE_HEADER]: BODY_DIGEST }, SECRET)).toBe(true);
     // Whitespace inside the body is part of what was signed.
-    expect(verifyWebhook(`${BODY} `, { [WEBHOOK_SIGNATURE_HEADER]: BODY_DIGEST }, SECRET)).toBe(false);
+    expect(verifyWebhook(`${BODY} `, { [WEBHOOK_SIGNATURE_HEADER]: BODY_DIGEST }, SECRET)).toBe(
+      false,
+    );
   });
 
   it('rejects a tampered body, another secret, and a malformed header', () => {
-    expect(verifyWebhook(`${BODY.slice(0, -1)}, "ledger": 5124}`, { [WEBHOOK_SIGNATURE_HEADER]: BODY_DIGEST }, SECRET)).toBe(false);
-    expect(verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: hex(BODY) }, 'other-secret')).toBe(false);
+    expect(
+      verifyWebhook(
+        `${BODY.slice(0, -1)}, "ledger": 5124}`,
+        { [WEBHOOK_SIGNATURE_HEADER]: BODY_DIGEST },
+        SECRET,
+      ),
+    ).toBe(false);
+    expect(verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: hex(BODY) }, 'other-secret')).toBe(
+      false,
+    );
     for (const header of ['', '   ', 'not-hex', BODY_DIGEST.slice(0, 63), `${BODY_DIGEST}00`]) {
       expect(verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: header }, SECRET)).toBe(false);
     }
@@ -68,7 +86,11 @@ describe('verifyWebhook, body-only signatures (#288)', () => {
 
   it('reads the header it is told to read', () => {
     const signature = hex(BODY);
-    expect(verifyWebhook(BODY, { 'x-other-signature': signature }, SECRET, { header: 'x-other-signature' })).toBe(true);
+    expect(
+      verifyWebhook(BODY, { 'x-other-signature': signature }, SECRET, {
+        header: 'x-other-signature',
+      }),
+    ).toBe(true);
     expect(verifyWebhook(BODY, { 'x-other-signature': signature }, SECRET)).toBe(false);
   });
 });
@@ -84,33 +106,24 @@ describe('verifyWebhook, timestamped signatures (#288)', () => {
     ).toBe(true);
     // The window is symmetric and inclusive at the edge.
     expect(
-      verifyWebhook(
-        BODY,
-        header(STAMP, STAMPED_DIGEST),
-        SECRET,
-        { now: () => STAMPED_NOW + WEBHOOK_TIMESTAMP_TOLERANCE_SEC * 1000 },
-      ),
+      verifyWebhook(BODY, header(STAMP, STAMPED_DIGEST), SECRET, {
+        now: () => STAMPED_NOW + WEBHOOK_TIMESTAMP_TOLERANCE_SEC * 1000,
+      }),
     ).toBe(true);
   });
 
   it('rejects a replayed header once the timestamp is old (#288)', () => {
     // Same valid signature, one second past the tolerance.
     expect(
-      verifyWebhook(
-        BODY,
-        header(STAMP, STAMPED_DIGEST),
-        SECRET,
-        { now: () => STAMPED_NOW + (WEBHOOK_TIMESTAMP_TOLERANCE_SEC + 1) * 1000 },
-      ),
+      verifyWebhook(BODY, header(STAMP, STAMPED_DIGEST), SECRET, {
+        now: () => STAMPED_NOW + (WEBHOOK_TIMESTAMP_TOLERANCE_SEC + 1) * 1000,
+      }),
     ).toBe(false);
     // ...and a clock that is ahead of the timestamp by the same amount.
     expect(
-      verifyWebhook(
-        BODY,
-        header(STAMP, STAMPED_DIGEST),
-        SECRET,
-        { now: () => STAMPED_NOW - (WEBHOOK_TIMESTAMP_TOLERANCE_SEC + 1) * 1000 },
-      ),
+      verifyWebhook(BODY, header(STAMP, STAMPED_DIGEST), SECRET, {
+        now: () => STAMPED_NOW - (WEBHOOK_TIMESTAMP_TOLERANCE_SEC + 1) * 1000,
+      }),
     ).toBe(false);
     expect(
       verifyWebhook(BODY, header(STAMP, STAMPED_DIGEST), SECRET, {
@@ -123,8 +136,12 @@ describe('verifyWebhook, timestamped signatures (#288)', () => {
   it('rejects a timestamp moved to stretch the window', () => {
     // A captured header cannot be re-dated: the timestamp is inside what
     // was signed, so moving it breaks the digest.
-    expect(verifyWebhook(BODY, header('1730000600', STAMPED_DIGEST), SECRET, { now: () => STAMPED_NOW })).toBe(false);
-    expect(verifyWebhook(BODY, header(STAMP, BODY_DIGEST), SECRET, { now: () => STAMPED_NOW })).toBe(false);
+    expect(
+      verifyWebhook(BODY, header('1730000600', STAMPED_DIGEST), SECRET, { now: () => STAMPED_NOW }),
+    ).toBe(false);
+    expect(
+      verifyWebhook(BODY, header(STAMP, BODY_DIGEST), SECRET, { now: () => STAMPED_NOW }),
+    ).toBe(false);
   });
 
   it('accepts any listed v1 and needs at least one', () => {
@@ -137,8 +154,16 @@ describe('verifyWebhook, timestamped signatures (#288)', () => {
         { now: () => STAMPED_NOW },
       ),
     ).toBe(true);
-    expect(verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: `t=${STAMP}` }, SECRET, { now: () => STAMPED_NOW })).toBe(false);
-    expect(verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: `t=soon,v1=${STAMPED_DIGEST}` }, SECRET, { now: () => STAMPED_NOW })).toBe(false);
+    expect(
+      verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: `t=${STAMP}` }, SECRET, {
+        now: () => STAMPED_NOW,
+      }),
+    ).toBe(false);
+    expect(
+      verifyWebhook(BODY, { [WEBHOOK_SIGNATURE_HEADER]: `t=soon,v1=${STAMPED_DIGEST}` }, SECRET, {
+        now: () => STAMPED_NOW,
+      }),
+    ).toBe(false);
   });
 });
 
