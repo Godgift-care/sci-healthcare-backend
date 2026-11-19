@@ -132,6 +132,8 @@ refund. Dispute columns stay `null` unless the voucher is disputed.
 | `attestedAt` | `DateTime?` | Yes | `voucher_attested.attested_at` | Null until attested |
 | `attestedBy` | `String?` | Yes | `voucher_attested` topic (`attester`) | Attester that signed; nullable so `prisma db push` can add it in place |
 | `disputeDeadline` | `DateTime?` | Yes | `voucher_attested.dispute_deadline` | Window in which the funder can dispute |
+| `disputeWindowSecs` | `Int?` | Yes | reconcile, `get_voucher_options` (`--fix`) | The window a funder chose for this voucher at funding time, in seconds, where `create_voucher_with_options` was used instead of the protocol-wide default (#319). No event carries it, so it is null until a `--fix` pass reads it. `disputeDeadline` remains the authoritative moment |
+| `presenceCommitment` | `String?` | Yes | reconcile, `get_voucher_options` (`--fix`) | SHA-256 of the secret the patient holds, which the clinic must reveal in `claim_with_proof` so a claim proves presence rather than asserting it (#319). Hex, like every other byte field; null when the voucher needs no proof |
 | `disputeReason` | `Int?` | Yes | `voucher_disputed.reason_code` | Meaning documented in `docs/protocol/lifecycle.md`; the contract treats it as opaque |
 | `disputeResolvedAt` | `DateTime?` | Yes | `dispute_resolved` ledger close time | Null until a dispute is resolved |
 | `disputeResolvedBy` | `String?` | Yes | `dispute_resolved.admin` | Admin address that resolved it |

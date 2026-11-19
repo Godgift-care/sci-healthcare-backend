@@ -4,7 +4,11 @@ import pino from 'pino';
 
 import { disconnect } from '../db.js';
 import { env } from '../env.js';
-import { readVoucherFromChain, reconcile } from '../stellar/reconcile.js';
+import {
+  readVoucherFromChain,
+  readVoucherOptionsFromChain,
+  reconcile,
+} from '../stellar/reconcile.js';
 
 /**
  * Compares the stored vouchers with the contracts and reports the drift.
@@ -41,6 +45,7 @@ async function main(): Promise<void> {
 
   const result = await reconcile({
     read: readVoucherFromChain,
+    readOptions: readVoucherOptionsFromChain,
     sample,
     fix: values.fix,
     log,

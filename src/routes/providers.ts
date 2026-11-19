@@ -6,7 +6,7 @@ import { fromBaseUnits } from '../lib/amounts.js';
 import { isPostgres } from '../lib/database.js';
 import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
-import { applyFields, parseFields } from '../lib/fields.js';
+import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { providerMetadataOf } from '../lib/provider-metadata.js';
 import { serialiseProviderDetail } from '../lib/providers.js';
@@ -44,6 +44,89 @@ const VOUCHER_STATUSES = [
   'Disputed',
   'Refunded',
 ] as const;
+
+/**
+ * The directory columns every page needs, whatever was asked for (#321):
+ * `registeredAt` and `address` are the keyset cursor, and the row cannot be
+ * paged or keyed without them.
+ */
+const PROVIDER_ALWAYS = ['address', 'registeredAt'] as const;
+
+/** The response fields that are not a column of the same name. */
+const PROVIDER_DERIVED: Record<string, readonly string[]> = {
+  // A relation, not a column, and read on request only — see below.
+  services: [],
+};
+
+/**
+ * The directory row narrowed to the columns the response is built from (#321).
+ *
+ * The service catalogue — a second, batched read of the whole price list —
+ * runs only when the fieldset asks for `services`; a card showing a clinic's
+ * hours and phone number does not download its prices to prove it did not
+ * need them. When it does run, it reads the three columns the list carries,
+ * where `include` brought the row's flags and foreign keys too.
+ *
+ * `metadata` — the cached off-chain document, up to 64 KB of JSON — is the
+ * column this cuts out of a request that does not want it, which is the whole
+ * reason a clinic list asking for hours and a phone number asked for them.
+ */
+function providerSelect(fieldSet: readonly string[] | null) {
+  return {
+    ...columnSelect(fieldSet, PROVIDER_FIELDS, PROVIDER_ALWAYS, PROVIDER_DERIVED),
+    ...(includesField(fieldSet, 'services')
+      ? {
+          services: {
+            where: { active: true },
+            select: { code: true, label: true, price: true },
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * The columns a directory row is built from (#321): everything the response
+ * can carry, so a narrower read is the same shape minus what was not asked
+ * for.
+ *
+ * Prisma derives the result type from the literal `true`s in a `select`, and
+ * this select is computed from the request, so the rows come through here
+ * instead. That is the contract, not a convenience: a column the response
+ * promises and the select forgot shows up as a missing value, and
+ * `sparse-fields.test.ts` compares every fieldable field against a full read.
+ */
+type DirectoryRow = {
+  address: string;
+  name: string;
+  country: string;
+  status: string;
+  registeredAt: Date;
+  metadata: string | null;
+  /** Absent on a page whose fieldset left `services` out (#321). */
+  services?: { code: number; label: string; price: string }[];
+};
+
+/** One clinic as the directory lists it. */
+function formatProvider(p: DirectoryRow) {
+  return {
+    address: p.address,
+    name: p.name,
+    country: p.country,
+    status: p.status,
+    registeredAt: p.registeredAt,
+    // The cached, validated document the clinic published off chain
+    // (#159); null until one was fetched, so clients treat it as
+    // optional rather than a second request they must make.
+    metadata: providerMetadataOf(p),
+    services: (p.services ?? []).map((s) => ({
+      code: s.code,
+      label: s.label,
+      price: s.price,
+      priceDisplay: fromBaseUnits(s.price),
+    })),
+  };
+}
 
 const providerStatsResponse = z.object({
   address: z.string(),
@@ -100,32 +183,6 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
       fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
 
-    const formatProvider = (p: {
-      address: string;
-      name: string;
-      country: string;
-      status: string;
-      registeredAt: Date;
-      metadata: string | null;
-      services: { code: number; label: string; price: string }[];
-    }) => ({
-      address: p.address,
-      name: p.name,
-      country: p.country,
-      status: p.status,
-      registeredAt: p.registeredAt,
-      // The cached, validated document the clinic published off chain
-      // (#159); null until one was fetched, so clients treat it as
-      // optional rather than a second request they must make.
-      metadata: providerMetadataOf(p),
-      services: p.services.map((s) => ({
-        code: s.code,
-        label: s.label,
-        price: s.price,
-        priceDisplay: fromBaseUnits(s.price),
-      })),
-    });
-
     if (cursor) {
       const decoded = decodeCursor(cursor);
       if (!decoded) {
@@ -141,12 +198,12 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
           { registeredAt: cursorDate, address: { lt: decoded.id } },
         ],
       };
-      const rows = await prisma.provider.findMany({
+      const rows = (await prisma.provider.findMany({
         where,
-        include: { services: { where: { active: true } } },
+        select: providerSelect(fieldSet),
         orderBy: [{ registeredAt: 'desc' }, { address: 'desc' }],
         take: limit + 1,
-      });
+      })) as unknown as DirectoryRow[];
       const hasNext = rows.length > limit;
       const page = hasNext ? rows.slice(0, limit) : rows;
       const last = page[page.length - 1];
@@ -163,11 +220,11 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     const [rows, total] = await Promise.all([
       prisma.provider.findMany({
         where,
-        include: { services: { where: { active: true } } },
+        select: providerSelect(fieldSet),
         orderBy: [{ registeredAt: 'desc' }, { address: 'desc' }],
         take: limit + 1,
         skip: offset,
-      }),
+      }) as unknown as Promise<DirectoryRow[]>,
       prisma.provider.count({ where }),
     ]);
 

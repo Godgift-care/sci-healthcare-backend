@@ -6,7 +6,7 @@ import { fromBaseUnits } from '../lib/amounts.js';
 import { isValidRef } from '../lib/beneficiary.js';
 import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
-import { applyFields, parseFields } from '../lib/fields.js';
+import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
 import { providerSummaries, type ProviderSummary } from '../lib/providers.js';
 import { serialiseReceipt } from '../lib/receipts.js';
 import { serviceLabels } from '../lib/services.js';
@@ -55,6 +55,94 @@ const RECEIPT_FIELDS = [
   'beneficiaryRef',
 ] as const;
 
+/**
+ * The same list as the clinic view answers it: a provider reading its own
+ * history is never served the patient reference, so the column is never
+ * read either (#321).
+ */
+const PROVIDER_VIEW_FIELDS = RECEIPT_FIELDS.filter((field) => field !== 'beneficiaryRef');
+
+/**
+ * The columns a receipt row is read from (#321).
+ *
+ * `voucherId` and `settledAt` are the keyset cursor; `providerAddress` and
+ * `serviceCode` key the two batched lookups; `amount` is what `amountDisplay`
+ * is formatted from, which the serialiser computes for every row.
+ */
+const RECEIPT_ALWAYS = ['voucherId', 'settledAt', 'providerAddress', 'serviceCode', 'amount'];
+
+/** The response fields that are not a column of the same name. */
+const RECEIPT_DERIVED: Record<string, readonly string[]> = {
+  provider: ['providerAddress'],
+  serviceLabel: ['providerAddress', 'serviceCode'],
+  amountDisplay: ['amount'],
+};
+
+/**
+ * The columns behind one receipt page, sparse or not (#321).
+ *
+ * `deploymentId` and any column the response does not carry are left out of
+ * every read, which is the saving that applies even to a client that asked
+ * for nothing.
+ */
+function receiptSelect(
+  fieldSet: readonly string[] | null,
+  isProviderView: boolean,
+): Record<string, true> {
+  const served: readonly string[] = isProviderView ? PROVIDER_VIEW_FIELDS : RECEIPT_FIELDS;
+  return columnSelect(
+    fieldSet === null ? null : fieldSet.filter((field) => served.includes(field)),
+    served,
+    RECEIPT_ALWAYS,
+    RECEIPT_DERIVED,
+  );
+}
+
+/**
+ * A receipt page row (#321).
+ *
+ * The five columns `serialiseReceipt()` is built from, plus the beneficiary
+ * reference — which only the patient view ever reads, and only when a field
+ * set asks for it.
+ *
+ * Prisma derives the result type from the literal `true`s in a `select`, and
+ * this select is computed from the request, so the rows come through here.
+ * The field set is what the response is checked against in
+ * `sparse-fields.test.ts`, field by field, so a column `receiptSelect()`
+ * stopped naming cannot pass as an absent value.
+ */
+type ListRow = {
+  voucherId: string;
+  providerAddress: string;
+  serviceCode: number;
+  amount: string;
+  settledAt: Date;
+  beneficiaryRef?: string;
+};
+
+/**
+ * The batched label read exists only to fill `serviceLabel`, so a page that
+ * did not ask for it does not pay for the round trip (#321). The serialiser
+ * still runs over every row; `applyFields` is what keeps the fields it could
+ * not fill out of the response.
+ */
+async function receiptLabels(
+  rows: readonly { providerAddress: string; serviceCode: number }[],
+  fieldSet: readonly string[] | null,
+): Promise<Map<string, string>> {
+  return includesField(fieldSet, 'serviceLabel')
+    ? serviceLabels(rows)
+    : new Map<string, string>();
+}
+
+/** The same for the one lookup that names the clinic behind the address. */
+async function receiptClinics(
+  rows: readonly { providerAddress: string }[],
+  fieldSet: readonly string[] | null,
+): Promise<Map<string, ProviderSummary>> {
+  return includesField(fieldSet, 'provider') ? providerSummaries(rows) : new Map();
+}
+
 export async function receiptRoutes(app: FastifyInstance): Promise<void> {
   /**
    * A patient's care history.
@@ -82,14 +170,7 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
     const isProviderView = Boolean(provider);
 
     const formatReceipt = (
-      r: {
-        voucherId: string;
-        providerAddress: string;
-        serviceCode: number;
-        amount: string;
-        settledAt: Date;
-        beneficiaryRef: string;
-      },
+      r: ListRow,
       labels: Map<string, string>,
       clinics: Map<string, ProviderSummary>,
     ) => {
@@ -114,16 +195,17 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
           { settledAt: cursorDate, voucherId: { lt: decoded.id } },
         ],
       };
-      const rows = await prisma.receipt.findMany({
+      const rows = (await prisma.receipt.findMany({
         where,
+        select: receiptSelect(fieldSet, isProviderView),
         orderBy: [{ settledAt: 'desc' }, { voucherId: 'desc' }],
         take: limit + 1,
-      });
+      })) as unknown as ListRow[];
       const hasNext = rows.length > limit;
       const page = hasNext ? rows.slice(0, limit) : rows;
       const [labels, clinics] = await Promise.all([
-        serviceLabels(page),
-        providerSummaries(page),
+        receiptLabels(page, fieldSet),
+        receiptClinics(page, fieldSet),
       ]);
       const last = page[page.length - 1];
       const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : null;
@@ -133,10 +215,11 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
     const [rows, total, spend] = await Promise.all([
       prisma.receipt.findMany({
         where: baseWhere,
+        select: receiptSelect(fieldSet, isProviderView),
         orderBy: [{ settledAt: 'desc' }, { voucherId: 'desc' }],
         take: limit + 1,
         skip: offset,
-      }),
+      }) as unknown as Promise<ListRow[]>,
       prisma.receipt.count({ where: baseWhere }),
       prisma.receipt.findMany({
         where: baseWhere,
@@ -147,8 +230,8 @@ export async function receiptRoutes(app: FastifyInstance): Promise<void> {
     const hasNext = rows.length > limit;
     const page = hasNext ? rows.slice(0, limit) : rows;
     const [labels, clinics] = await Promise.all([
-      serviceLabels(page),
-      providerSummaries(page),
+      receiptLabels(page, fieldSet),
+      receiptClinics(page, fieldSet),
     ]);
     const last = page[page.length - 1];
     const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : undefined;

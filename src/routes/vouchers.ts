@@ -11,7 +11,7 @@ import { voucherSeq } from '../lib/voucher-seq.js';
 import { csvRow } from '../lib/csv.js';
 import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
-import { applyFields, parseFields } from '../lib/fields.js';
+import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
 import { isRefundable, isSettleable, refundableAt } from '../lib/lifecycle.js';
 import { providerDetails } from '../lib/providers.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
@@ -45,6 +45,8 @@ const VOUCHER_FIELDS = [
   'attestedAt',
   'attestedBy',
   'disputeDeadline',
+  'disputeWindowSecs',
+  'presenceCommitment',
   'disputeReason',
   'disputeResolvedAt',
   'disputeResolvedBy',
@@ -61,6 +63,64 @@ const VOUCHER_FIELDS = [
 /** Related records a voucher response can embed (#167). */
 type Include = 'receipt' | 'provider';
 
+/**
+ * The columns a voucher page is read from (#321).
+ *
+ * `id` and `createdAt` are the keyset cursor. The rest are what `serialise()`
+ * touches before it knows what the client asked for: the amount it formats,
+ * the status and deadlines it classifies, and the provider/code pair that keys
+ * the batched label lookup. Everything else — the funder, the beneficiary
+ * reference, each lifecycle timestamp — is named only when the response
+ * carries it.
+ */
+const VOUCHER_ALWAYS = [
+  'id',
+  'createdAt',
+  'amount',
+  'status',
+  'expiresAt',
+  'disputeDeadline',
+  'providerAddress',
+  'serviceCode',
+] as const;
+
+/** The response fields that are not a column of the same name. */
+const VOUCHER_DERIVED: Record<string, readonly string[]> = {
+  provider: ['providerAddress'],
+  serviceLabel: ['providerAddress', 'serviceCode'],
+  amountDisplay: ['amount'],
+  refundableAt: ['status', 'expiresAt'],
+  isSettleable: ['status', 'disputeDeadline'],
+  isRefundable: ['status', 'expiresAt'],
+  // Not a column at all: a separate batched read, keyed by `id` (#167).
+  receipt: [],
+};
+
+/**
+ * The page narrowed to the columns the response is built from (#321).
+ *
+ * The provider relation is read as the clinic's name and country — the whole
+ * summary every row carries — where `include: { provider: true }` brought the
+ * entire registry row, cached off-chain metadata document included. It is
+ * skipped outright when the fieldset leaves `provider` out, because the
+ * summary costs a second round trip of its own.
+ *
+ * Prisma takes the result type from the literal `true`s in a `select`, and
+ * this one is computed from the request, so the rows reach `serialise()` as
+ * the `Row` type that says what the response is built from. A column `Row`
+ * names and this select forgets does not slip through as an `undefined` in a
+ * response: `sparse-fields.test.ts` reads every fieldable response field back
+ * against the unprojected row, and the amount and timing columns would take
+ * the route down with a 500 first.
+ */
+function voucherSelect(fieldSet: readonly string[] | null) {
+  return {
+    ...columnSelect(fieldSet, VOUCHER_FIELDS, VOUCHER_ALWAYS, VOUCHER_DERIVED),
+    ...(includesField(fieldSet, 'provider')
+      ? { provider: { select: { name: true, country: true } } }
+      : {}),
+  };
+}
 const INCLUDABLE = ['receipt', 'provider'] as const;
 
 /**
@@ -319,20 +379,31 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
                 { createdAt: at, seq: null },
               ];
         const cursorWhere: Prisma.VoucherWhereInput = { ...where, OR: afterCursor };
-        const rows = await prisma.voucher.findMany({
+        const rows = (await prisma.voucher.findMany({
           where: cursorWhere,
-          include: { provider: true },
+          select: voucherSelect(fieldSet),
           orderBy: [{ createdAt: 'desc' }, ...idOrder('desc')],
           take: limit + 1,
-        });
+        })) as unknown as Row[];
         const hasNext = rows.length > limit;
         const page = hasNext ? rows.slice(0, limit) : rows;
         const last = page[page.length - 1];
         const nextCursor = hasNext && last ? encodeCursor(last.createdAt, last.id) : null;
-        return { limit, nextCursor, vouchers: project(await serialisePage(page, includes)) };
+        return {
+          limit,
+          nextCursor,
+          vouchers: project(await serialisePage(page, includes, fieldSet)),
+        };
       }
 
-      const { rows, total } = await pageByWhere(where, sort, order, limit + 1, offset);
+      const { rows, total } = await pageByWhere(
+        where,
+        sort,
+        order,
+        limit + 1,
+        offset,
+        fieldSet,
+      );
 
       const hasNext = rows.length > limit;
       const page = hasNext ? rows.slice(0, limit) : rows;
@@ -343,7 +414,7 @@ export async function voucherRoutes(app: FastifyInstance): Promise<void> {
         limit,
         offset,
         nextCursor,
-        vouchers: project(await serialisePage(page, includes)),
+        vouchers: project(await serialisePage(page, includes, fieldSet)),
       };
     },
   );
@@ -584,6 +655,7 @@ async function pageByWhere(
   order: 'asc' | 'desc',
   limit: number,
   offset: number,
+  fieldSet: readonly string[] | null,
 ): Promise<{ rows: Row[]; total: number }> {
   const primary =
     sort === 'createdAt'
@@ -594,7 +666,7 @@ async function pageByWhere(
   const [rows, total] = await Promise.all([
     prisma.voucher.findMany({
       where,
-      include: { provider: true },
+      select: voucherSelect(fieldSet),
       // Sorted by `seq`, the numeric voucher id, not `id`: string order
       // would put voucher 10 before voucher 9 (#61).
       orderBy: [primary, ...idOrder(order)],
@@ -603,7 +675,7 @@ async function pageByWhere(
     }),
     prisma.voucher.count({ where }),
   ]);
-  return { rows, total };
+  return { rows: rows as unknown as Row[], total };
 }
 
 /**
@@ -637,15 +709,27 @@ function parseWithin(within: string, now: number): number {
 }
 
 /** Serialises one page, resolving any requested related records in batches. */
-async function serialisePage(rows: Row[], includes: ReadonlySet<Include>) {
-  const labels = await serviceLabels(rows);
+async function serialisePage(
+  rows: Row[],
+  includes: ReadonlySet<Include>,
+  fieldSet: readonly string[] | null,
+) {
+  // The label batch exists only to fill `serviceLabel`, so a page that did not
+  // ask for it does not pay for the round trip (#321).
+  const labels = includesField(fieldSet, 'serviceLabel')
+    ? await serviceLabels(rows)
+    : new Map<string, string>();
   // One `Receipt` batch and one `Provider` batch for the whole page (each
   // with its own single batched label/lookup query): the number of round
   // trips does not grow with the page size (#167). A requested record that
   // does not exist stays null rather than disappearing from the page.
+  // `?fields=` also gets a say (#321): a page projecting neither `receipt`
+  // nor `provider` cannot show the embed, so it does not read it either.
+  const embedReceipt = includes.has('receipt') && includesField(fieldSet, 'receipt');
+  const embedProvider = includes.has('provider') && includesField(fieldSet, 'provider');
   const [receipts, providers] = await Promise.all([
-    includes.has('receipt') ? receiptsByVoucherId(rows.map((v) => v.id)) : null,
-    includes.has('provider') ? providerDetails(rows) : null,
+    embedReceipt ? receiptsByVoucherId(rows.map((v) => v.id)) : null,
+    embedProvider ? providerDetails(rows) : null,
   ]);
 
   return rows.map((v) => {
@@ -670,6 +754,10 @@ type Row = {
   attestedAt: Date | null;
   attestedBy: string | null;
   disputeDeadline: Date | null;
+  /** The window the funder chose at funding time; null until read (#319). */
+  disputeWindowSecs: number | null;
+  /** SHA-256 the clinic must reveal to claim; null unless presence-gated (#319). */
+  presenceCommitment: string | null;
   disputeReason: number | null;
   disputeResolvedAt: Date | null;
   disputeResolvedBy: string | null;
@@ -677,7 +765,8 @@ type Row = {
   settledNet: string | null;
   settledFee: string | null;
   providerAddress: string;
-  provider: { name: string; country: string };
+  /** Absent on a page whose fieldset left `provider` out (#321). */
+  provider?: { name: string; country: string };
 };
 
 function serialise(v: Row, labels: Map<string, string>) {
@@ -686,7 +775,10 @@ function serialise(v: Row, labels: Map<string, string>) {
     id: v.id,
     funder: v.funder,
     beneficiaryRef: v.beneficiaryRef,
-    provider: {
+    // The clinic summary, or nothing at all when the page never read the
+    // relation because `?fields=` left it out (#321). A fieldset that asks
+    // for `provider` always reads it, so no client can see this as null.
+    provider: v.provider && {
       address: v.providerAddress,
       name: v.provider.name,
       country: v.provider.country,
@@ -702,6 +794,11 @@ function serialise(v: Row, labels: Map<string, string>) {
     attestedAt: v.attestedAt,
     attestedBy: v.attestedBy,
     disputeDeadline: v.disputeDeadline,
+    // The terms chosen at funding time, which no event announced (#319).
+    // Null until reconciliation has read `get_voucher_options` for this
+    // voucher; `disputeDeadline` remains the authoritative moment.
+    disputeWindowSecs: v.disputeWindowSecs,
+    presenceCommitment: v.presenceCommitment,
     disputeReason: v.disputeReason,
     disputeResolvedAt: v.disputeResolvedAt,
     disputeResolvedBy: v.disputeResolvedBy,

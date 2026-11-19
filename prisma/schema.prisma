@@ -120,6 +120,24 @@ model Voucher {
   /// Nullable so `prisma db push` adds it in place on the existing database.
   attestedBy      String?
   disputeDeadline DateTime?
+  /// The dispute window the funder chose for this voucher, in seconds, when
+  /// it was funded with `create_voucher_with_options` instead of taking the
+  /// protocol-wide `Config.dispute_window` (#319). `disputeDeadline` stays
+  /// the authoritative moment; this is the length behind it, which is what a
+  /// funder-facing screen needs instead of the default it cannot see.
+  ///
+  /// No contract event carries the options — `VoucherCreated` has only the
+  /// funding fields — so these arrive with reconciliation, which reads
+  /// `get_voucher_options` for every voucher that has not settled or
+  /// refunded. Null means either that no option was set, which is most
+  /// vouchers, or that nothing has looked yet.
+  disputeWindowSecs Int?
+  /// SHA-256 of a secret the funder gave the patient. When set, the clinic
+  /// can only claim with `claim_with_proof`, revealing it, so a claim shows
+  /// the patient was in front of the clinic rather than only saying so.
+  /// Null for a voucher claimable without a proof. Hex, like every other
+  /// byte field in this projection.
+  presenceCommitment String?
   /// reason_code from voucher_disputed; meanings are documented in
   /// docs/protocol/lifecycle.md. The contract treats it as opaque.
   disputeReason   Int?

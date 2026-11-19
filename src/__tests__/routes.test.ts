@@ -1544,6 +1544,26 @@ describe('GET /vouchers/:id', () => {
     expect(body).toMatchObject({ disputeOutcome: 'Provider', disputeResolvedBy: ADMIN });
     expect(body.disputeResolvedAt).not.toBeNull();
   });
+
+  it('returns the terms a funder chose at funding time (#319)', async () => {
+    // No event announces these; reconciliation writes them from
+    // `get_voucher_options`, and the detail route is where a funder can see
+    // the window it actually picked instead of the protocol default.
+    const commitment = 'ab'.repeat(32);
+    await prisma.voucher.update({
+      where: { id: '3' },
+      data: { disputeWindowSecs: 259_200, presenceCommitment: commitment },
+    });
+
+    const { body } = await get('/vouchers/3');
+    expect(body.disputeWindowSecs).toBe(259_200);
+    expect(body.presenceCommitment).toBe(commitment);
+  });
+
+  it('returns null for both on a voucher funded without options (#319)', async () => {
+    const { body } = await get('/vouchers/3');
+    expect(body).toMatchObject({ disputeWindowSecs: null, presenceCommitment: null });
+  });
 });
 
 describe('?include=receipt,provider (#167)', () => {
