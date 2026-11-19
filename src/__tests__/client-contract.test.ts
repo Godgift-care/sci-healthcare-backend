@@ -1,9 +1,12 @@
+import type { AddressInfo } from 'node:net';
+
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../app.js';
 import { prisma } from '../db.js';
 import { amountKey } from '../lib/amounts.js';
+import { publishVoucherSignals, type VoucherSignal } from '../lib/event-bus.js';
 import { server } from '../stellar/client.js';
 import { seedLocalData } from '../scripts/seed.js';
 import {
@@ -39,9 +42,11 @@ import {
   type ServicePriceChangeHistory,
   type ServicesResponse,
   type Stats,
+  type StreamHandle,
   type VersionInfo,
   type Voucher,
   type VoucherDetail,
+  type VoucherStreamEvent,
   type VouchersResponse,
 } from '../../packages/client/dist/index.js';
 
@@ -115,6 +120,9 @@ interface Shapes {
   GovernanceResponse: GovernanceResponse;
   GovernanceContract: GovernanceContract;
   GovernanceHistoryEvent: GovernanceHistoryEvent;
+  /** `GET /stream` answers no JSON body; its contract is the frame and the handle. */
+  StreamHandle: StreamHandle;
+  VoucherStreamEvent: VoucherStreamEvent;
 }
 
 /**
@@ -406,6 +414,22 @@ const CONTRACTS = {
     present: ['type', 'admin', 'pendingAdmin', 'ledger', 'occurredAt'],
     absent: [],
   },
+  StreamHandle: {
+    present: ['close', 'done', 'closed', 'lastEventId'],
+    absent: [],
+  },
+  /**
+   * The frame `GET /stream` pushes. The route serialises `VoucherSignal` from
+   * `src/lib/event-bus.ts` straight into `data:` and the client parses it as
+   * this type with no schema in between, so this listing is the only place the
+   * two declarations are compared. Exact on purpose: a key added to the signal
+   * reaches the frame, and a beneficiary reference arriving on a long-lived
+   * push channel is the one thing `stream.ts` says must never happen.
+   */
+  VoucherStreamEvent: {
+    present: ['at', 'ledger', 'providerAddress', 'status', 'txHash', 'type', 'voucherId'],
+    absent: [],
+  },
 } as const satisfies { [N in keyof Shapes]: Contract<Shapes[N]> };
 
 type ListedKeys<N extends keyof Shapes> =
@@ -442,6 +466,7 @@ const CONTRACTED_METHODS = [
   'service',
   'services',
   'stats',
+  'stream',
   'version',
   'voucher',
   'vouchers',
@@ -845,6 +870,68 @@ describe('@sci-healthcare/client contract (#310)', () => {
     expect(withHistory.length, 'no governance history to check').toBeGreaterThan(0);
     for (const contract of withHistory) {
       expectEveryShape('GovernanceHistoryEvent', contract.history);
+    }
+  });
+
+  /**
+   * `stream()` is the one method that answers with no JSON body, so its
+   * contract is the frame itself. This is also the only test here that binds a
+   * socket: `app.inject()` waits for the response to end and a stream never
+   * does. `client-stream.test.ts` drives the client against a hand-written SSE
+   * server, which proves the client parses what it is told; nothing proved the
+   * real route tells it what the client's type declares. That gap is this test.
+   */
+  it('stream', async () => {
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const { port } = app.server.address() as AddressInfo;
+    const live = createClient({ baseUrl: `http://127.0.0.1:${port}` });
+
+    const voucherId = 'contract-streamed';
+    const signal: VoucherSignal = {
+      type: 'voucher_settled',
+      voucherId,
+      providerAddress: CLINIC,
+      status: 'Settled',
+      ledger: TIP,
+      txHash: '3'.repeat(64),
+      at: new Date().toISOString(),
+    };
+
+    const frames: VoucherStreamEvent[] = [];
+    let opened = false;
+    const handle = live.stream(
+      { voucher: voucherId },
+      {
+        onOpen: () => {
+          opened = true;
+        },
+        onEvent: (frame) => {
+          frames.push(frame);
+        },
+      },
+    );
+
+    try {
+      await vi.waitFor(() => expect(opened, 'the stream never opened').toBe(true), {
+        timeout: 5_000,
+        interval: 20,
+      });
+      // Published only now that the route has registered its listener: the bus
+      // keeps no history, so a signal sent first is a frame that already went
+      // nowhere. The return value is the listener count, which is 1 for this
+      // connection alone — so the frame below can only have come from `GET /stream`.
+      expect(publishVoucherSignals([signal])).toBe(1);
+      await vi.waitFor(() => expect(frames).toHaveLength(1), { timeout: 5_000, interval: 20 });
+
+      const [frame] = frames;
+      expect(frame, 'no frame forwarded').toBeDefined();
+      expectShape('StreamHandle', handle);
+      expectShape('VoucherStreamEvent', frame);
+      expect(frame!.voucherId, 'the route forwarded a different voucher').toBe(voucherId);
+    } finally {
+      handle.close();
+      expect(handle.closed).toBe(true);
+      await handle.done;
     }
   });
 
