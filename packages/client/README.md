@@ -51,6 +51,59 @@ const receipts = await client.receipts({
 });
 ```
 
+## Live voucher stream
+
+`GET /stream` is forwarded by `client.stream()`, which keeps the connection
+open for you: it reconnects with a jittered exponential backoff, notices a
+socket that died quietly, and resumes from the last event id the server framed.
+
+```typescript
+import { createClient } from '@sci-healthcare/client';
+
+const client = createClient({ baseUrl: process.env.API_URL });
+
+// Exactly one filter, like the route: a voucher, or a clinic.
+const stream = client.stream(
+  { provider: 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK' },
+  {
+    onEvent: (event) => {
+      // { type, voucherId, providerAddress, status, ledger, txHash, at }
+      console.log(`${event.voucherId} is now ${event.status} on ledger ${event.ledger}`);
+    },
+    onOpen: () => console.log('streaming'),
+    onReconnect: ({ attempt, delayMs }) => console.warn(`reconnecting #${attempt} in ${delayMs}ms`),
+    onError: (error, { fatal }) => console.error(error, { fatal }),
+  },
+);
+
+// Later: stops reconnecting and abandons the open connection.
+stream.close();
+await stream.done;
+```
+
+It runs on `fetch` rather than `EventSource`, so the same call works in a
+browser and on Node 22, and so a reconnect can carry the `Last-Event-ID`
+header that `EventSource` cannot set from application code.
+
+Two things a caller must know:
+
+- **A gap is possible.** The backend frames no SSE `id:`, so `stream.lastEventId`
+  stays `null` and events that happened while disconnected are not replayed.
+  Treat the stream as a signal to re-read the JSON routes rather than as a
+  complete log; frames are only written after the transaction that produced
+  them commits, so those routes are never behind the last event delivered.
+- **The feed is live in a combined process.** Where the indexer runs separately
+  from the API, that API process has nothing to subscribe to and its streams
+  only beat, so the heartbeat timeout reconnects on a loop. Set
+  `{ heartbeatTimeoutMs }` above the server's `SSE_HEARTBEAT_MS` (15s default),
+  and point the client at a process that indexes.
+
+`onError` fires for every dropped connection and malformed frame; only a
+`{ fatal: true }` error closes the handle. A server that answers the stream
+with `400`, `401`, `403` or `404` is fatal, because reconnecting identically
+would be a loop rather than a retry. A `503 stream_full` is not: it means the
+instance is holding its `SSE_MAX_CONNECTIONS` and is worth trying again.
+
 ## Command-line interface
 
 The package also ships a `sci` binary, so the same routes are usable from
