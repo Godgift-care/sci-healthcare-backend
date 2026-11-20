@@ -2,14 +2,15 @@ import pino from 'pino';
 
 import { disconnect } from '../db.js';
 import { env } from '../env.js';
-import { purgeExpiredOperationalData } from '../lib/retention.js';
+import { pruneContractEvents, purgeExpiredOperationalData } from '../lib/retention.js';
 
 const log = pino({ level: env.LOG_LEVEL });
 
 async function main(): Promise<void> {
   const result = await purgeExpiredOperationalData();
-  log.info(result, 'retention cleanup complete');
-  console.log(JSON.stringify(result));
+  const events = await pruneContractEvents();
+  log.info({ ...result, events }, 'retention cleanup complete');
+  console.log(JSON.stringify({ ...result, events }));
   await disconnect();
 }
 
