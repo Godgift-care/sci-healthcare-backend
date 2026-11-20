@@ -39,7 +39,11 @@ function parseSchema(src: string): SchemaModel[] {
       const m = line.match(/^ {2}(\w+)\s+(\w+)(\[\])?(\?)?/);
       if (!m) continue;
       const fieldName = m[1]!;
-      const typeName = m[2]!;
+      // `scripts/use-postgres.sh` lands the `// pg:decimal` amount columns as
+      // `Decimal` (#273); the dictionary documents the logical type the API
+      // and SQLite use, a decimal string, so the Postgres CI run reads the
+      // same type as the committed schema.
+      const typeName = m[2]! === 'Decimal' && line.includes('// pg:decimal') ? 'String' : m[2]!;
       const isList = m[3] !== undefined;
       fields.push({
         name: fieldName,

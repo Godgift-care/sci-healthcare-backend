@@ -15,15 +15,15 @@ describe('Database constraints for statuses and amounts (#143)', () => {
         'ALTER TABLE "Provider" DROP CONSTRAINT IF EXISTS "provider_status_check"',
         'ALTER TABLE "Provider" ADD CONSTRAINT "provider_status_check" CHECK ("status" IN (\'Pending\', \'Active\', \'Suspended\'))',
         'ALTER TABLE "Voucher" DROP CONSTRAINT IF EXISTS "voucher_amount_non_negative"',
-        'ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_amount_non_negative" CHECK ("amount" ~ \'^[0-9]+$\')',
+        'ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_amount_non_negative" CHECK ("amount" >= 0)',
         'ALTER TABLE "Voucher" DROP CONSTRAINT IF EXISTS "voucher_settled_net_check"',
-        'ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_settled_net_check" CHECK ("settledNet" IS NULL OR "settledNet" ~ \'^[0-9]+$\')',
+        'ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_settled_net_check" CHECK ("settledNet" IS NULL OR "settledNet" >= 0)',
         'ALTER TABLE "Voucher" DROP CONSTRAINT IF EXISTS "voucher_settled_fee_check"',
-        'ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_settled_fee_check" CHECK ("settledFee" IS NULL OR "settledFee" ~ \'^[0-9]+$\')',
+        'ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_settled_fee_check" CHECK ("settledFee" IS NULL OR "settledFee" >= 0)',
         'ALTER TABLE "Receipt" DROP CONSTRAINT IF EXISTS "receipt_amount_non_negative"',
-        'ALTER TABLE "Receipt" ADD CONSTRAINT "receipt_amount_non_negative" CHECK ("amount" ~ \'^[0-9]+$\')',
+        'ALTER TABLE "Receipt" ADD CONSTRAINT "receipt_amount_non_negative" CHECK ("amount" >= 0)',
         'ALTER TABLE "Service" DROP CONSTRAINT IF EXISTS "service_price_non_negative"',
-        'ALTER TABLE "Service" ADD CONSTRAINT "service_price_non_negative" CHECK ("price" ~ \'^[0-9]+$\')',
+        'ALTER TABLE "Service" ADD CONSTRAINT "service_price_non_negative" CHECK ("price" >= 0)',
       ];
       for (const stmt of statements) {
         await prisma.$executeRawUnsafe(stmt);

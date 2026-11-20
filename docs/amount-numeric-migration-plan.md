@@ -1,6 +1,17 @@
 # Numeric amounts on Postgres — migration plan (#60)
 
-Status: **plan + pending SQL**. The SQL in
+> **Status update (#273): landed.** The migration now lives in
+> `prisma/migrations/20261119000001_amount_numeric_to_decimal` as
+> `NUMERIC(39,0)` (an i128 has at most 39 digits), the Postgres schema
+> declares the seven columns `Decimal @db.Decimal(39, 0)`, and SQLite stays on
+> strings. The committed schema marks those columns `// pg:decimal` and
+> `scripts/use-postgres.sh` rewrites them together with the provider, so the
+> dual-provider option below was taken. `src/db.ts` converts every `Decimal`
+> read back to an exact decimal string, so no API response changes shape. The
+> rollback is in `docs/RUNBOOK.md`. The sections below are the original plan
+> and are kept for the reasoning; where they say "pending", read "landed".
+
+Status (original): **plan + pending SQL**. The SQL in
 [`prisma/postgres-pending/20260107000000_amount_numeric_to_decimal/migration.sql`](../prisma/postgres-pending/20260107000000_amount_numeric_to_decimal/migration.sql)
 converts the i128-as-string amount columns of the **Postgres deploy database**
 to `numeric`, but it is *deliberately not applied yet* — see

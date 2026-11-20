@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import {
   assertLocalDatabase,
   deleteSeedRows,
+  parseSeedArgs,
   seedLocalData,
   SEED_ADDRESS_PREFIX,
 } from '../scripts/seed.js';
@@ -45,6 +46,21 @@ describe('seed guard', () => {
     }
     expect(message).not.toContain('s3cret');
     expect(message).toContain('***');
+  });
+});
+
+describe('parseSeedArgs', () => {
+  it('reads --seed and --size in both spellings', () => {
+    expect(parseSeedArgs(['--seed', '7', '--size', 'small'])).toEqual({ seed: 7, size: 'small' });
+    expect(parseSeedArgs(['--seed=9', '--size=large'])).toEqual({ seed: 9, size: 'large' });
+    expect(parseSeedArgs([])).toEqual({});
+  });
+
+  it('rejects malformed values instead of seeding the default', () => {
+    expect(() => parseSeedArgs(['--seed', 'abc'])).toThrow(/non-negative integer/);
+    expect(() => parseSeedArgs(['--seed', '-1'])).toThrow(/non-negative integer/);
+    expect(() => parseSeedArgs(['--seed'])).toThrow(/needs a value/);
+    expect(() => parseSeedArgs(['--size', 'huge'])).toThrow(/small, medium, large/);
   });
 });
 
@@ -171,6 +187,46 @@ describe('seedLocalData', () => {
     expect(receipt?.beneficiaryRef).toMatch(/^[0-9a-f]{64}$/);
     expect(settled!.beneficiaryRef).toMatch(/^[0-9a-f]{64}$/);
     expect(settled!.funder).toMatch(/^G[A-Z2-7]{55}$/);
+  });
+
+  it('gives identical rows for one --seed and different rows for another', async () => {
+    // `updatedAt` is stamped per insert; every other column must match.
+    const strip = <T extends object>(rows: T[]) =>
+      rows.map((row) => {
+        const { updatedAt: _ignored, ...rest } = row as T & { updatedAt?: Date };
+        return rest;
+      });
+    const snapshot = async () => {
+      const where = { providerAddress: { startsWith: SEED_ADDRESS_PREFIX } };
+      return {
+        providers: strip(
+          await prisma.provider.findMany({
+            where: { address: { startsWith: SEED_ADDRESS_PREFIX } },
+            orderBy: { address: 'asc' },
+          }),
+        ),
+        services: strip(await prisma.service.findMany({ where, orderBy: { id: 'asc' } })),
+        vouchers: strip(await prisma.voucher.findMany({ where, orderBy: { id: 'asc' } })),
+        receipts: strip(await prisma.receipt.findMany({ where, orderBy: { voucherId: 'asc' } })),
+      };
+    };
+    await seedLocalData(prisma, { ...opts, seed: 42 });
+    const a = await snapshot();
+    await seedLocalData(prisma, { ...opts, seed: 42 });
+    const b = await snapshot();
+    expect(b).toEqual(a);
+
+    await seedLocalData(prisma, { ...opts, seed: 43 });
+    const c = await snapshot();
+    expect(c.vouchers.length).toBe(a.vouchers.length);
+    expect(c.vouchers).not.toEqual(a.vouchers);
+    expect(c.providers.map((p) => p.address)).not.toEqual(a.providers.map((p) => p.address));
+  });
+
+  it('maps --size to a dataset size', async () => {
+    const summary = await seedLocalData(prisma, { size: 'small', seed: 1 });
+    expect(summary.vouchers).toBe(120);
+    expect(summary.providers).toBe(4);
   });
 
   it('rejects impossible voucher counts', async () => {

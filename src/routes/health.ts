@@ -81,11 +81,10 @@ type SettledTotals = {
  * On Postgres the sums are computed **in SQL** (#60): `SUM(x::numeric)` is
  * arbitrary-precision, so it is exact for every amount the chain can
  * produce, and the route stops fetching every settled voucher just to add
- * them up in JavaScript — the scaling problem the issue names. The cast
- * also works today, while the deploy columns are still `text` (decimal
- * strings), and is a no-op once
- * `prisma/postgres-pending/20260107000000_amount_numeric_to_decimal`
- * lands, so this query needs no change when the migration is promoted.
+ * them up in JavaScript — the scaling problem the issue names. The columns
+ * are `NUMERIC(39,0)` since migration
+ * `20261119000001_amount_numeric_to_decimal` (#273); the `::numeric` cast is
+ * a no-op there and keeps the query valid on a not-yet-migrated `text` column.
  *
  * On SQLite the BigInt pass stays: SQLite's arithmetic caps integers at
  * 2^63-1 and promotes larger sums to float64, so a SQL sum there would be

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 import { env } from './env.js';
 import { amountKey } from './lib/amounts.js';
@@ -18,6 +18,26 @@ function withAmountKey<T>(data: T): T {
   }
   return data;
 }
+
+/**
+ * On Postgres the amount columns are NUMERIC(39,0) and Prisma returns them as
+ * `Decimal`; SQLite keeps them as strings (#273). The API, the indexer and the
+ * reconcile job all work in decimal strings, so every Decimal read from a
+ * model is turned back into one here, at the single boundary every query goes
+ * through. `toFixed(0)` is exact: `toString()` would switch to exponent
+ * notation above 1e21.
+ */
+export function decimalsToStrings<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Prisma.Decimal.isDecimal(value)) return (value as Prisma.Decimal).toFixed(0) as T;
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map(decimalsToStrings) as T;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) out[k] = decimalsToStrings(v);
+  return out as T;
+}
+
+const decimalColumns = /^postgres(ql)?:\/\//i.test(env.DATABASE_URL);
 
 /**
  * Counts top-level Prisma operations in tests, so a route test can assert that
@@ -92,9 +112,10 @@ const client = new PrismaClient({
 export const prisma = client.$extends({
   query: {
     $allModels: {
-      $allOperations: ({ query, args }) => {
+      $allOperations: async ({ query, args }) => {
         if (testInstrumentation) queryStats.queries += 1;
-        return query(args);
+        const result = await query(args);
+        return decimalColumns ? decimalsToStrings(result) : result;
       },
     },
     voucher: {

@@ -21,7 +21,9 @@ schema does not have. Documentation cannot drift from the schema unnoticed.
   so a replay reproduces the same values.
 - **Amounts are decimal strings, never numbers.** They are `i128` on
   chain; a JS number loses precision above 2^53. Compare and sum them with
-  `BigInt`.
+  `BigInt`. The `String` type below is the logical type the API and SQLite
+  use; on Postgres the amount and price columns are `NUMERIC(39,0)` (#273) and
+  the shared client turns every read back into a decimal string.
 - **Nothing here is patient data.** The only patient-linked value is
   `beneficiaryRef`, an opaque 32-byte HMAC computed in the user's browser
   (`docs/privacy.md`).

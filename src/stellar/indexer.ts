@@ -42,7 +42,7 @@ import { IndexerLease } from './lease.js';
 import { collectEvents } from './paging.js';
 import { withSpan } from '../tracing.js';
 import { normaliseChainVoucher, readVoucherFromChain, type VoucherReader } from './reconcile.js';
-import { purgeExpiredOperationalData } from '../lib/retention.js';
+import { pruneContractEvents, purgeExpiredOperationalData } from '../lib/retention.js';
 import type { rpc } from '@stellar/stellar-sdk';
 
 type Db = Prisma.TransactionClient;
@@ -724,6 +724,8 @@ export class Indexer {
     this.lastRetentionCheckAt = now;
     try {
       await purgeExpiredOperationalData();
+      // No-op unless EVENT_RETENTION_DAYS is set (#275).
+      await pruneContractEvents();
     } catch (err) {
       this.log.warn({ err }, 'operational data retention cleanup failed');
     }
