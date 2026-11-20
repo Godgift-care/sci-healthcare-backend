@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../app.js';
-import { prisma } from '../db.js';
-import { parseFields, applyFields } from '../lib/fields.js';
+import { onQuery, prisma } from '../db.js';
+import { parseFields, applyFields, columnSelect, includesField } from '../lib/fields.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
@@ -117,6 +117,40 @@ describe('parseFields / applyFields', () => {
   });
 });
 
+describe('columnSelect / includesField', () => {
+  it('maps a derived field onto the columns it is built from', () => {
+    expect(
+      columnSelect(['id', 'provider'], ['id', 'provider'], ['id'], {
+        provider: ['providerAddress'],
+      }),
+    ).toEqual({ id: true, providerAddress: true });
+  });
+
+  it('reads every column when the client asked for nothing', () => {
+    expect(columnSelect(null, ['id', 'funder'], ['id'])).toEqual({ id: true, funder: true });
+  });
+
+  it('treats a field with no derived entry as a column of its own name', () => {
+    expect(columnSelect(['status'], ['status', 'funder'], [])).toEqual({ status: true });
+  });
+
+  it('never drops a column the cursor needs', () => {
+    expect(columnSelect([], ['id'], ['id', 'createdAt'])).toEqual({ id: true, createdAt: true });
+  });
+
+  it('skips a field that is a separate read, not a column', () => {
+    expect(columnSelect(['receipt'], ['id', 'receipt'], ['id'], { receipt: [] })).toEqual({
+      id: true,
+    });
+  });
+
+  it('asks for a related read only when the field naming it is in play', () => {
+    expect(includesField(['id'], 'provider')).toBe(false);
+    expect(includesField(['id', 'provider'], 'provider')).toBe(true);
+    expect(includesField(null, 'provider')).toBe(true);
+  });
+});
+
 describe('GET /vouchers sparse fieldsets (#166)', () => {
   const base = `/vouchers?funder=${FUNDER}`;
 
@@ -213,4 +247,273 @@ describe('GET /receipts sparse fieldsets (#166)', () => {
     expect(status).toBe(400);
     expect(body.error).toBe('unknown_fields');
   });
+});
+
+/**
+ * #321: `?fields=` has to change the SQL, not only the JSON.
+ *
+ * `onQuery` collects every statement the client runs, so these tests read the
+ * select list the database actually received. The quoting is stripped and the
+ * schema prefix ignored because the two CI test jobs disagree about both:
+ * SQLite names things `` `main`.`Voucher`.`id` `` and Postgres
+ * `"public"."Voucher"."id" AS "public"."Voucher"."id"`.
+ */
+function statementsFor(table: string): string[] {
+  const fromTable = new RegExp(`\\bFROM\\s+(?:\\w+\\.)?${table}\\b`);
+  return statements
+    .map((raw) => raw.replace(/[`"]/g, ''))
+    .filter((sql) => fromTable.test(sql) && !sql.startsWith('SELECT COUNT'));
+}
+
+/** The columns one SELECT list names, without their table prefix or alias. */
+function columnsOfSelect(sql: string): string[] {
+  const list = sql.slice(sql.indexOf('SELECT ') + 'SELECT '.length, sql.indexOf(' FROM '));
+  return list
+    .split(',')
+    .map((entry) => entry.trim().split(/\s+AS\s+/i)[0] as string)
+    .map((entry) => entry.slice(entry.lastIndexOf('.') + 1))
+    .filter((column) => column.length > 0);
+}
+
+/** The columns the page query (the one that orders) reads from `table`. */
+function pageColumns(table: string): Set<string> {
+  const pages = statementsFor(table).filter((sql) => sql.includes(' ORDER BY '));
+  expect(pages, `expected one page query on ${table}`).toHaveLength(1);
+  return new Set(columnsOfSelect(pages[0] as string));
+}
+
+/** Every column any statement in the request read from `table`. */
+function columnsRead(table: string): Set<string> {
+  return new Set(statementsFor(table).flatMap(columnsOfSelect));
+}
+
+function readsTable(table: string): boolean {
+  return statementsFor(table).length > 0;
+}
+
+let statements: string[] = [];
+let stopListening: () => void;
+
+describe('the SQL a sparse page generates (#321)', () => {
+  beforeAll(() => {
+    stopListening = onQuery((sql) => statements.push(sql));
+  });
+
+  afterAll(() => {
+    stopListening();
+  });
+
+  beforeEach(() => {
+    statements = [];
+  });
+
+  it('names only the columns the voucher page was asked for', async () => {
+    const { status } = await get(`/vouchers?funder=${FUNDER}&fields=id,status`);
+    expect(status).toBe(200);
+    // The cursor (`createdAt`, and `id` as its tie-break) and the amount and
+    // timing columns the serialiser reads before it knows what was asked for
+    // stay; a requested field the row does not already carry does not.
+    expect([...pageColumns('Voucher')].sort()).toEqual(
+      [
+        'id',
+        'createdAt',
+        'amount',
+        'status',
+        'expiresAt',
+        'disputeDeadline',
+        'providerAddress',
+        'serviceCode',
+      ].sort(),
+    );
+    for (const column of [
+      'funder',
+      'beneficiaryRef',
+      'claimedAt',
+      'attestedAt',
+      'settledNet',
+      'settledFee',
+      'disputeReason',
+      // The funding-time options (#319): a response field like any other, so
+      // a page that did not ask for them does not read their columns.
+      'disputeWindowSecs',
+      'presenceCommitment',
+      // Columns no response field can ever ask for.
+      'seq',
+      'amountKey',
+      'refundedAt',
+      'updatedAt',
+      'deploymentId',
+    ]) {
+      expect(pageColumns('Voucher').has(column), column).toBe(false);
+    }
+  });
+
+  it('still reads only what the response is built from when nothing is asked for', async () => {
+    const { status } = await get(`/vouchers?funder=${FUNDER}`);
+    expect(status).toBe(200);
+    expect([...pageColumns('Voucher')].sort()).toEqual(
+      [
+        'id',
+        'createdAt',
+        'amount',
+        'status',
+        'expiresAt',
+        'disputeDeadline',
+        'providerAddress',
+        'serviceCode',
+        'funder',
+        'beneficiaryRef',
+        'claimedAt',
+        'attestedAt',
+        'attestedBy',
+        'disputeReason',
+        'disputeWindowSecs',
+        'presenceCommitment',
+        'disputeResolvedAt',
+        'disputeResolvedBy',
+        'disputeOutcome',
+        'settledNet',
+        'settledFee',
+      ].sort(),
+    );
+  });
+
+  it('reads the clinic row only when the response carries it', async () => {
+    await get(`/vouchers?funder=${FUNDER}&fields=id,status`);
+    expect(readsTable('Provider'), 'provider summary').toBe(false);
+    expect(readsTable('Service'), 'service label').toBe(false);
+
+    statements = [];
+    await get(`/vouchers?funder=${FUNDER}&fields=id,provider`);
+    expect([...columnsRead('Provider')].sort()).toEqual(['address', 'country', 'name']);
+    expect(readsTable('Service'), 'service label').toBe(false);
+
+    statements = [];
+    await get(`/vouchers?funder=${FUNDER}&fields=id,serviceLabel`);
+    expect([...columnsRead('Service')].sort()).toEqual(['id', 'label']);
+    expect(readsTable('Provider'), 'provider summary').toBe(false);
+  });
+
+  it('skips an embed the fieldset projects away', async () => {
+    await get(`/vouchers?funder=${FUNDER}&include=receipt,provider&fields=id`);
+    expect(readsTable('Receipt'), 'receipt batch').toBe(false);
+    expect(readsTable('Provider'), 'provider batch').toBe(false);
+
+    statements = [];
+    const { status, body } = await get(
+      `/vouchers?funder=${FUNDER}&include=receipt&fields=id,receipt`,
+    );
+    expect(status).toBe(200);
+    expect(readsTable('Receipt'), 'receipt batch').toBe(true);
+    expect(body.vouchers[0]).toEqual({ id: '1', receipt: body.vouchers[0].receipt });
+    expect(body.vouchers[0].receipt).not.toBeNull();
+  });
+
+  it('leaves the cached metadata document out of a directory page that did not ask for it', async () => {
+    const { status } = await get('/providers?fields=address,name');
+    expect(status).toBe(200);
+    expect([...pageColumns('Provider')].sort()).toEqual(['address', 'name', 'registeredAt']);
+    for (const column of ['metadata', 'metadataUri', 'metadataFetchedAt', 'deploymentId']) {
+      expect(columnsRead('Provider').has(column), column).toBe(false);
+    }
+    // The price list is its own round trip, and this page cannot show it.
+    expect(readsTable('Service'), 'service catalogue').toBe(false);
+
+    statements = [];
+    await get('/providers?fields=address,metadata');
+    expect(pageColumns('Provider').has('metadata')).toBe(true);
+
+    statements = [];
+    await get('/providers?fields=address,services');
+    expect(readsTable('Service'), 'service catalogue').toBe(true);
+    expect([...columnsRead('Service')].sort()).toEqual(
+      ['code', 'id', 'label', 'price', 'providerAddress'].sort(),
+    );
+  });
+
+  it('never reads the beneficiary reference for a provider-view page', async () => {
+    const { status } = await get(`/receipts?provider=${CLINIC}&fields=voucherId`);
+    expect(status).toBe(200);
+    expect([...pageColumns('Receipt')].sort()).toEqual(
+      ['voucherId', 'settledAt', 'providerAddress', 'serviceCode', 'amount'].sort(),
+    );
+    expect(columnsRead('Receipt').has('beneficiaryRef')).toBe(false);
+    expect(readsTable('Provider'), 'clinic batch').toBe(false);
+    expect(readsTable('Service'), 'label batch').toBe(false);
+
+    statements = [];
+    await get(`/receipts?beneficiaryRef=${REF}&fields=amount`);
+    expect(columnsRead('Receipt').has('beneficiaryRef')).toBe(false);
+
+    statements = [];
+    await get(`/receipts?beneficiaryRef=${REF}`);
+    expect(pageColumns('Receipt').has('beneficiaryRef')).toBe(true);
+  });
+
+  it('narrows the cursor page the same way as the offset page', async () => {
+    await prisma.voucher.create({
+      data: {
+        id: '2',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '15000000',
+        status: 'Funded',
+        createdAt: new Date(Date.now() - 20 * DAY),
+        expiresAt: new Date(Date.now() + 20 * DAY),
+      },
+    });
+    const first = await get(`/vouchers?funder=${FUNDER}&limit=1&fields=id,status`);
+    expect(first.status).toBe(200);
+    expect(first.body.nextCursor).toBeTruthy();
+    expect(first.body.vouchers).toEqual([{ id: '1', status: 'Settled' }]);
+
+    statements = [];
+    const second = await get(
+      `/vouchers?funder=${FUNDER}&limit=1&fields=id,status&cursor=${first.body.nextCursor}`,
+    );
+    expect(second.status).toBe(200);
+    expect(second.body.vouchers).toEqual([{ id: '2', status: 'Funded' }]);
+    expect(pageColumns('Voucher').has('beneficiaryRef')).toBe(false);
+    expect(pageColumns('Voucher').has('settledNet')).toBe(false);
+  });
+});
+
+/**
+ * "Responses are unchanged": the projection has to be the same list the full
+ * row carries, field by field, so a column the narrowed read forgot cannot
+ * arrive at a client as a silently missing value.
+ */
+describe('every fieldable field is identical under ?fields= (#321)', () => {
+  const cases = [
+    { name: 'GET /vouchers', url: `/vouchers?funder=${FUNDER}`, list: 'vouchers' },
+    { name: 'GET /providers', url: '/providers', list: 'providers' },
+    {
+      name: 'GET /receipts (patient view)',
+      url: `/receipts?beneficiaryRef=${REF}`,
+      list: 'receipts',
+    },
+    {
+      name: 'GET /receipts (provider view)',
+      url: `/receipts?provider=${CLINIC}`,
+      list: 'receipts',
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    it(`${testCase.name} serves each field alone, identical to the full row`, async () => {
+      const full = await get(testCase.url);
+      expect(full.status).toBe(200);
+      const row = full.body[testCase.list][0] as Record<string, unknown>;
+      for (const field of Object.keys(row)) {
+        const separator = testCase.url.includes('?') ? '&' : '?';
+        const sparse = await get(`${testCase.url}${separator}fields=${field}`);
+        expect(sparse.status, field).toBe(200);
+        expect(sparse.body[testCase.list][0], `${testCase.name} ${field}`).toEqual({
+          [field]: row[field],
+        });
+      }
+    });
+  }
 });

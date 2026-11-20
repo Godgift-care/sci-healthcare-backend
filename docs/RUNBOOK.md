@@ -202,6 +202,11 @@ runs cover the history). Differences are written to `ReconcileMismatch`
 and surfaced on `/ready` as `checks.reconcileMismatches`; the row is
 deleted as soon as a run sees the voucher agree.
 
+The same vouchers are read a second time, through `get_voucher_options`,
+for the terms a funder chose when it funded them (#319). No event
+announces those, so a report-only run can only compare them: the columns
+stay null until a run with `--fix` writes them.
+
 ### Symptoms
 
 - `/ready` reports `reconcile: "drift"` with a non-zero
