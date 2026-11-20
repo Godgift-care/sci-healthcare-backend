@@ -1,0 +1,24 @@
+import type { Prisma } from '@prisma/client';
+import type { FastifyBaseLogger } from 'fastify';
+import type { VoucherReader } from '../reconcile.js';
+
+export type Db = Prisma.TransactionClient;
+
+/**
+ * A committed voucher event waiting to be handed to open streams.
+ */
+export type PendingSignal = {
+  type: string;
+  voucherId: string;
+  status: string;
+  providerAddress: string | null;
+  ledger: number;
+  txHash: string;
+  at: Date;
+};
+
+export type VoucherHandlerContext = {
+  voucherReader: VoucherReader;
+  repairedVouchers?: Set<string>;
+  log?: FastifyBaseLogger;
+};
