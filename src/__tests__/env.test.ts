@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { schema } from '../env.js';
@@ -91,5 +92,26 @@ describe('CORS_ORIGIN validation in env schema', () => {
       CORS_ORIGIN: 'invalid-origin-string',
     });
     expect(result.success).toBe(false);
+  });
+
+  it('accepts hashed API keys and rejects excessive rotation entries', () => {
+    const hash = (key: string) => createHash('sha256').update(key).digest('hex');
+    expect(
+      schema.safeParse({
+        ...validBaseEnv,
+        API_KEY_HASHES: `clinic:${hash('old')},clinic:${hash('new')}`,
+      }).success,
+    ).toBe(true);
+
+    const invalid = schema.safeParse({
+      ...validBaseEnv,
+      API_KEY_HASHES: `clinic:${hash('one')},clinic:${hash('two')},clinic:${hash('three')}`,
+    });
+    expect(invalid.success).toBe(false);
+    if (!invalid.success) {
+      expect(invalid.error.issues.some((issue) => issue.path.includes('API_KEY_HASHES'))).toBe(
+        true,
+      );
+    }
   });
 });

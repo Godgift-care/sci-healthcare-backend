@@ -50,6 +50,7 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
+    "apikey:new": "tsx scripts/new-api-key.ts",
     "loadtest": "node scripts/loadtest.mjs",
     "prepare": "husky"
   },

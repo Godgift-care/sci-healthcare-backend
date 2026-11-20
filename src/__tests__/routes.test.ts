@@ -9,7 +9,7 @@ import { CONTRACTS, env } from '../env.js';
 import { encodeCursor } from '../lib/cursor.js';
 import { backfillDailyStats } from '../lib/daily-stats.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
-import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { LIST_ROUTE_PUBLIC_MAX } from '../lib/rate-limits.js';
 import { resetStatsCache } from '../routes/health.js';
 import { server } from '../stellar/client.js';
 
@@ -2612,7 +2612,7 @@ describe('response hardening', () => {
   it('rate limits list routes but leaves health free', async () => {
     const isolated = await buildApp({ logger: false });
     try {
-      for (let i = 0; i < LIST_ROUTE_RATE_LIMIT.max; i++) {
+      for (let i = 0; i < LIST_ROUTE_PUBLIC_MAX; i++) {
         const res = await isolated.inject({
           method: 'GET',
           url: `/vouchers?funder=${FUNDER}`,
@@ -2628,6 +2628,24 @@ describe('response hardening', () => {
 
       const health = await isolated.inject({ method: 'GET', url: '/health' });
       expect(health.statusCode).toBe(200);
+    } finally {
+      await isolated.close();
+    }
+  });
+
+  it('gives recognized API keys a higher quota', async () => {
+    const isolated = await buildApp({ logger: false });
+    const apiKey = 'test-api-key-for-rate-limit-tests';
+
+    try {
+      for (let i = 0; i <= LIST_ROUTE_PUBLIC_MAX; i++) {
+        const res = await isolated.inject({
+          method: 'GET',
+          url: '/providers',
+          headers: { 'x-api-key': apiKey },
+        });
+        expect(res.statusCode).toBe(200);
+      }
     } finally {
       await isolated.close();
     }

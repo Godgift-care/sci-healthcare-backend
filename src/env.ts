@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { parseApiKeyHashes } from './lib/api-keys.js';
+
 /**
  * Environment is validated once, at boot, and the process refuses to start
  * if anything required is missing. A backend that starts with a blank
@@ -46,6 +48,8 @@ const envShape = z.object({
    * loop is not draining the outbox, not that an endpoint is slow.
    */
   READY_WEBHOOK_MAX_AGE_MS: z.coerce.number().int().positive().default(900_000),
+  API_KEY_HASHES: z.string().default(''),
+  RATE_LIMIT_KEYED_MAX: z.coerce.number().int().positive().default(1200),
 
   DATABASE_URL: z.string().min(1),
   DATABASE_POOL_SIZE: z.coerce.number().int().positive().optional(),
@@ -122,13 +126,25 @@ const envShape = z.object({
  * so `env-docs.test.ts`, which reads the shape as text, stops at its closing
  * brace.
  */
-export const schema = envShape.refine((cfg) => corsViolation(cfg) === null, {
-  error: (issue) => ({
-    message:
-      corsViolation(issue.input as CorsConfig) ?? 'CORS_ORIGIN must contain valid http(s) URLs',
-  }),
-  path: ['CORS_ORIGIN'],
-});
+export const schema = envShape
+  .refine((cfg) => corsViolation(cfg) === null, {
+    error: (issue) => ({
+      message:
+        corsViolation(issue.input as CorsConfig) ?? 'CORS_ORIGIN must contain valid http(s) URLs',
+    }),
+    path: ['CORS_ORIGIN'],
+  })
+  .superRefine((cfg, ctx) => {
+    try {
+      parseApiKeyHashes(cfg.API_KEY_HASHES);
+    } catch (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['API_KEY_HASHES'],
+        message: error instanceof Error ? error.message : 'must contain valid API key hashes',
+      });
+    }
+  });
 
 /**
  * Expected network passphrases for each STELLAR_NETWORK value.
