@@ -8,10 +8,11 @@
  *
  *   npm run db:seed                 # 2 500 vouchers, 12 clinics
  *   SEED_VOUCHERS=100000 npm run db:seed   # stress seed for query plans
+ *   npm run db:seed -- --seed 7 --size small   # repeatable: same seed, same rows
  */
 import { PrismaClient } from '@prisma/client';
 
-import { assertLocalDatabase, seedLocalData } from '../src/scripts/seed.js';
+import { assertLocalDatabase, parseSeedArgs, seedLocalData } from '../src/scripts/seed.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -31,10 +32,18 @@ if (vouchers !== undefined && !Number.isInteger(vouchers)) {
   process.exit(1);
 }
 
+let args: ReturnType<typeof parseSeedArgs>;
+try {
+  args = parseSeedArgs(process.argv.slice(2));
+} catch (err) {
+  console.error((err as Error).message);
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
 try {
-  const summary = await seedLocalData(prisma, { vouchers });
+  const summary = await seedLocalData(prisma, { ...args, vouchers });
   console.log(
     `Seeded local data: ${summary.providers} clinics, ${summary.services} services, ` +
       `${summary.vouchers} vouchers (every status), ${summary.receipts} receipts.`,

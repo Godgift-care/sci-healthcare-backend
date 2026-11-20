@@ -36,7 +36,13 @@ receipts for the settled ones — so every list route has something to show:
 ```bash
 npm run db:seed                      # 12 clinics, ~2 500 vouchers
 SEED_VOUCHERS=100000 npm run db:seed # stress-sized seed for query-plan work
+npm run db:seed -- --seed 7 --size small   # repeatable: one seed, identical rows
 ```
+
+`--seed <n>` (default `0`) seeds the PRNG: two runs with the same seed write
+identical rows, and a different seed writes a different but equally
+repeatable dataset. `--size small|medium|large` picks 120, 2 500 or 25 000
+vouchers (`SEED_VOUCHERS` still overrides the count).
 
 The seed is defined in `prisma/seed.ts` (entry) and `src/scripts/seed.ts`
 (data generation). Two guards keep it honest:
