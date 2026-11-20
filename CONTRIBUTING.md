@@ -109,7 +109,10 @@ DATABASE_URL=postgresql://sci:sci@localhost:5432/sci_healthcare_test npm test
 ```
 
 Do not commit the switched provider: `prisma/schema.prisma` stays `sqlite` on
-`main`, and CI switches it in the Postgres job.
+`main`, and CI switches it in the Postgres job. The same script lands the
+columns marked `// pg:decimal` (every i128 amount and price) as
+`Decimal @db.Decimal(39, 0)`; on SQLite they stay strings, and `src/db.ts`
+turns every Decimal read back into a decimal string.
 
 ## Decoding events
 

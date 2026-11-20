@@ -480,6 +480,53 @@ Disabling webhooks (`WEBHOOK_URLS` empty) makes `/ready` report
 want only if you have decided those notifications are not being delivered at
 all. Pending rows from before are then never drained.
 
+## Rolling back the NUMERIC amount columns (#273)
+
+Migration `20261119000001_amount_numeric_to_decimal` converted every i128
+amount/price column on Postgres from `text` to `NUMERIC(39,0)`. The values are
+integers, so converting back is lossless; only ordering returns to
+lexicographic text order (and `Voucher.amountKey` keeps amount sorts correct).
+
+1. Stop the API and the indexer (the conversion locks and rewrites the tables).
+2. Run, in one transaction (`psql "$DATABASE_URL"`):
+
+   ```sql
+   BEGIN;
+   ALTER TABLE "Voucher" DROP CONSTRAINT "voucher_amount_non_negative";
+   ALTER TABLE "Voucher" DROP CONSTRAINT "voucher_settled_net_check";
+   ALTER TABLE "Voucher" DROP CONSTRAINT "voucher_settled_fee_check";
+   ALTER TABLE "Receipt" DROP CONSTRAINT "receipt_amount_non_negative";
+   ALTER TABLE "Service" DROP CONSTRAINT "service_price_non_negative";
+
+   ALTER TABLE "Voucher"            ALTER COLUMN "amount"     SET DATA TYPE text USING "amount"::text;
+   ALTER TABLE "Voucher"            ALTER COLUMN "settledNet" SET DATA TYPE text USING "settledNet"::text;
+   ALTER TABLE "Voucher"            ALTER COLUMN "settledFee" SET DATA TYPE text USING "settledFee"::text;
+   ALTER TABLE "Receipt"            ALTER COLUMN "amount"     SET DATA TYPE text USING "amount"::text;
+   ALTER TABLE "FaucetDrip"         ALTER COLUMN "amount"     SET DATA TYPE text USING "amount"::text;
+   ALTER TABLE "Service"            ALTER COLUMN "price"      SET DATA TYPE text USING "price"::text;
+   ALTER TABLE "ServicePriceChange" ALTER COLUMN "price"      SET DATA TYPE text USING "price"::text;
+
+   ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_amount_non_negative" CHECK ("amount" ~ '^[0-9]+$');
+   ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_settled_net_check" CHECK ("settledNet" IS NULL OR "settledNet" ~ '^[0-9]+$');
+   ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_settled_fee_check" CHECK ("settledFee" IS NULL OR "settledFee" ~ '^[0-9]+$');
+   ALTER TABLE "Receipt" ADD CONSTRAINT "receipt_amount_non_negative" CHECK ("amount" ~ '^[0-9]+$');
+   ALTER TABLE "Service" ADD CONSTRAINT "service_price_non_negative" CHECK ("price" ~ '^[0-9]+$');
+
+   DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261119000001_amount_numeric_to_decimal';
+   COMMIT;
+   ```
+
+3. Deploy the application version from before the change. The current code
+   also runs against `text` columns (the shared client only converts values
+   that Prisma returns as `Decimal`), so the order of steps 2 and 3 is not
+   critical, but do not run `./scripts/use-postgres.sh` from this version
+   against the rolled-back database: the schema it writes says `Decimal`.
+4. Start the API and the indexer, and check `/ready`.
+
+Before running the forward migration in production, its preflight reports any
+row that is not a plain decimal integer of at most 39 digits and changes
+nothing; fix those rows first.
+
 ## Uptime monitoring
 
 Two layers watch the deployed service, and they answer different questions:
