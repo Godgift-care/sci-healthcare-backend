@@ -826,6 +826,7 @@ this table and the schema drift apart.
 | `HOST` | No | `0.0.0.0` | `0.0.0.0` | Address the API binds to |
 | `LOG_LEVEL` | No | `info` | `info` | pino log level: `fatal`, `error`, `warn`, `info`, `debug` or `trace` |
 | `CORS_ORIGIN` | No | `http://localhost:3000` | `https://sci-healthcare.vercel.app` | Comma-separated origins allowed to call the API |
+| `MAINTENANCE_MODE` | No | `false` | `true` | When `true`, every data route answers 503 with `Retry-After`; `/health` stays 200 (used during database restore) |
 | `READY_MAX_LAG_LEDGERS` | No | `120` | `120` | Indexer lag in ledgers at which `/ready` reports degraded (503) |
 | `READY_WEBHOOK_MAX_AGE_MS` | No | `900000` | `900000` | Age at which a pending webhook delivery makes `/ready` report a backlog and answer 503 |
 | `DATABASE_URL` | Yes | — | `file:./dev.db` | Database connection string. SQLite paths resolve **relative to `prisma/`**; production uses a Postgres URL |

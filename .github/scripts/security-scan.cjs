@@ -452,13 +452,23 @@ function runOsv(lockfiles, osvBinary) {
   return { findings, vulnerabilities };
 }
 
+function escapeMarkdownCell(val) {
+  return String(val ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/`/g, '\\`');
+}
+
 function formatReport(findings, decision, vulnerabilities) {
   const icon = decision.state === 'success' ? 'passed' : 'failed';
   const lines = [`## Security scan ${icon}`, '', decision.description + '.', ''];
   if (findings.length) {
     lines.push('| Severity | Rule | Where | Finding |', '| --- | --- | --- | --- |');
     for (const f of findings.slice(0, 100)) {
-      lines.push(`| ${f.severity} | \`${f.rule}\` | \`${f.path}${f.line ? `:${f.line}` : ''}\` | ${f.message.replace(/\|/g, '\\|')} |`);
+      const where = `${f.path}${f.line ? `:${f.line}` : ''}`;
+      lines.push(
+        `| ${escapeMarkdownCell(f.severity)} | \`${escapeMarkdownCell(f.rule)}\` | \`${escapeMarkdownCell(where)}\` | ${escapeMarkdownCell(f.message)} |`,
+      );
     }
     if (findings.length > 100) lines.push(`| | | | ...and ${findings.length - 100} more |`);
     lines.push('');
@@ -554,6 +564,6 @@ async function run({ github, context, core }) {
 module.exports = run;
 Object.assign(module.exports, {
   scanAddedLines, scanFile, scanPackageJson, scanNpmLock, scanCargoLock, decide, classifyNewDependency, scriptsRunningNewFiles,
-  globToRegExp, levenshtein,
+  globToRegExp, levenshtein, escapeMarkdownCell, formatReport,
   BLOCK, REVIEW, INFO,
 });
