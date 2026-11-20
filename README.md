@@ -828,6 +828,8 @@ this table and the schema drift apart.
 | `CORS_ORIGIN` | No | `http://localhost:3000` | `https://sci-healthcare.vercel.app` | Comma-separated origins allowed to call the API |
 | `READY_MAX_LAG_LEDGERS` | No | `120` | `120` | Indexer lag in ledgers at which `/ready` reports degraded (503) |
 | `READY_WEBHOOK_MAX_AGE_MS` | No | `900000` | `900000` | Age at which a pending webhook delivery makes `/ready` report a backlog and answer 503 |
+| `API_KEY_HASHES` | No |  | `clinic-a:<sha256>,clinic-a:<sha256>` | Comma-separated `integrator-name:sha256hex` pairs for optional rate-limit keys; at most two hashes per integrator |
+| `RATE_LIMIT_KEYED_MAX` | No | `1200` | `1200` | Requests per minute allowed to each recognized API key |
 | `DATABASE_URL` | Yes | — | `file:./dev.db` | Database connection string. SQLite paths resolve **relative to `prisma/`**; production uses a Postgres URL |
 | `DATABASE_POOL_SIZE` | No | — | `5` | Maximum Postgres connection pool size; applied via `connection_limit` parameter on Postgres URLs, ignored on SQLite |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | No | — | `10000` | Maximum Postgres query execution time in milliseconds; applied via `statement_timeout` parameter on Postgres URLs, ignored on SQLite |
@@ -851,6 +853,8 @@ this table and the schema drift apart.
 | `SSE_MAX_CONNECTIONS` | No | `64` | `64` | Concurrent `GET /stream` connections one process will hold; past that the route answers `503 stream_full` |
 | `WEBHOOK_URLS` | No |  | `https://clinic.example/hooks` | Comma-separated endpoints sent a signed notification for each voucher event; blank (the default) disables webhooks |
 | `WEBHOOK_SECRET` | No |  | `a-long-random-string` | HMAC-SHA256 key for the `X-SCI-Signature` header; blank by default, required (min 16 characters) when `WEBHOOK_URLS` is set |
+
+API keys identify a caller for rate limiting; they do not authenticate or authorize access to the public read-only API. Generate a key with `npm run apikey:new -- <integrator-name>`. Store the generated secret securely and configure only the printed hash in `API_KEY_HASHES`. Include it as an `x-api-key` request header. Existing anonymous per-IP limits remain `120/min` for ordinary routes and `30/min` for list routes; recognized keys receive `RATE_LIMIT_KEYED_MAX` requests per minute. Configure up to two hashes per integrator during rotation.
 
 Set `INDEXER_START_LEDGER` to the deployment ledger. Leaving it at `0` starts at the current tip and silently skips all prior history. Soroban RPC also only retains a rolling window of ledgers (about 7 days on testnet) — an indexer that falls further behind than the window cannot catch up, and `/ready` will say so rather than pretend otherwise.
 

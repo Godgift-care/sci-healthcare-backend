@@ -6,9 +6,9 @@ This document details the data exposed by each API endpoint, the audience permit
 
 ## 1. Overview & Privacy Model
 
-The SCI Healthcare backend is a **public, unauthenticated read-only indexer** for the SCI Healthcare care-voucher protocol on Stellar.
+The SCI Healthcare backend is a **public, read-only indexer** for the SCI Healthcare care-voucher protocol on Stellar. Optional API keys identify callers for higher rate limits only; they do not grant access or authorization.
 
-- **Audience:** The API is open to anyone on the Internet without authentication or API keys.
+- **Audience:** The API is open to anyone on the Internet. An API key is optional and used only for rate-limit identity.
 - **On-chain source of truth:** All data exposed by the API is derived from public Soroban smart contract events and ledger state on the Stellar network.
 - **No Protected Health Information (PHI) / PII:** The protocol does not record, process, or store patient names, national identity numbers, medical histories, diagnostic notes, or clinical outcomes.
 - **Cryptographic Beneficiary Pseudonymity:** Beneficiaries are identified solely by a 32-byte cryptographic commitment (`beneficiaryRef`), typically a SHA-256 hash or salted commitment generated off-chain. The API has no mechanism to resolve a `beneficiaryRef` to an individual's real-world identity.
@@ -53,7 +53,7 @@ The SCI Healthcare backend is a **public, unauthenticated read-only indexer** fo
    Vouchers encode general service codes (e.g., Code 101 for General Consultation) rather than detailed ICD-10 medical diagnoses, prescription records, or lab results. Medical records remain strictly within clinic local systems and are never stored in this backend or on-chain.
 
 3. **Protection Against Bulk Scraping:**
-   - Public rate limiting is enforced (`30 req/min` for list routes, `120 req/min` for other routes).
+   - Anonymous rate limiting is enforced (`30 req/min` for list routes, `120 req/min` for other routes). Recognized optional API keys receive the configured `RATE_LIMIT_KEYED_MAX` limit.
    - Real-time streams, CSV exports and the Atom activity feed scrub sensitive commitment fields.
    - Paging uses bounded cursors (`limit <= 100`) preventing memory denial-of-service.
 
