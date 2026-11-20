@@ -190,6 +190,11 @@ model Voucher {
   // GET /vouchers?status=... (single or comma-separated) and the
   // `status: 'Settled'` scan behind GET /stats, each sorted by createdAt.
   @@index([status, createdAt])
+  // The clinic desk's list: one clinic, one status, in voucher-id (`seq`)
+  // order, forwards or backwards (#274). Equality on the first two columns
+  // and the order column last lets a keyset page read one index range and
+  // stop at LIMIT instead of sorting the clinic's whole history.
+  @@index([providerAddress, status, seq])
   // GET /vouchers?...&sort=amount and the minAmount/maxAmount band (#96).
   @@index([amountKey])
   @@index([expiresAt])
