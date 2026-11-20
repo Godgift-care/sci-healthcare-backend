@@ -6,9 +6,9 @@ This document details the data exposed by each API endpoint, the audience permit
 
 ## 1. Overview & Privacy Model
 
-The SCI Healthcare backend is a **public, unauthenticated read-only indexer** for the SCI Healthcare care-voucher protocol on Stellar.
+The SCI Healthcare backend is a **public, read-only indexer** for the SCI Healthcare care-voucher protocol on Stellar. Optional API keys identify callers for higher rate limits only; they do not grant access or authorization.
 
-- **Audience:** The API is open to anyone on the Internet without authentication or API keys.
+- **Audience:** The API is open to anyone on the Internet. An API key is optional and used only for rate-limit identity.
 - **On-chain source of truth:** All data exposed by the API is derived from public Soroban smart contract events and ledger state on the Stellar network.
 - **No Protected Health Information (PHI) / PII:** The protocol does not record, process, or store patient names, national identity numbers, medical histories, diagnostic notes, or clinical outcomes.
 - **Cryptographic Beneficiary Pseudonymity:** Beneficiaries are identified solely by a 32-byte cryptographic commitment (`beneficiaryRef`), typically a SHA-256 hash or salted commitment generated off-chain. The API has no mechanism to resolve a `beneficiaryRef` to an individual's real-world identity.
@@ -23,7 +23,7 @@ The SCI Healthcare backend is a **public, unauthenticated read-only indexer** fo
 | **`GET /health`** | Public | Service health status (`ok`), current UTC timestamp | In-memory server state | None | Operational telemetry only; no protocol or user data. |
 | **`GET /ready`** | Public | Database readiness, indexer latest/target ledger, sync lag, degraded flags | In-memory state & database cursor | None | System availability check for orchestration and load balancers. |
 | **`GET /version`** | Public | Package version, git commit, network name, configured contract IDs | Environment configuration | None | Public contract IDs and build info; already public repository metadata. |
-| **`GET /metrics`** | Public | Prometheus request counters, latency histograms, indexer lag gauges | In-memory metrics collectors | Aggregations | Anonymous operational telemetry; exempt from rate limiting. |
+| **`GET /metrics`** | Public | Prometheus request counters, latency histograms, indexer lag gauges, API-key request counts with short hash IDs | In-memory metrics collectors | Aggregations | Operational telemetry; API secrets are never labels, and the endpoint is exempt from rate limiting. |
 | **`GET /v1/providers`** | Public | List of registered clinic names, Stellar addresses, countries, operational status, active services | Registry contract `ProviderRegistered`, `ServiceAdded`, `ServiceRemoved` events | Pagination, name search (`q`), country and status filters | Clinics are public legal entities and licensed healthcare providers operating transparently on-chain. |
 | **`GET /v1/providers/:address`** | Public | Single provider record: address, name, country, status, catalog of offered services and base prices | Registry contract state | Pre-computed decimal formatting (`priceDisplay`) | Standard public directory information for patient discovery. |
 | **`GET /v1/services`** | Public | Catalog of active medical services across all clinics (service codes, labels, prices, clinic counts) | Registry contract service entries | Grouped catalog with min/max/median price calculation | Aggregated market pricing and standardized medical service codes (e.g., Code 101: Outpatient Consult). |
@@ -53,7 +53,7 @@ The SCI Healthcare backend is a **public, unauthenticated read-only indexer** fo
    Vouchers encode general service codes (e.g., Code 101 for General Consultation) rather than detailed ICD-10 medical diagnoses, prescription records, or lab results. Medical records remain strictly within clinic local systems and are never stored in this backend or on-chain.
 
 3. **Protection Against Bulk Scraping:**
-   - Public rate limiting is enforced (`30 req/min` for list routes, `120 req/min` for other routes).
+   - Anonymous rate limiting is enforced (`30 req/min` for list routes, `120 req/min` for other routes). Recognized optional API keys receive the configured `RATE_LIMIT_KEYED_MAX` limit; only the first eight characters of each key hash are used as a metric label.
    - Real-time streams, CSV exports and the Atom activity feed scrub sensitive commitment fields.
    - Paging uses bounded cursors (`limit <= 100`) preventing memory denial-of-service.
 

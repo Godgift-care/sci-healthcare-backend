@@ -56,6 +56,7 @@ const promqlKeywords = new Set([
   'route',
   'method',
   'status_code',
+  'api_key_id',
   'A',
   'B',
   'C',
@@ -71,7 +72,7 @@ function appMetricRefs(expr: string): string[] {
   const refs: string[] = [];
   for (const match of expr.matchAll(/\b([a-z][a-z0-9_]*)\b/g)) {
     const token = match[1] as string;
-    if (!/^(http|indexer|events|stream|webhook)_/.test(token)) continue;
+    if (!/^(http|indexer|events|stream|webhook|api_key)_/.test(token)) continue;
     if (promqlKeywords.has(token)) continue;
     refs.push(token.replace(/_(bucket|sum|count)$/, ''));
   }
@@ -183,5 +184,9 @@ describe('ops/grafana-dashboard.json', () => {
     const skipped = panelByTitle('Events skipped (failed projections)');
     expect(skipped, 'events skipped panel').toBeDefined();
     expect(exprsOf(skipped as DashboardPanel).join('\n')).toContain('events_skipped_total');
+
+    const apiKeys = panelByTitle('API key usage');
+    expect(apiKeys, 'API key usage panel').toBeDefined();
+    expect(exprsOf(apiKeys as DashboardPanel).join('\n')).toContain('api_key_requests_total');
   });
 });
