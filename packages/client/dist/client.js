@@ -33,12 +33,18 @@ export function providerLocation(p) {
     }
     return { lat, lng };
 }
+function trimTrailingSlashes(value) {
+    let end = value.length;
+    while (end > 0 && value.charCodeAt(end - 1) === 47)
+        end--;
+    return value.slice(0, end);
+}
 export class Client {
     baseUrl;
     fetchImpl;
     defaultHeaders;
     constructor(options) {
-        this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+        this.baseUrl = trimTrailingSlashes(options.baseUrl);
         this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
         this.defaultHeaders = options.headers ?? {};
     }
