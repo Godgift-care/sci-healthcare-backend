@@ -68,12 +68,24 @@ describe('dependency-review.yml', () => {
 
 describe('ci.yml', () => {
   const yml = workflow('ci.yml');
+  const migrationScript = readFileSync(
+    new URL('../../scripts/check-populated-migrations.sh', import.meta.url),
+    'utf8',
+  );
 
   it('validates the alerting rules with promtool (#131)', () => {
     expect(yml).toMatch(/^ {2}alerts:/m);
     expect(yml).toMatch(/promtool/);
     // The file is mounted into the Prometheus image at /ops.
     expect(yml).toMatch(/check rules \/ops\/alerts\.yml/);
+  });
+
+  it('tests the latest migration against existing rows before checking schema drift (#277)', () => {
+    expect(yml).toMatch(/scripts\/check-populated-migrations\.sh/);
+    expect(yml).not.toMatch(/npx prisma migrate deploy/);
+    expect(migrationScript).toContain('migration-fixture.sql');
+    expect(migrationScript).toContain('prisma migrate diff');
+    expect(migrationScript).toContain('Voucher amount fixture was not preserved');
   });
 });
 
