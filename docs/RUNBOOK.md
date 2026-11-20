@@ -44,16 +44,24 @@ nobody has restored is a rumour.
 
 **Restore from a dump** into a fresh database:
 
-1. Create an empty Postgres database (Render dashboard, or a scratch
+1. Enable maintenance mode by setting `MAINTENANCE_MODE=true` in the service's
+   environment. During restore and indexer catch-up, every data route answers
+   `503 maintenance_mode` with a `Retry-After: 30` header so clients and frontends
+   show the waking-up/maintenance state and wait rather than see a half-restored
+   read model. Liveness probe `/health` stays `200 ok` so Render and health
+   monitors keep the container alive.
+2. Create an empty Postgres database (Render dashboard, or a scratch
    instance — never overwrite the live one in place).
-2. `pg_restore --no-owner -d "$NEW_DATABASE_URL" /backups/sci-YYYY-MM-DD.dump`
-3. Point `DATABASE_URL` at it and restart the service. `npm run db:migrate`
+3. `pg_restore --no-owner -d "$NEW_DATABASE_URL" /backups/sci-YYYY-MM-DD.dump`
+4. Point `DATABASE_URL` at it and restart the service. `npm run db:migrate`
    runs on boot (`render.yaml` startCommand), so an older dump is
    migrated up to the current schema before the indexer resumes.
-4. The indexer resumes from the `IndexerState.lastLedger` cursor inside
+5. The indexer resumes from the `IndexerState.lastLedger` cursor inside
    the restored data. If that cursor is older than the RPC retention
    window, the service goes degraded on `/ready` — follow "Indexer falls
    outside the RPC retention window" below.
+6. Once the indexer has caught up and `/ready` reports healthy, clear
+   `MAINTENANCE_MODE` (or set it to `false`) to resume normal serving.
 
 ### Local development (SQLite)
 

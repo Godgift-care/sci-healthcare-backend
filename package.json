@@ -51,6 +51,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "loadtest": "node scripts/loadtest.mjs",
+    "perf:check": "node scripts/loadtest.mjs --check-regression",
     "prepare": "husky"
   },
   "dependencies": {

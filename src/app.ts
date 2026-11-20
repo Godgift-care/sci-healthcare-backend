@@ -27,7 +27,7 @@ import {
   matchesEtag,
   NO_STORE,
 } from './lib/cache.js';
-import { errorEnvelope } from './lib/errors.js';
+import { errorEnvelope, MAINTENANCE_RETRY_AFTER_SECONDS } from './lib/errors.js';
 import { errorMessage, negotiateLanguage } from './lib/i18n.js';
 import { allowedMethods, routePatterns, type RoutePattern } from './lib/method-allowed.js';
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
@@ -59,6 +59,7 @@ function genReqId(req: IncomingMessage): string {
 
 export type BuildAppOptions = {
   logger?: FastifyServerOptions['logger'];
+  maintenanceMode?: boolean;
 };
 
 /**
@@ -120,6 +121,40 @@ export async function buildApp(
     trustProxy: true,
     genReqId,
   });
+
+  const isMaintenance =
+    opts.maintenanceMode ??
+    (process.env.MAINTENANCE_MODE === 'true' || env.MAINTENANCE_MODE === 'true');
+
+  if (isMaintenance) {
+    app.addHook('onRequest', async (req, reply) => {
+      const path = req.url.split('?')[0]!.split('#')[0]!;
+      if (
+        path === '/health' ||
+        path === '/v1/health' ||
+        path === '/metrics' ||
+        path === '/openapi.json'
+      ) {
+        return;
+      }
+
+      const language = negotiateLanguage(req.headers['accept-language']);
+      const seconds = String(MAINTENANCE_RETRY_AFTER_SECONDS);
+      reply
+        .code(503)
+        .header('retry-after', seconds)
+        .header('cache-control', NO_STORE)
+        .send({
+          error: 'maintenance_mode',
+          message: errorMessage(
+            'maintenance_mode',
+            language,
+            `Service is undergoing maintenance, retry in ${seconds} seconds`,
+            { seconds },
+          ),
+        });
+    });
+  }
 
   // Every route the app and its plugins register, prefix already applied.
   // The not-found handler reads this to tell a wrong verb from an unknown

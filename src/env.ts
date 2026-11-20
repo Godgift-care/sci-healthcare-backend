@@ -38,6 +38,11 @@ const envShape = z.object({
   HOST: z.string().default('0.0.0.0'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  /**
+   * When 'true', every data route answers 503 Service Unavailable with
+   * a Retry-After header while /health stays 200 OK (#322).
+   */
+  MAINTENANCE_MODE: z.enum(['true', 'false']).default('false'),
   READY_MAX_LAG_LEDGERS: z.coerce.number().int().nonnegative().default(120),
   /**
    * How long a webhook delivery may stay pending before `/ready` reports the
