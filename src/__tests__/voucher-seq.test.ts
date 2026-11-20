@@ -7,7 +7,7 @@ import { prisma } from '../db.js';
 import { env } from '../env.js';
 import { voucherSeq } from '../lib/voucher-seq.js';
 import { encodeCursor } from '../lib/cursor.js';
-import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { LIST_ROUTE_PUBLIC_MAX } from '../lib/rate-limits.js';
 import { Indexer } from '../stellar/indexer.js';
 import type { DecodedEvent } from '../stellar/events.js';
 
@@ -37,7 +37,7 @@ async function get(url: string) {
     method: 'GET',
     url,
     headers: {
-      'x-forwarded-for': `10.9.${(LIST_ROUTE_RATE_LIMIT.max >> 8) & 255}.${++testClientId}`,
+      'x-forwarded-for': `10.9.${(LIST_ROUTE_PUBLIC_MAX >> 8) & 255}.${++testClientId}`,
     },
   });
   return { status: res.statusCode, body: res.json() };
@@ -48,7 +48,7 @@ async function getCsv(url: string) {
     method: 'GET',
     url,
     headers: {
-      'x-forwarded-for': `10.9.${(LIST_ROUTE_RATE_LIMIT.max >> 8) & 255}.${++testClientId}`,
+      'x-forwarded-for': `10.9.${(LIST_ROUTE_PUBLIC_MAX >> 8) & 255}.${++testClientId}`,
     },
   });
   return { status: res.statusCode, body: res.body };
