@@ -32,6 +32,7 @@ import { errorMessage, negotiateLanguage } from './lib/i18n.js';
 import { allowedMethods, routePatterns, type RoutePattern } from './lib/method-allowed.js';
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
 import { httpDuration, httpRequests, registry } from './lib/metrics.js';
+import { openapiDocsTransform } from './lib/openapi.js';
 import { APP_VERSION } from './lib/version.js';
 import { attesterRoutes } from './routes/attesters.js';
 import { feedRoutes } from './routes/feed.js';
@@ -184,6 +185,12 @@ export async function buildApp(
       },
     },
     transform: jsonSchemaTransform,
+    // `transform` converts each route's own schemas; this second hook runs on
+    // the finished document, which is where examples and error statuses can be
+    // added without touching a response body (`schema.response` is compiled
+    // into the live serializer, so declaring one here would be a breaking
+    // change under docs/api-policy.md). See src/lib/openapi.ts.
+    transformObject: openapiDocsTransform,
   });
 
   await app.register(swaggerUi, {

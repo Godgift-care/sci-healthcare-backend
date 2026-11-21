@@ -1,11 +1,21 @@
-import type { CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, GovernanceResponse, HealthStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
+import type { ApiErrorEnvelope, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, GovernanceResponse, HealthStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
 import { type StreamFilters, type StreamHandle, type StreamHandlers, type StreamOptions } from './stream.js';
 export declare class ApiError extends Error {
     readonly status: number;
     readonly error: string;
     readonly details?: unknown;
     readonly issues?: unknown;
-    constructor(status: number, error: string, message: string, details?: unknown);
+    /**
+     * The error body as the API sent it, typed as the one documented envelope
+     * (#296).
+     *
+     * `message` on this class is a fallback-protected string because `Error`
+     * needs one; `envelope` is the honest record, so a route that answers a
+     * lookup failure without a localised `message` shows that here rather than
+     * inheriting a sentence the server never sent.
+     */
+    readonly envelope: ApiErrorEnvelope;
+    constructor(status: number, error: string, message: string, details?: unknown, envelope?: ApiErrorEnvelope);
 }
 /**
  * Validates and extracts coordinates a clinic has published, or null.

@@ -268,6 +268,11 @@ sci vouchers --funder GDUP... --json | jq -r '.vouchers[].id'   # table or JSON 
 ### Examples
 
 - **Telegram Bot for Clinics**: [`examples/telegram-bot/`](examples/telegram-bot/README.md) demonstrates how clinic microservices verify `X-SCI-Signature` HMAC-SHA256 signatures on webhook notifications and post real-time voucher alerts without exposing patient/beneficiary data.
+- **WhatsApp Notifier for Clinics**: [`examples/whatsapp-notifier/`](examples/whatsapp-notifier/README.md) sends the same alerts as approved WhatsApp Business Cloud API template messages, and documents the template-approval step that decides whether a send is accepted at all.
+- **SMS Notifier for Clinics**: [`examples/sms-notifier/`](examples/sms-notifier/README.md) sends one short message per event through Africa's Talking — the channel that reaches feature phones — with the sandbox steps and the single-segment length rule the gateway actually bills against.
+
+All three verify the signature over the raw request body before any message is
+composed or sent, and refuse a payload that carries a beneficiary reference.
 
 ### Endpoints and Examples
 

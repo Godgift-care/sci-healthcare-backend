@@ -1,0 +1,11 @@
+{
+  "name": "@sci-healthcare/example-sms-notifier",
+  "version": "0.1.0",
+  "description": "Example Africa's Talking SMS notifier for clinics receiving signed webhooks",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

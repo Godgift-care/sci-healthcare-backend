@@ -217,6 +217,37 @@ export type ApiErrorDetail = {
     received?: string;
     [key: string]: unknown;
 };
+/**
+ * The `error` codes the API documents (#296), read off
+ * `components.schemas.ErrorEnvelope` and the examples beside it in
+ * `openapi.json`.
+ *
+ * This is the set a client can switch on today, not a validation: the API
+ * answers any code it likes, so a code added later arrives as a string that
+ * is simply not in this list. `src/__tests__/openapi-docs.test.ts` fails if
+ * the spec ever documents a code that is missing here, which is what keeps
+ * the two in step.
+ */
+export declare const API_ERROR_CODES: readonly ["bad_request", "invalid_query", "invalid_cursor", "invalid_code", "invalid_limit", "filter_required", "provider_not_found", "service_not_found", "voucher_not_found", "receipt_not_found", "attester_not_found", "route_not_found", "method_not_allowed", "rate_limited", "database_unavailable", "internal_error", "stream_full"];
+/** One of the documented `error` codes; see `API_ERROR_CODES`. */
+export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
+/**
+ * The one body every route answers a failure with.
+ *
+ * `error` is the stable, never-localised code to switch on; `message` is
+ * written for a human and follows the request `Accept-Language`, so it is
+ * subject to change and is missing on the routes that answer a lookup failure
+ * directly; `details` (or `issues`, on two routes) names the offending
+ * parameter when the refusal has that information.
+ */
+export type ApiErrorEnvelope = {
+    error: string;
+    message?: string;
+    details?: unknown;
+    issues?: unknown;
+};
+/** Whether an `ApiError.error` is one of the codes the API documents. */
+export declare function isApiErrorCode(code: string): code is ApiErrorCode;
 export type ListProvidersParams = {
     status?: 'Pending' | 'Active' | 'Suspended';
     country?: string;
