@@ -141,6 +141,11 @@ export type Voucher = {
   /** The attester that signed, from the `voucher_attested` topic. */
   attestedBy: string | null;
   disputeDeadline: string | Date | null;
+  /** The window the funder chose at funding time; null until reconciliation
+   *  reads `get_voucher_options` for this voucher (#319). */
+  disputeWindowSecs: number | null;
+  /** SHA-256 the clinic must reveal to claim; null unless presence-gated (#319). */
+  presenceCommitment: string | null;
   disputeReason?: number | null;
   disputeResolvedAt: string | Date | null;
   disputeResolvedBy: string | null;
