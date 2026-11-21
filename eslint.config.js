@@ -51,6 +51,7 @@ export default tseslint.config(
     // a plain-JS example like `email-notifier` exposes the gap.
     files: [
       'scripts/**/*.{ts,mts,mjs}',
+      'packages/client/scripts/**/*.mjs',
       '*.ts',
       '*.mjs',
       'test/**/*.ts',

@@ -1,0 +1,115 @@
+import { createServer } from 'node:http';
+import { templateForPayload, } from './formatter.js';
+import { sendWhatsAppTemplate } from './whatsapp.js';
+import { verifySignature } from './verify.js';
+export function createWebhookServer(options) {
+    // Read once so a later change to the environment cannot silently redirect
+    // messages mid-process.
+    const configuredClinicNumber = (process.env.WHATSAPP_CLINIC_NUMBER ?? '').trim() || undefined;
+    const { webhookSecret, phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID ?? '', accessToken = process.env.WHATSAPP_ACCESS_TOKEN ?? '', languageCode = process.env.WHATSAPP_LANGUAGE_CODE ?? 'en_US', graphApi = process.env.WHATSAPP_GRAPH_API ?? undefined, apiVersion = process.env.WHATSAPP_API_VERSION ?? undefined, resolveRecipient = () => configuredClinicNumber, logger = console.log, fetchImpl = fetch, onMessageSent, } = options;
+    const server = createServer(async (req, res) => {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        if (req.method === 'GET' && url.pathname === '/health') {
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ok' }));
+            return;
+        }
+        if (req.method !== 'POST' || url.pathname !== '/webhook') {
+            send(res, 404, { error: 'not_found', message: 'Endpoint not found' });
+            return;
+        }
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', async () => {
+            const rawBody = Buffer.concat(chunks);
+            const signatureHeader = req.headers['x-sci-signature'];
+            // Nothing is read, formatted or sent until the HMAC over the exact
+            // bytes received checks out.
+            if (!verifySignature(rawBody, signatureHeader, webhookSecret)) {
+                logger('Rejected webhook with invalid or missing signature');
+                send(res, 401, {
+                    error: 'invalid_signature',
+                    message: 'Signature header X-SCI-Signature is missing or invalid',
+                });
+                return;
+            }
+            let payload;
+            try {
+                payload = JSON.parse(rawBody.toString('utf8'));
+            }
+            catch {
+                send(res, 400, { error: 'invalid_json', message: 'Payload is not valid JSON' });
+                return;
+            }
+            let template;
+            try {
+                template = templateForPayload(payload, languageCode);
+            }
+            catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                logger(`Privacy or formatting rejection: ${message}`);
+                send(res, 400, { error: 'payload_rejected', message });
+                return;
+            }
+            if (template === undefined) {
+                logger(`No approved WhatsApp template for status: ${payload.status}`);
+                send(res, 200, {
+                    ok: true,
+                    status: 'skipped',
+                    voucherId: payload.voucherId,
+                    reason: `no approved template for status ${payload.status}`,
+                });
+                return;
+            }
+            if (phoneNumberId === '' || accessToken === '') {
+                logger('WhatsApp credentials missing; nothing was sent');
+                send(res, 501, {
+                    error: 'not_configured',
+                    message: 'Set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN',
+                });
+                return;
+            }
+            const to = resolveRecipient(payload.voucherId);
+            if (to === undefined) {
+                logger(`No WhatsApp number on file for voucher: ${payload.voucherId}`);
+                send(res, 200, {
+                    ok: true,
+                    status: 'no_recipient',
+                    voucherId: payload.voucherId,
+                    reason: 'no WhatsApp number resolved for this voucher',
+                });
+                return;
+            }
+            logger(`Delivering webhook for voucher ${payload.voucherId} (status: ${payload.status})`);
+            const result = await sendWhatsAppTemplate({
+                phoneNumberId,
+                accessToken,
+                to,
+                template,
+                ...(graphApi === undefined ? {} : { graphApi }),
+                ...(apiVersion === undefined ? {} : { apiVersion }),
+                fetchImpl,
+            });
+            if (!result.ok) {
+                logger(`Failed to post to WhatsApp: ${result.error}`);
+                send(res, 502, { error: 'whatsapp_error', message: result.error });
+                return;
+            }
+            if (onMessageSent) {
+                onMessageSent({ to, template, messageId: result.messageId });
+            }
+            send(res, 200, {
+                ok: true,
+                status: 'delivered',
+                voucherId: payload.voucherId,
+                template: template.name,
+                messageId: result.messageId,
+            });
+        });
+    });
+    return server;
+}
+function send(res, status, body) {
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(body));
+}

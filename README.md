@@ -268,6 +268,11 @@ sci vouchers --funder GDUP... --json | jq -r '.vouchers[].id'   # table or JSON 
 ### Examples
 
 - **Telegram Bot for Clinics**: [`examples/telegram-bot/`](examples/telegram-bot/README.md) demonstrates how clinic microservices verify `X-SCI-Signature` HMAC-SHA256 signatures on webhook notifications and post real-time voucher alerts without exposing patient/beneficiary data.
+- **WhatsApp Notifier for Clinics**: [`examples/whatsapp-notifier/`](examples/whatsapp-notifier/README.md) sends the same alerts as approved WhatsApp Business Cloud API template messages, and documents the template-approval step that decides whether a send is accepted at all.
+- **SMS Notifier for Clinics**: [`examples/sms-notifier/`](examples/sms-notifier/README.md) sends one short message per event through Africa's Talking — the channel that reaches feature phones — with the sandbox steps and the single-segment length rule the gateway actually bills against.
+
+All three verify the signature over the raw request body before any message is
+composed or sent, and refuse a payload that carries a beneficiary reference.
 
 ### Endpoints and Examples
 
@@ -826,6 +831,7 @@ this table and the schema drift apart.
 | `HOST` | No | `0.0.0.0` | `0.0.0.0` | Address the API binds to |
 | `LOG_LEVEL` | No | `info` | `info` | pino log level: `fatal`, `error`, `warn`, `info`, `debug` or `trace` |
 | `CORS_ORIGIN` | No | `http://localhost:3000` | `https://sci-healthcare.vercel.app` | Comma-separated origins allowed to call the API |
+| `MAINTENANCE_MODE` | No | `false` | `true` | When `true`, every data route answers 503 with `Retry-After`; `/health` stays 200 (used during database restore) |
 | `READY_MAX_LAG_LEDGERS` | No | `120` | `120` | Indexer lag in ledgers at which `/ready` reports degraded (503) |
 | `READY_WEBHOOK_MAX_AGE_MS` | No | `900000` | `900000` | Age at which a pending webhook delivery makes `/ready` report a backlog and answer 503 |
 | `DATABASE_URL` | Yes | — | `file:./dev.db` | Database connection string. SQLite paths resolve **relative to `prisma/`**; production uses a Postgres URL |
@@ -976,6 +982,7 @@ Suited to a platform that runs long-lived processes with a database attached, su
 - Start: `npm run db:migrate && npm start` (or `npm run start:api` / `npm run start:indexer` when split)
 - Run `./scripts/use-postgres.sh` before `prisma generate` to switch the schema from `sqlite` to `postgresql`
 - Provision the database in the **same region** and use its internal connection string
+- Before the first mainnet request, work through [docs/mainnet-checklist.md](docs/mainnet-checklist.md): configuration, database and migrations, backups, capacity, monitoring and rollback, each item paired with the command or setting that verifies it. `src/__tests__/mainnet-checklist.test.ts` fails if the checklist names a variable, script, route or file that no longer exists
 
 ### Schema changes and migrations
 

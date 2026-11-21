@@ -220,6 +220,34 @@ describe('examples/telegram-bot', () => {
       expect(body.message).toContain('Privacy violation');
     });
 
+    it('does not leak internal stack traces when payload processing throws', async () => {
+      const leakPayload = JSON.stringify({
+        event: 'voucher_funded',
+        voucherId: 'voucher-stack-test',
+        status: 'Funded',
+        beneficiaryRef: 'sensitive-beneficiary-ref',
+      });
+      const sig = computeSignature(leakPayload, secret);
+
+      const res = await fetch(`${serverUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'X-SCI-Signature': sig,
+        },
+        body: leakPayload,
+      });
+
+      expect(res.status).toBe(400);
+      const rawText = await res.text();
+      const body = JSON.parse(rawText) as Record<string, unknown>;
+      expect(body.error).toBe('payload_rejected');
+      expect(body.stack).toBeUndefined();
+      expect(rawText).not.toContain('\n    at ');
+      expect(rawText).not.toContain('node:internal');
+      expect(rawText).not.toContain('Error:');
+    });
+
     it('sends Telegram notification in mock mode', async () => {
       const res = await sendTelegramNotification('mock-token', '12345', 'Hello clinic');
       expect(res.ok).toBe(true);

@@ -50,6 +50,14 @@ const DATABASE_UNAVAILABLE_CODES = new Set(['P1001', 'P1003', 'P1008', 'P1009', 
 export const DATABASE_RETRY_AFTER_SECONDS = 5;
 
 /**
+ * How long a client is asked to wait before retrying during maintenance mode (503).
+ *
+ * Thirty seconds gives restore and catch-up operations time to proceed without
+ * having clients hammer the service on every second (#322).
+ */
+export const MAINTENANCE_RETRY_AFTER_SECONDS = 30;
+
+/**
  * Whether a thrown value means the database is unreachable (#133).
  *
  * An initialisation error always is one: a client that cannot start or

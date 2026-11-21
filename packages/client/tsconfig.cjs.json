@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": "dist/cjs",
+    // Declarations are emitted once, by the ESM build, and are format-agnostic.
+    "declaration": false
+  },
+  // `cli.ts` is inherently ESM (`import.meta.url` for entry detection and a
+  // top-level `await`); the `sci` bin runs it through Node directly, so it is
+  // shipped ESM-only and the CommonJS build carries the library API only.
+  "exclude": ["../node_modules", "node_modules", "dist", "src/cli.ts"]
+}

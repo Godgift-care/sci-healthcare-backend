@@ -167,6 +167,8 @@ describe('@sci-healthcare/client', () => {
       status: 'Active',
       registeredAt: new Date().toISOString(),
       services: [],
+      capacity: null,
+      openVouchers: 0,
       location: { lat: -1.286389, lng: 36.817223 },
     };
     expect(providerLocation(valid)).toEqual({ lat: -1.286389, lng: 36.817223 });
@@ -178,6 +180,8 @@ describe('@sci-healthcare/client', () => {
       status: 'Active',
       registeredAt: new Date().toISOString(),
       services: [],
+      capacity: null,
+      openVouchers: 0,
       metadata: { location: { lat: 0.5, lng: 35.2 } },
     };
     expect(providerLocation(metadataLocation)).toEqual({ lat: 0.5, lng: 35.2 });
@@ -194,5 +198,24 @@ describe('@sci-healthcare/client', () => {
       metadata: null,
     };
     expect(providerLocation(noLocation)).toBeNull();
+  });
+
+  it('normalizes a very long trailing slash run in linear time', async () => {
+    const baseUrl = `https://api.example.test/v1${'/'.repeat(100_000)}`;
+    let requestedUrl = '';
+    const fetchImpl: typeof fetch = async (input) => {
+      requestedUrl = typeof input === 'string' ? input : input.toString();
+      return new Response(JSON.stringify({ status: 'ok' }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    const startedAt = performance.now();
+    const longBaseUrlClient = createClient({ baseUrl, fetch: fetchImpl });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(100);
+    await longBaseUrlClient.health();
+    expect(requestedUrl).toBe('https://api.example.test/v1/health');
   });
 });
