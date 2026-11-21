@@ -1,6 +1,6 @@
 import type { WhatsAppTemplate } from './formatter.js';
 /** Graph API host and version used for the WhatsApp Cloud API. */
-export declare const DEFAULT_GRAPH_API = "https://graph.facebook.com";
+export declare const DEFAULT_GRAPH_API: string;
 export declare const DEFAULT_API_VERSION = "v23.0";
 export interface SendTemplateOptions {
     phoneNumberId: string;

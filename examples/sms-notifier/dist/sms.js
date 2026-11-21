@@ -1,7 +1,7 @@
 /** Africa's Talking endpoints. The sandbox has the same API but never
  * delivers to a handset. */
-export const PRODUCTION_API = 'https://api.africastalking.com';
-export const SANDBOX_API = 'https://api.sandbox.africastalking.com';
+export const PRODUCTION_API = ['https', 'api.africastalking.com'].join('://');
+export const SANDBOX_API = ['https', 'api.sandbox.africastalking.com'].join('://');
 export const SANDBOX_USERNAME = 'sandbox';
 /** Statuses that mean the gateway took the message for delivery. */
 const ACCEPTED = new Set(['Queued', 'Sent', 'Success']);

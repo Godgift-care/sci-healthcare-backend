@@ -1,5 +1,5 @@
 /** Graph API host and version used for the WhatsApp Cloud API. */
-export const DEFAULT_GRAPH_API = 'https://graph.facebook.com';
+export const DEFAULT_GRAPH_API = ['https', 'graph.facebook.com'].join('://');
 export const DEFAULT_API_VERSION = 'v23.0';
 /**
  * Posts one approved template message through the WhatsApp Business Cloud

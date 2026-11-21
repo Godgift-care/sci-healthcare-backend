@@ -1,7 +1,7 @@
 /** Africa's Talking endpoints. The sandbox has the same API but never
  * delivers to a handset. */
-export declare const PRODUCTION_API = "https://api.africastalking.com";
-export declare const SANDBOX_API = "https://api.sandbox.africastalking.com";
+export declare const PRODUCTION_API: string;
+export declare const SANDBOX_API: string;
 export declare const SANDBOX_USERNAME = "sandbox";
 export interface SendSmsOptions {
     username: string;
