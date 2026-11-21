@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SCI Healthcare API reference</title>
+    <meta
+      name="description"
+      content="OpenAPI reference for the SCI Healthcare care-voucher read API on Stellar."
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --line: #d8d8d8;
+        --muted: #61656d;
+        --bg: #fff;
+        --panel: #f6f6f7;
+        --ink: #16181d;
+        --accent: #1c64b4;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --line: #33363d;
+          --muted: #9aa0aa;
+          --bg: #15171b;
+          --panel: #1d2026;
+          --ink: #e8eaee;
+          --accent: #6cb0f5;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        line-height: 1.55;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.92em;
+      }
+      a {
+        color: var(--accent);
+      }
+      header {
+        max-width: 78rem;
+        margin: 0 auto;
+        padding: 1.4rem 1.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        margin: 0 0 0.3rem;
+        font-size: 1.5rem;
+      }
+      header .desc {
+        margin: 0.6rem 0 0;
+        max-width: 62rem;
+        font-size: 0.95rem;
+        white-space: pre-wrap;
+      }
+      #layout {
+        display: flex;
+        align-items: flex-start;
+        gap: 2rem;
+        max-width: 78rem;
+        margin: 0 auto;
+        padding: 0 1.5rem 4rem;
+      }
+      nav {
+        position: sticky;
+        top: 1rem;
+        flex: 0 0 16rem;
+        max-height: calc(100vh - 2rem);
+        overflow: auto;
+        font-size: 0.85rem;
+        border-right: 1px solid var(--line);
+        padding-right: 1rem;
+      }
+      nav a {
+        display: block;
+        color: inherit;
+        text-decoration: none;
+        padding: 0.1rem 0;
+        word-break: break-all;
+      }
+      nav a:hover {
+        text-decoration: underline;
+      }
+      main {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      main h2 {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin: 2.4rem 0 0.5rem;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid var(--line);
+      }
+      nav h2 {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin: 1.3rem 0 0.3rem;
+      }
+      article {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1rem 1.1rem;
+        margin: 0.9rem 0;
+        scroll-margin-top: 1rem;
+      }
+      article > h3 {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.6rem;
+        margin: 0;
+        font-size: 1rem;
+      }
+      .badge {
+        font-weight: 600;
+        font-size: 0.78rem;
+        letter-spacing: 0.04em;
+        padding: 0.05rem 0.45rem;
+        border-radius: 4px;
+        background: var(--accent);
+        color: #fff;
+      }
+      article .summary {
+        margin: 0.5rem 0 0;
+        font-weight: 600;
+      }
+      article .notes {
+        margin: 0.4rem 0 0;
+        font-size: 0.9rem;
+        color: var(--muted);
+        white-space: pre-wrap;
+      }
+      article h4 {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+        margin: 1.2rem 0 0.2rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.88rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.6rem 0.35rem 0;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .response {
+        margin-top: 0.5rem;
+        padding: 0.5rem 0.7rem;
+        background: var(--panel);
+        border-radius: 6px;
+        font-size: 0.9rem;
+      }
+      .response > .head {
+        display: flex;
+        gap: 0.5rem;
+        align-items: baseline;
+      }
+      ul.tree {
+        list-style: none;
+        margin: 0.3rem 0 0;
+        padding-left: 1rem;
+        border-left: 1px solid var(--line);
+        font-size: 0.88rem;
+      }
+      ul.tree.top {
+        padding-left: 0;
+        border-left: 0;
+      }
+      ul.tree li {
+        margin: 0.15rem 0;
+      }
+      .t {
+        color: var(--muted);
+      }
+      .req {
+        color: #b4232a;
+        font-weight: 700;
+      }
+      .notice {
+        padding: 1rem 0;
+        color: var(--muted);
+      }
+      footer {
+        max-width: 78rem;
+        margin: 0 auto;
+        padding: 1rem 1.5rem 2rem;
+        border-top: 1px solid var(--line);
+        font-size: 0.85rem;
+      }
+      @media (max-width: 60rem) {
+        nav {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      The rendered API reference published by .github/workflows/pages.yml.
+
+      It reads ./openapi.json — the committed spec, copied verbatim into the
+      Pages artifact — instead of the specification from the running API. That
+      is the point: the Swagger UI at /docs on the server is unavailable
+      whenever the server is, and a frozen Render free instance is unavailable
+      often. openapi-contract.test.ts is what keeps this file equal to the
+      routes actually served.
+
+      The page carries its own renderer rather than loading Redoc or Swagger UI
+      from a public CDN. A documentation page for a health-sector API should
+      not send a reader's request to a host this repository does not control,
+      and pinning a bundle to a version and a hash does not change that: the
+      hash only proves the bytes are the ones that version published. The cost
+      is the polished sidebar and the "try it" panel of a real client; what
+      remains is the whole contract, working offline and at any URL prefix,
+      talking only to the host that served it.
+
+      The spec is fetched, not inlined, so preview it over HTTP
+      (`python3 -m http.server` in this directory) rather than by opening the
+      file.
+    -->
+    <noscript>
+      <p>
+        This page renders the specification in the browser, which is switched off. The contract
+        itself is plain JSON:
+        <a href="./openapi.json">openapi.json</a>.
+      </p>
+    </noscript>
+    <div id="app">
+      <p class="notice">Loading <code>openapi.json</code></p>
+    </div>
+    <footer>
+      SCI Healthcare API · generated from the committed
+      <a href="./openapi.json">OpenAPI 3.1 specification</a> · interactive version served by the
+      running API at
+      <a href="https://sci-healthcare-api.onrender.com/docs">/docs</a>
+    </footer>
+    <script>
+      (function () {
+        'use strict';
+
+        var SPEC = './openapi.json';
+        var specData = null;
+
+        // The only JSON Schema keywords this page interprets. They are exactly
+        // the ones the committed spec uses, and ci-workflows.test.ts fails the
+        // build when the spec starts carrying another. That test, not a general
+        // schema renderer, is what keeps "the page matches the contract" true.
+        var KNOWN_KEYWORDS = [
+          '$ref',
+          'type',
+          'properties',
+          'required',
+          'items',
+          'enum',
+          'description',
+          'additionalProperties',
+          'propertyNames',
+          'minLength',
+          'maxLength',
+          'minimum',
+          'maximum',
+        ];
+
+        function resolve(schema) {
+          if (!schema || typeof schema !== 'object') return schema;
+          if (schema.$ref && typeof schema.$ref === 'string') {
+            if (
+              schema.$ref.indexOf('#/components/schemas/') === 0 &&
+              specData &&
+              specData.components &&
+              specData.components.schemas
+            ) {
+              var name = schema.$ref.slice('#/components/schemas/'.length);
+              if (specData.components.schemas[name]) {
+                return specData.components.schemas[name];
+              }
+            }
+          }
+          return schema;
+        }
+
+        function appendAll(node, value) {
+          if (value === null || value === undefined) return;
+          if (Array.isArray(value)) {
+            value.forEach(function (child) {
+              appendAll(node, child);
+            });
+            return;
+          }
+          node.append(value);
+        }
+
+        function h(tag, attrs) {
+          var node = document.createElement(tag);
+          if (attrs) {
+            Object.keys(attrs).forEach(function (key) {
+              node.setAttribute(key, attrs[key]);
+            });
+          }
+          for (var i = 2; i < arguments.length; i++) appendAll(node, arguments[i]);
+          return node;
+        }
+
+        function anchorId(method, path) {
+          return (method + '-' + path).replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+        }
+
+        /** The properties a schema exposes, through one level of array items. */
+        function propertiesOf(schema) {
+          schema = resolve(schema);
+          if (!schema || typeof schema !== 'object') return null;
+          if (schema.properties) return schema.properties;
+          if (schema.items) {
+            var items = resolve(schema.items);
+            if (items && items.properties) return items.properties;
+          }
+          return null;
+        }
+
+        function typeOf(schema) {
+          schema = resolve(schema);
+          if (!schema || typeof schema !== 'object') return 'any';
+          if (schema.enum) {
+            return schema.enum
+              .map(function (value) {
+                return JSON.stringify(value);
+              })
+              .join(' | ');
+          }
+          var type = Array.isArray(schema.type) ? schema.type.join(' | ') : schema.type;
+          if (!type) type = schema.properties ? 'object' : schema.items ? 'array' : 'any';
+          if (type === 'array' || type.indexOf('array') >= 0) return typeOf(schema.items) + '[]';
+          return type;
+        }
+
+        function constraintsOf(schema) {
+          schema = resolve(schema);
+          var out = [];
+          if (schema.minLength !== undefined || schema.maxLength !== undefined) {
+            var lo = schema.minLength === undefined ? 0 : schema.minLength;
+            var hi = schema.maxLength === undefined ? 'any' : schema.maxLength;
+            out.push(lo + '..' + hi + ' characters');
+          }
+          if (schema.minimum !== undefined) out.push('at least ' + schema.minimum);
+          if (schema.maximum !== undefined) out.push('at most ' + schema.maximum);
+          if (schema.propertyNames) out.push('keys are ' + typeOf(schema.propertyNames));
+          if (schema.additionalProperties === false) out.push('no other keys');
+          else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+            out.push('other keys are ' + typeOf(schema.additionalProperties));
+          }
+          return out.join(', ');
+        }
+
+        function schemaTree(schema, top) {
+          schema = resolve(schema);
+          var list = h('ul', { class: top ? 'tree top' : 'tree' });
+          if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+            var open = schema.additionalProperties;
+            list.append(
+              h(
+                'li',
+                null,
+                h('code', null, 'any key'),
+                h('span', { class: 't' }, ': ' + typeOf(open)),
+                propertiesOf(open) ? schemaTree(open, false) : null,
+              ),
+            );
+          }
+          var props = propertiesOf(schema) || {};
+          var required = schema.required || [];
+          Object.keys(props).forEach(function (name) {
+            var child = props[name] || {};
+            var notes = constraintsOf(child);
+            if (child.description) {
+              notes = notes ? child.description + ' (' + notes + ')' : child.description;
+            }
+            list.append(
+              h(
+                'li',
+                null,
+                h('code', null, name),
+                required.indexOf(name) >= 0 ? h('span', { class: 'req' }, '*') : null,
+                h('span', { class: 't' }, ': ' + typeOf(child) + (notes ? ' (' + notes + ')' : '')),
+                propertiesOf(child) ? schemaTree(child, false) : null,
+              ),
+            );
+          });
+          return list;
+        }
+
+        function parameterTable(params) {
+          return h(
+            'table',
+            null,
+            h(
+              'thead',
+              null,
+              h(
+                'tr',
+                null,
+                ['Name', 'In', 'Required', 'Type', 'Limits', 'Description'].map(function (label) {
+                  return h('th', null, label);
+                }),
+              ),
+            ),
+            h(
+              'tbody',
+              null,
+              params.map(function (param) {
+                var schema = param.schema || {};
+                return h(
+                  'tr',
+                  null,
+                  h('td', null, h('code', null, param.name)),
+                  h('td', null, param.in || ''),
+                  h('td', null, param.required ? 'yes' : 'no'),
+                  h('td', null, typeOf(schema)),
+                  h('td', null, constraintsOf(schema)),
+                  h('td', null, param.description || schema.description || ''),
+                );
+              }),
+            ),
+          );
+        }
+
+        function responsesOf(op) {
+          return Object.keys(op.responses || {}).map(function (status) {
+            var res = op.responses[status];
+            var bodies = Object.keys(res.content || {}).map(function (mediaType) {
+              var media = res.content[mediaType];
+              return [
+                h('div', { class: 't' }, mediaType),
+                media.schema ? schemaTree(media.schema, true) : null,
+              ];
+            });
+            return h(
+              'div',
+              { class: 'response' },
+              h(
+                'div',
+                { class: 'head' },
+                h('code', null, status),
+                h('span', null, res.description || ''),
+              ),
+              bodies,
+            );
+          });
+        }
+
+        function operation(method, path, op) {
+          return h(
+            'article',
+            { id: anchorId(method, path) },
+            h(
+              'h3',
+              null,
+              h('span', { class: 'badge' }, method.toUpperCase()),
+              h('code', null, path),
+            ),
+            op.summary ? h('p', { class: 'summary' }, op.summary) : null,
+            op.description && op.description !== op.summary
+              ? h('p', { class: 'notes' }, op.description)
+              : null,
+            (op.parameters || []).length ? h('h4', null, 'Parameters') : null,
+            (op.parameters || []).length ? parameterTable(op.parameters) : null,
+            Object.keys(op.responses || {}).length ? h('h4', null, 'Responses') : null,
+            responsesOf(op),
+          );
+        }
+
+        /** The resource a path names, for the routes that carry no tag. */
+        function resourceOf(path) {
+          var segments = path.split('/').filter(function (segment) {
+            return segment && segment !== 'v1' && segment.charAt(0) !== '{';
+          });
+          if (!segments.length) return 'operations';
+          return segments[0].replace(/\.(csv|xml|json)$/, '');
+        }
+
+        function groupOperations(spec) {
+          var byKey = new Map();
+          Object.keys(spec.paths || {}).forEach(function (path) {
+            Object.keys(spec.paths[path]).forEach(function (method) {
+              var op = spec.paths[path][method];
+              // Only a sixth of this spec is tagged, so tags alone would bury
+              // the rest under one heading. Fall back to the resource the path
+              // names, which is how README.md tables the same routes.
+              var keys = op.tags && op.tags.length ? op.tags : [resourceOf(path)];
+              keys.forEach(function (key) {
+                if (!byKey.has(key)) byKey.set(key, []);
+                byKey.get(key).push({ method: method, path: path, op: op });
+              });
+            });
+          });
+          return new Map(
+            Array.from(byKey).sort(function (a, b) {
+              return a[0] < b[0] ? -1 : 1;
+            }),
+          );
+        }
+
+        /** Schema keywords the spec uses that this page passes over in silence. */
+        function unknownKeywords(spec) {
+          var seen = new Set(KNOWN_KEYWORDS);
+          var unknown = new Set();
+          (function walk(node) {
+            if (Array.isArray(node)) {
+              node.forEach(walk);
+              return;
+            }
+            if (!node || typeof node !== 'object') return;
+            var isSchema =
+              node.type !== undefined ||
+              node.properties ||
+              node.items ||
+              node.enum ||
+              node.propertyNames ||
+              node.$ref;
+            if (isSchema) {
+              Object.keys(node).forEach(function (key) {
+                if (!seen.has(key)) unknown.add(key);
+              });
+            }
+            Object.keys(node).forEach(function (key) {
+              walk(node[key]);
+            });
+          })(spec);
+          return Array.from(unknown).sort();
+        }
+
+        function notice(lines) {
+          var app = document.getElementById('app');
+          app.replaceChildren();
+          lines.forEach(function (line) {
+            app.append(h('p', { class: 'notice' }, line));
+          });
+        }
+
+        fetch(SPEC)
+          .then(function (res) {
+            if (!res.ok) throw new Error(String(res.status));
+            return res.json();
+          })
+          .then(function (spec) {
+            specData = spec;
+            var info = spec.info || {};
+            var groups = groupOperations(spec);
+            var nav = h('nav');
+            var main = h('main');
+            groups.forEach(function (ops, group) {
+              nav.append(h('h2', null, group));
+              var section = h('section', { id: 'group-' + group }, h('h2', null, group));
+              ops.forEach(function (entry) {
+                nav.append(h('a', { href: '#' + anchorId(entry.method, entry.path) }, entry.path));
+                section.append(operation(entry.method, entry.path, entry.op));
+              });
+              main.append(section);
+            });
+            var header = h(
+              'header',
+              null,
+              h('h1', null, info.title || 'API reference'),
+              h(
+                'p',
+                { class: 't' },
+                'OpenAPI ' + spec.openapi + ' · version ' + (info.version || 'unknown'),
+              ),
+              info.description ? h('p', { class: 'desc' }, info.description) : null,
+            );
+            var unknown = unknownKeywords(spec);
+            if (unknown.length) {
+              header.append(
+                h(
+                  'p',
+                  { class: 'notice' },
+                  'This page does not interpret ' +
+                    unknown.join(', ') +
+                    '; the JSON linked below is the complete contract.',
+                ),
+              );
+            }
+            document.title = (info.title || 'API') + ' reference';
+            document
+              .getElementById('app')
+              .replaceChildren(header, h('div', { id: 'layout' }, nav, main));
+          })
+          .catch(function () {
+            notice([
+              'The specification could not be loaded from ' + SPEC + '.',
+              'Serve this directory over HTTP to read it; the contract itself is plain JSON.',
+            ]);
+          });
+      })();
+    </script>
+  </body>
+</html>

@@ -167,6 +167,8 @@ describe('@sci-healthcare/client', () => {
       status: 'Active',
       registeredAt: new Date().toISOString(),
       services: [],
+      capacity: null,
+      openVouchers: 0,
       location: { lat: -1.286389, lng: 36.817223 },
     };
     expect(providerLocation(valid)).toEqual({ lat: -1.286389, lng: 36.817223 });
@@ -178,6 +180,8 @@ describe('@sci-healthcare/client', () => {
       status: 'Active',
       registeredAt: new Date().toISOString(),
       services: [],
+      capacity: null,
+      openVouchers: 0,
       metadata: { location: { lat: 0.5, lng: 35.2 } },
     };
     expect(providerLocation(metadataLocation)).toEqual({ lat: 0.5, lng: 35.2 });
