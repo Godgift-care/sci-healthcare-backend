@@ -249,8 +249,8 @@
     -->
     <noscript>
       <p>
-        This page renders the specification in the browser, which is switched
-        off. The contract itself is plain JSON:
+        This page renders the specification in the browser, which is switched off. The contract
+        itself is plain JSON:
         <a href="./openapi.json">openapi.json</a>.
       </p>
     </noscript>
@@ -259,8 +259,8 @@
     </div>
     <footer>
       SCI Healthcare API · generated from the committed
-      <a href="./openapi.json">OpenAPI 3.1 specification</a> · interactive
-      version served by the running API at
+      <a href="./openapi.json">OpenAPI 3.1 specification</a> · interactive version served by the
+      running API at
       <a href="https://sci-healthcare-api.onrender.com/docs">/docs</a>
     </footer>
     <script>
@@ -268,13 +268,14 @@
         'use strict';
 
         var SPEC = './openapi.json';
+        var specData = null;
 
         // The only JSON Schema keywords this page interprets. They are exactly
         // the ones the committed spec uses, and ci-workflows.test.ts fails the
-        // build when the spec starts carrying another — including `$ref`, which
-        // nothing here resolves. That test, not a general schema renderer, is
-        // what keeps "the page matches the contract" true.
+        // build when the spec starts carrying another. That test, not a general
+        // schema renderer, is what keeps "the page matches the contract" true.
         var KNOWN_KEYWORDS = [
+          '$ref',
           'type',
           'properties',
           'required',
@@ -288,6 +289,24 @@
           'minimum',
           'maximum',
         ];
+
+        function resolve(schema) {
+          if (!schema || typeof schema !== 'object') return schema;
+          if (schema.$ref && typeof schema.$ref === 'string') {
+            if (
+              schema.$ref.indexOf('#/components/schemas/') === 0 &&
+              specData &&
+              specData.components &&
+              specData.components.schemas
+            ) {
+              var name = schema.$ref.slice('#/components/schemas/'.length);
+              if (specData.components.schemas[name]) {
+                return specData.components.schemas[name];
+              }
+            }
+          }
+          return schema;
+        }
 
         function appendAll(node, value) {
           if (value === null || value === undefined) return;
@@ -317,13 +336,18 @@
 
         /** The properties a schema exposes, through one level of array items. */
         function propertiesOf(schema) {
+          schema = resolve(schema);
           if (!schema || typeof schema !== 'object') return null;
           if (schema.properties) return schema.properties;
-          if (schema.items && schema.items.properties) return schema.items.properties;
+          if (schema.items) {
+            var items = resolve(schema.items);
+            if (items && items.properties) return items.properties;
+          }
           return null;
         }
 
         function typeOf(schema) {
+          schema = resolve(schema);
           if (!schema || typeof schema !== 'object') return 'any';
           if (schema.enum) {
             return schema.enum
@@ -339,6 +363,7 @@
         }
 
         function constraintsOf(schema) {
+          schema = resolve(schema);
           var out = [];
           if (schema.minLength !== undefined || schema.maxLength !== undefined) {
             var lo = schema.minLength === undefined ? 0 : schema.minLength;
@@ -356,6 +381,7 @@
         }
 
         function schemaTree(schema, top) {
+          schema = resolve(schema);
           var list = h('ul', { class: top ? 'tree top' : 'tree' });
           if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
             var open = schema.additionalProperties;
@@ -545,6 +571,7 @@
             return res.json();
           })
           .then(function (spec) {
+            specData = spec;
             var info = spec.info || {};
             var groups = groupOperations(spec);
             var nav = h('nav');

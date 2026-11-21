@@ -21,9 +21,11 @@ const checklist = readFileSync(new URL('../../docs/mainnet-checklist.md', import
 const envSource = readFileSync(new URL('../env.ts', import.meta.url), 'utf8');
 const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
 const schema = readFileSync(new URL('../../prisma/schema.prisma', import.meta.url), 'utf8');
-const scripts = (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
-  scripts: Record<string, string>;
-}).scripts;
+const scripts = (
+  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+    scripts: Record<string, string>;
+  }
+).scripts;
 
 /** A doc-relative path: the checklist lives in `docs/`, this test in `src/__tests__/`. */
 function docUrl(path: string): URL {
@@ -54,7 +56,13 @@ const routesSource = [
   .join('\n');
 
 /** Where a variable is read: the schema, or the modules that bypass it. */
-const envReadSites = [envSource, schema, srcFile('lib/retention.ts'), srcFile('db.ts'), srcFile('api.ts')];
+const envReadSites = [
+  envSource,
+  schema,
+  srcFile('lib/retention.ts'),
+  srcFile('db.ts'),
+  srcFile('api.ts'),
+];
 
 /** Words the checklist backticks that are SQL or prose, not configuration. */
 const NOT_ENV_VARIABLES = new Set(['EXPLAIN', 'PRAGMA', 'SELECT', 'RETRY', 'CACHE']);
@@ -87,7 +95,10 @@ function backticked(text: string): string[] {
 
 /** GitHub's anchor for a heading: lowercase, punctuation dropped, every space hyphenated. */
 function slug(heading: string): string {
-  return heading.toLowerCase().replace(/[^\w\s-]/g, '').replace(/ /g, '-');
+  return heading
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/ /g, '-');
 }
 
 describe('mainnet-checklist.md structure', () => {
@@ -102,7 +113,10 @@ describe('mainnet-checklist.md structure', () => {
       'Monitoring and alerting',
       'Rollback',
     ]) {
-      expect(found.some((s) => s.title.includes(name)), `section ${name}`).toBe(true);
+      expect(
+        found.some((s) => s.title.includes(name)),
+        `section ${name}`,
+      ).toBe(true);
     }
   });
 
@@ -115,9 +129,10 @@ describe('mainnet-checklist.md structure', () => {
   it('numbers each row under the section it sits in', () => {
     for (const section of sectionBodies()) {
       for (const [id] of rowsIn(section.body)) {
-        expect(id.startsWith(`${section.number}.`), `row ${id} sits in section ${section.number}`).toBe(
-          true,
-        );
+        expect(
+          id.startsWith(`${section.number}.`),
+          `row ${id} sits in section ${section.number}`,
+        ).toBe(true);
       }
     }
   });
@@ -127,7 +142,9 @@ describe('every item is verifiable', () => {
   it('pairs each item with a command, a setting, a link, or a named human decision', () => {
     for (const [id, , verifyBy] of allRows) {
       const verifiable =
-        verifyBy.includes('`') || verifyBy.includes('](') || verifyBy.includes('named human decision');
+        verifyBy.includes('`') ||
+        verifyBy.includes('](') ||
+        verifyBy.includes('named human decision');
       expect(verifiable, `row ${id} offers no check: "${verifyBy}"`).toBe(true);
     }
   });
@@ -139,10 +156,14 @@ describe('every item is verifiable', () => {
   });
 
   it('defers to a human only where nothing in this repository can be read', () => {
-    for (const [id] of allRows.filter(([, , verifyBy]) => verifyBy.includes('named human decision'))) {
+    for (const [id] of allRows.filter(([, , verifyBy]) =>
+      verifyBy.includes('named human decision'),
+    )) {
       // Plans, standbys and sign-off (§2, §3, §6) are the only rows that can
       // legitimately end at "someone decided". Anything else hides a check.
-      expect(['2', '3', '6'], `row ${id} hides a checkable item behind a human`).toContain(id.split('.')[0]);
+      expect(['2', '3', '6'], `row ${id} hides a checkable item behind a human`).toContain(
+        id.split('.')[0],
+      );
     }
   });
 });
@@ -172,7 +193,9 @@ describe('names used in the checklist still exist', () => {
   });
 
   it('points only at paths that are on disk', () => {
-    const paths = tokens.filter((t) => /^(src|prisma|ops|docs|\.github)\//.test(t) || t === 'render.yaml');
+    const paths = tokens.filter(
+      (t) => /^(src|prisma|ops|docs|\.github)\//.test(t) || t === 'render.yaml',
+    );
     expect(paths.length).toBeGreaterThanOrEqual(8);
     for (const path of paths) {
       expect(
@@ -224,7 +247,9 @@ describe('names used in the checklist still exist', () => {
     const lag = envSource.match(/READY_MAX_LAG_LEDGERS[\s\S]{0,90}?default\((\d+)\)/)?.[1];
     expect(checklist, 'the readiness lag threshold').toContain(`${lag} ledgers`);
 
-    const webhookAge = envSource.match(/READY_WEBHOOK_MAX_AGE_MS[\s\S]{0,90}?default\((\d+_\d+)\)/)?.[1];
+    const webhookAge = envSource.match(
+      /READY_WEBHOOK_MAX_AGE_MS[\s\S]{0,90}?default\((\d+_\d+)\)/,
+    )?.[1];
     expect(webhookAge, 'the webhook freshness default is not expressed in minutes').toBe('900_000');
     expect(checklist, 'the webhook freshness window').toContain('15 minutes');
 
@@ -239,12 +264,15 @@ describe('names used in the checklist still exist', () => {
     expect(checklist, 'the Cache-Control value').toContain(cacheControl ?? '');
 
     const noStore = new Set(
-      [...(cache.match(/const NO_STORE_ROUTES[\s\S]*?\]\);/)?.[0] ?? '').matchAll(/'(\/[^']+)'/g)].map(
-        (m) => m[1] ?? '',
-      ),
+      [
+        ...(cache.match(/const NO_STORE_ROUTES[\s\S]*?\]\);/)?.[0] ?? '').matchAll(/'(\/[^']+)'/g),
+      ].map((m) => m[1] ?? ''),
     );
     for (const route of ['/health', '/ready', '/metrics', '/stream']) {
-      expect(noStore, `${route} would be cached, which keeps a broken instance in rotation`).toContain(route);
+      expect(
+        noStore,
+        `${route} would be cached, which keeps a broken instance in rotation`,
+      ).toContain(route);
     }
 
     const errors = srcFile('lib/errors.ts');
@@ -268,7 +296,9 @@ describe('names used in the checklist still exist', () => {
   });
 
   it('names only alerts ops/alerts.yml defines, and counts them right', () => {
-    const defined = [...repoFile('ops/alerts.yml').matchAll(/- alert: (\w+)/g)].map((m) => m[1] ?? '');
+    const defined = [...repoFile('ops/alerts.yml').matchAll(/- alert: (\w+)/g)].map(
+      (m) => m[1] ?? '',
+    );
     expect(defined.length).toBe(6);
     expect(checklist).toContain('six rules');
     for (const name of checklist.match(/\bSci\w+\b/g) ?? []) {
@@ -280,9 +310,10 @@ describe('names used in the checklist still exist', () => {
     const paths = tokens.filter((t) => /^prisma\/migrations\/\d{14}_/.test(t));
     expect(paths.length).toBeGreaterThanOrEqual(2);
     for (const path of paths) {
-      expect(existsSync(new URL(`../../${path}`, import.meta.url)), `no such migration: ${path}`).toBe(
-        true,
-      );
+      expect(
+        existsSync(new URL(`../../${path}`, import.meta.url)),
+        `no such migration: ${path}`,
+      ).toBe(true);
     }
   });
 });
@@ -291,16 +322,16 @@ describe('links in the checklist resolve', () => {
   const links = [...checklist.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1] ?? '');
 
   it('links only files inside the repository', () => {
-    expect(links.some((l) => l.startsWith('http')), 'an absolute URL would go stale silently').toBe(false);
+    expect(
+      links.some((l) => l.startsWith('http')),
+      'an absolute URL would go stale silently',
+    ).toBe(false);
     const relative = links.filter((l) => !l.startsWith('#'));
     expect(relative.length).toBeGreaterThanOrEqual(6);
     for (const link of relative) {
       const path = link.split('#')[0] ?? '';
       if (!path) continue;
-      expect(
-        existsSync(docUrl(path)),
-        `${link} does not resolve from docs/`,
-      ).toBe(true);
+      expect(existsSync(docUrl(path)), `${link} does not resolve from docs/`).toBe(true);
     }
   });
 
@@ -308,9 +339,9 @@ describe('links in the checklist resolve', () => {
     for (const link of links.filter((l) => l.includes('#') && !l.startsWith('#'))) {
       const [path, anchor] = link.split('#');
       if (!path || !anchor) continue;
-      const headings = [...readFileSync(docUrl(path), 'utf8')
-        .matchAll(/^#{1,6} (.+)$/gm)]
-        .map((m) => slug(m[1] ?? ''));
+      const headings = [...readFileSync(docUrl(path), 'utf8').matchAll(/^#{1,6} (.+)$/gm)].map(
+        (m) => slug(m[1] ?? ''),
+      );
       expect(headings, `${link} has no heading to land on`).toContain(anchor);
     }
   });
@@ -325,7 +356,13 @@ describe('the checklist is reachable and honest about its limits', () => {
   });
 
   it('names the documents it complements rather than replaces', () => {
-    for (const name of ['RUNBOOK.md', 'architecture.md', 'logging.md', 'privacy.md', 'api-policy.md']) {
+    for (const name of [
+      'RUNBOOK.md',
+      'architecture.md',
+      'logging.md',
+      'privacy.md',
+      'api-policy.md',
+    ]) {
       expect(checklist, `no pointer to ${name}`).toContain(name);
     }
   });

@@ -167,7 +167,9 @@ describe('the records are findable', () => {
   it('records say where they belong in the pipeline document', () => {
     // A link is only useful if the reader knows which section it explains.
     for (const file of RECORDS) {
-      const row = architecture.match(new RegExp(`^\\| \\[\\d{4}\\]\\(adr/${file}\\) \\|(.+)$`, 'm'));
+      const row = architecture.match(
+        new RegExp(`^\\| \\[\\d{4}\\]\\(adr/${file}\\) \\|(.+)$`, 'm'),
+      );
       expect(row, `${file} is not in the decisions table`).not.toBeNull();
       expect((row?.[1] ?? '').trim().length).toBeGreaterThan(0);
     }

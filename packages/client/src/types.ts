@@ -38,6 +38,13 @@ export type Provider = {
   country: string;
   status: 'Pending' | 'Active' | 'Suspended';
   registeredAt: string | Date;
+  /**
+   * The clinic's voucher cap as indexed from the registry's `capacity_changed`
+   * event; `0` means unlimited and `null` until the chain has announced one.
+   */
+  capacity: number | null;
+  /** Funded and Claimed vouchers right now; with `capacity`, the headroom. */
+  openVouchers: number;
   services: Service[];
   /**
    * Never served by the API: the provider routes emit the coordinates inside

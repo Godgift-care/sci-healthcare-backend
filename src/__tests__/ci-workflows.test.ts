@@ -247,8 +247,8 @@ describe('api-reference/index.html (#297)', () => {
     };
     walk(spec);
 
-    // Nothing here resolves a pointer, so the spec may not carry one.
-    expect([...used]).not.toContain('$ref');
+    // Pointers are resolved against components.schemas:
+    expect(handled).toContain('$ref');
     expect([...used].filter((key) => !handled.has(key))).toEqual([]);
   });
 });

@@ -246,7 +246,17 @@ const CONTRACTS = {
     absent: ['total', 'offset'],
   },
   Provider: {
-    present: ['address', 'name', 'country', 'status', 'registeredAt', 'metadata', 'services'],
+    present: [
+      'address',
+      'name',
+      'country',
+      'status',
+      'registeredAt',
+      'capacity',
+      'openVouchers',
+      'metadata',
+      'services',
+    ],
     // The routes publish coordinates inside `metadata` only; the top-level
     // field exists for objects built elsewhere, which `providerLocation()`
     // still accepts.
@@ -437,8 +447,7 @@ const CONTRACTS = {
 } as const satisfies { [N in keyof Shapes]: Contract<Shapes[N]> };
 
 type ListedKeys<N extends keyof Shapes> =
-  | (typeof CONTRACTS)[N]['present'][number]
-  | (typeof CONTRACTS)[N]['absent'][number];
+  (typeof CONTRACTS)[N]['present'][number] | (typeof CONTRACTS)[N]['absent'][number];
 
 type UnaccountedKeys<N extends keyof Shapes> = Exclude<keyof Shapes[N] & string, ListedKeys<N>>;
 
@@ -564,7 +573,12 @@ beforeAll(async () => {
         metadataFetchedAt: new Date(now - DAY),
         services: {
           create: [
-            { id: `${address}:${CONSULT}`, code: CONSULT, label: 'Consultation', price: '30000000' },
+            {
+              id: `${address}:${CONSULT}`,
+              code: CONSULT,
+              label: 'Consultation',
+              price: '30000000',
+            },
             { id: `${address}:202`, code: 202, label: 'Lab panel', price: '50000000' },
           ],
         },
@@ -672,13 +686,7 @@ beforeAll(async () => {
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     const method = (init?.method ?? 'GET') as
-      | 'GET'
-      | 'POST'
-      | 'PUT'
-      | 'DELETE'
-      | 'OPTIONS'
-      | 'HEAD'
-      | 'PATCH';
+      'GET' | 'POST' | 'PUT' | 'DELETE' | 'OPTIONS' | 'HEAD' | 'PATCH';
     const headers: Record<string, string> = {};
     if (init?.headers) {
       if (Array.isArray(init.headers)) {
@@ -832,7 +840,10 @@ describe('@sci-healthcare/client contract (#310)', () => {
   });
 
   it('vouchersDue', async () => {
-    expectShape('DueVouchersResponse', await client.vouchersDue({ within: '30d', provider: CLINIC }));
+    expectShape(
+      'DueVouchersResponse',
+      await client.vouchersDue({ within: '30d', provider: CLINIC }),
+    );
   });
 
   it('vouchersCsv', async () => {
