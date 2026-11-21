@@ -1,5 +1,5 @@
 import type { ApiErrorEnvelope, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, GovernanceResponse, HealthStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
-import { type StreamFilters, type StreamHandle, type StreamHandlers, type StreamOptions } from './stream.js';
+import { type StreamFilters, type StreamHandle, type StreamHandlers, type StreamOptions, type VoucherStreamEvent } from './stream.js';
 export declare class ApiError extends Error {
     readonly status: number;
     readonly error: string;
@@ -69,6 +69,34 @@ export declare class Client {
      * certain of current state.
      */
     stream(filters: StreamFilters, handlers?: StreamHandlers, options?: StreamOptions): StreamHandle;
+    /**
+     * The same subscription as an async iterator, for `for await` and for
+     * `sci watch` (#290): one event per frame.
+     *
+     * It wraps `stream()` rather than reading the socket again, so the resume,
+     * heartbeat and backoff rules live in one place. Iteration ends when the
+     * handle ends — a fatal status, `close()`, or the `signal` aborting — so a
+     * stream the server closed is followed by a reconnect, not a quiet finish.
+     * A recoverable drop yields nothing at all: the handle is still retrying it.
+     *
+     * Breaking out of the loop closes the handle before `next()` returns.
+     */
+    streamEvents(filters: StreamFilters, options?: StreamOptions): AsyncGenerator<VoucherStreamEvent>;
+    /**
+     * Every voucher across all pages (#286). One request per page, and only
+     * when the previous page has been fully consumed: breaking out of the
+     * loop makes no further requests.
+     */
+    vouchersIterate(params?: ListVouchersParams): AsyncGenerator<Voucher>;
+    /** Every clinic across all pages (#286), same paging semantics. */
+    providersIterate(params?: ListProvidersParams): AsyncGenerator<Provider>;
+    /** Every receipt across all pages (#286), same paging semantics. */
+    receiptsIterate(params: ListReceiptsParams): AsyncGenerator<Receipt>;
+    /**
+     * Every service in the catalogue (#286). `GET /services` is a single
+     * uncursored page, so this is one request and a full pass over it.
+     */
+    servicesIterate(): AsyncGenerator<ServiceCatalogueItem>;
     rawGet<T>(path: string, params?: Record<string, unknown>): Promise<T>;
 }
 export declare function createClient(options: ClientOptions): Client;

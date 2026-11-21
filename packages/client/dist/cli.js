@@ -10,10 +10,13 @@
  *   sci stats
  *   sci vouchers --provider GDOO... --status Funded
  *   sci voucher 42 --json
+ *   sci vouchers --provider GDOO... --csv
+ *   sci watch --provider GDOO...
  *
- * Output is an aligned table by default and raw JSON with `--json`, so it
- * is both readable and pipeable (jq, awk, grep). Exit codes: 0 success,
- * 1 the API or the network failed, 2 the command line was wrong.
+ * Output is an aligned table by default, raw JSON with `--json` and CSV with
+ * `--csv`, so it is readable and pipeable (jq, awk, grep, a spreadsheet).
+ * Exit codes: 0 success, 1 the API or the network failed, 2 the command line
+ * was wrong, 130 when `sci watch` was ended with Ctrl-C.
  */
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -26,10 +29,18 @@ export class UsageError extends Error {
     }
 }
 /** Flags that never take a value; everything else expects the next token. */
-const BOOLEAN_FLAGS = new Set(['json', 'help', 'all']);
+const BOOLEAN_FLAGS = new Set(['json', 'csv', 'events', 'help', 'all']);
 const DEFAULT_BASE_URL = 'http://localhost:8080';
 /** Longest a table cell is shown before it is shortened (JSON stays whole). */
 const MAX_CELL_WIDTH = 60;
+/** Command ran. */
+const EXIT_OK = 0;
+/** The API or the network failed. */
+const EXIT_ERROR = 1;
+/** The command line was wrong; the command did not run. */
+const EXIT_USAGE = 2;
+/** `sci watch` ended because the user pressed Ctrl-C (128 + SIGINT). */
+const EXIT_INTERRUPTED = 130;
 /** `beneficiary-ref` -> `beneficiaryRef`, so flags read like the API. */
 function camel(name) {
     return name.replace(/-([a-z0-9])/g, (_m, c) => c.toUpperCase());
@@ -319,6 +330,40 @@ const COMMANDS = [
         usage: 'sci governance',
         run: async ({ client }) => ({ data: await client.governance() }),
     },
+    {
+        name: 'watch',
+        summary: 'Follow live voucher transitions (GET /stream, server-sent events)',
+        usage: 'sci watch (--provider G... | --voucher <id>) [--json | --events]',
+        examples: ['sci watch --provider GDOO...', 'sci watch --provider GDOO... --json | jq .status'],
+        run: async ({ client, flags, signal, write }) => {
+            const provider = flagValue(flags, 'provider');
+            const voucher = flagValue(flags, 'voucher');
+            if (provider === undefined && voucher === undefined) {
+                throw new UsageError('watch needs one filter: --provider <address> or --voucher <id> ' +
+                    '(the live stream serves no unfiltered feed)');
+            }
+            const asJson = flagBool(flags, 'json') || flagBool(flags, 'events');
+            const filters = {};
+            // The guard above ensures exactly one is set; assign only the present
+            // one so no `undefined` is written into an optional field.
+            if (voucher !== undefined)
+                filters.voucher = voucher;
+            else if (provider !== undefined)
+                filters.provider = provider;
+            // One line per event; `--json` (or the issue's `--events`) switches to
+            // JSON lines, one whole signal per line, undecorated. The handle
+            // reconnects through a dropped stream, so a tail survives a restart of
+            // the API; Ctrl-C aborts the signal, which ends the iteration.
+            for await (const event of client.streamEvents(filters, { signal })) {
+                write(asJson
+                    ? `${JSON.stringify(event)}\n`
+                    : `${event.at}  ${event.type.padEnd(16)}  voucher ${event.voucherId}  ${event.status}  ledger ${event.ledger}\n`);
+                if (signal.aborted)
+                    break;
+            }
+            return { text: '' };
+        },
+    },
 ];
 function isPlainObject(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -368,10 +413,56 @@ function flatten(value, prefix = '') {
     }
     return rows;
 }
-/** Renders one command result: JSON with --json, tables otherwise. */
-function renderData(data, json) {
-    if (json)
+/** A CSV field: quoted, with doubled quotes, if it holds a separator. */
+function csvCell(text) {
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+/**
+ * The rows to put in a CSV: an array, or the first array of records inside
+ * the response (a list route returns `{ vouchers, total, nextCursor }`), or
+ * the object itself as a single row when there is no such array.
+ */
+function rowsForCsv(data) {
+    if (Array.isArray(data))
+        return data.filter(isPlainObject);
+    if (isPlainObject(data)) {
+        for (const value of Object.values(data)) {
+            if (Array.isArray(value) && value.length > 0 && value.every(isPlainObject)) {
+                return value;
+            }
+        }
+        return [data];
+    }
+    return [];
+}
+/**
+ * Renders a command result as CSV (#291): one header line of flattened
+ * column names, then one line per row, with no decoration so it parses with
+ * any CSV reader. Nested objects become dotted columns (`provider.name`);
+ * an array value is written as JSON in its cell.
+ */
+export function renderCsv(data) {
+    const rows = rowsForCsv(data);
+    if (rows.length === 0)
+        return '';
+    const flat = rows.map((row) => Object.fromEntries(flatten(row)));
+    const columns = [];
+    for (const row of flat) {
+        for (const key of Object.keys(row))
+            if (!columns.includes(key))
+                columns.push(key);
+    }
+    const lines = [columns.map(csvCell).join(',')];
+    for (const row of flat)
+        lines.push(columns.map((c) => csvCell(display(row[c]))).join(','));
+    return `${lines.join('\n')}\n`;
+}
+/** Renders one command result: JSON with --json, CSV with --csv, a table otherwise. */
+function renderData(data, flags) {
+    if (flagBool(flags, 'json'))
         return `${JSON.stringify(data, null, 2)}\n`;
+    if (flagBool(flags, 'csv'))
+        return renderCsv(data);
     if (Array.isArray(data))
         return renderTable(data);
     if (isPlainObject(data)) {
@@ -411,6 +502,7 @@ function usageText(topic) {
         'Global options:',
         '  --base-url <url>   API base URL (default: $SCI_API_URL, $API_URL, then http://localhost:8080)',
         '  --json             Print raw JSON instead of a table',
+        '  --csv              Print CSV (header + one row per record) instead of a table',
         '  -h, --help         Show this help, or help for one command',
         '',
         'Commands:',
@@ -427,27 +519,30 @@ export async function runCli(options) {
     const env = options.env ?? process.env;
     const stdout = options.stdout ?? ((chunk) => void process.stdout.write(chunk));
     const stderr = options.stderr ?? ((chunk) => void process.stderr.write(chunk));
+    // A never-aborted signal when the caller has none; `sci watch` consults it
+    // and the process entry wires Ctrl-C to it (#290).
+    const signal = options.signal ?? new AbortController().signal;
     const { command, positionals, flags } = parseArgv(options.argv);
     if (command === null) {
         if (flagBool(flags, 'help')) {
             stdout(usageText());
-            return 0;
+            return EXIT_OK;
         }
         stderr(usageText());
-        return 2;
+        return EXIT_USAGE;
     }
     if (command === 'help') {
         stdout(usageText(positionals[0]));
-        return 0;
+        return EXIT_OK;
     }
     const def = COMMANDS.find((c) => c.name === command);
     if (def === undefined) {
         stderr(`error: unknown command '${command}'\n\n${usageText()}`);
-        return 2;
+        return EXIT_USAGE;
     }
     if (flagBool(flags, 'help')) {
         stdout(usageText(command));
-        return 0;
+        return EXIT_OK;
     }
     try {
         const baseUrl = flagValue(flags, 'baseUrl') ?? env.SCI_API_URL ?? env.API_URL ?? DEFAULT_BASE_URL;
@@ -455,24 +550,33 @@ export async function runCli(options) {
         if (options.fetchImpl)
             clientOptions.fetch = options.fetchImpl;
         const client = createClient(clientOptions);
-        const result = await def.run({ client, positionals, flags });
-        if (result.text !== undefined)
-            stdout(result.text);
-        else
-            stdout(renderData(result.data, flagBool(flags, 'json')));
-        return 0;
+        const result = await def.run({ client, positionals, flags, signal, write: stdout });
+        if (result.text !== undefined) {
+            if (result.text !== '')
+                stdout(result.text);
+        }
+        else {
+            stdout(renderData(result.data, flags));
+        }
+        // `sci watch` ending because Ctrl-C fired is reported as interrupted,
+        // not as a clean finish a script could mistake for "the stream ended".
+        return signal.aborted ? EXIT_INTERRUPTED : EXIT_OK;
     }
     catch (err) {
+        // An aborted stream can surface the fetch rejection here; the caller
+        // asked to stop, so it is an interrupt, not a failure.
+        if (signal.aborted)
+            return EXIT_INTERRUPTED;
         if (err instanceof UsageError) {
             stderr(`error: ${err.message}\n\nUsage: ${def.usage}\n`);
-            return 2;
+            return EXIT_USAGE;
         }
         if (err instanceof ApiError) {
             stderr(`error: ${err.message} (status ${err.status}, code ${err.error})\n`);
-            return 1;
+            return EXIT_ERROR;
         }
         stderr(`error: ${err.message}\n`);
-        return 1;
+        return EXIT_ERROR;
     }
 }
 /**
@@ -492,6 +596,11 @@ function invokedDirectly() {
     }
 }
 if (invokedDirectly()) {
-    process.exitCode = await runCli({ argv: process.argv.slice(2) });
+    // Ctrl-C ends a running `sci watch` cleanly: the handler stops Node from
+    // tearing the process down mid-write, and aborting the controller unwinds
+    // the live stream so the exit code (130) is set on the way out (#290).
+    const controller = new AbortController();
+    process.once('SIGINT', () => controller.abort());
+    process.exitCode = await runCli({ argv: process.argv.slice(2), signal: controller.signal });
 }
 //# sourceMappingURL=cli.js.map
