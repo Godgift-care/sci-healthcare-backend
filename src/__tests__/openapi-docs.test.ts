@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Keypair } from '@stellar/stellar-sdk';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -219,6 +221,18 @@ describe('error responses for every route (#296)', () => {
   });
 });
 
+/**
+ * An id the lookup cannot find in this run. The suite shares one SQLite
+ * database, so a hard-coded sentinel is a bet on no other file writing that
+ * row: `amount-numeric.test.ts` creates a voucher whose id is `1`, and which
+ * file reaches the runner first decides whether the miss still happens. A
+ * random token is the same assertion without the bet, because `Voucher.id` is
+ * an on-chain u64 kept as a string and any other string is simply unknown.
+ */
+function absentVoucherId(): string {
+  return randomUUID();
+}
+
 describe('the documented examples are the bodies the API sends', () => {
   it('answers a bad filter with the documented invalid_query shape', async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/vouchers?minAmount=100&maxAmount=50' });
@@ -231,14 +245,17 @@ describe('the documented examples are the bodies the API sends', () => {
   });
 
   it('answers an unknown voucher with the documented not-found shape', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/vouchers/9999999999999999' });
+    const res = await app.inject({ method: 'GET', url: `/v1/vouchers/${absentVoucherId()}` });
     expect(res.statusCode).toBe(404);
     const documented = API_DOCS['GET /vouchers/{id}']?.errors?.['404'];
     expect(res.json()).toEqual(documented?.example);
   });
 
   it('reports a lookup miss with no `message`, exactly as documented', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/vouchers/1/events' });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/vouchers/${absentVoucherId()}/events`,
+    });
     const documented = API_DOCS['GET /vouchers/{id}/events']?.errors?.['404'];
     expect(res.statusCode).toBe(404);
     expect(Object.keys(res.json())).toEqual(['error']);
