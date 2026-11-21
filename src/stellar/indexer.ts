@@ -23,7 +23,7 @@ import {
   markIndexerSuccess,
   recordEventLatency,
 } from '../lib/metrics.js';
-import { server, validateContractIds } from './client.js';
+import { ContractReadError, server, validateContractIds } from './client.js';
 import {
   asAddress,
   asAmount,
@@ -1322,7 +1322,17 @@ export class Indexer {
       const options = await this.optionsReader(id, contractId);
       return options === null ? null : hasPresenceProof(options);
     } catch (err) {
-      this.log.warn({ err, voucherId: id }, 'could not read a voucher presence commitment');
+      // A read error text is written for whoever runs the RPC endpoint and can
+      // carry that URL and the contract id along with it, so the log records
+      // which kind of read failed rather than what it said. The voucher id is
+      // enough to find the rest.
+      this.log.warn(
+        {
+          voucherId: id,
+          failure: err instanceof ContractReadError ? 'contract_read' : 'read_failed',
+        },
+        'could not read a voucher presence commitment',
+      );
       return null;
     }
   }
