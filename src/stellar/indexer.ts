@@ -268,7 +268,14 @@ export class Indexer {
   async start(): Promise<void> {
     // Keep the normal test suite network-free; production starts always use
     // the RPC facade and fail before the indexer can silently do nothing.
-    if (env.NODE_ENV !== 'test') await validateContractIds(INDEXED_CONTRACTS);
+    if (env.NODE_ENV !== 'test') {
+      const allContracts =
+        process.env.SPONSOR_CONTRACT_ID &&
+        !INDEXED_CONTRACTS.includes(process.env.SPONSOR_CONTRACT_ID)
+          ? [...INDEXED_CONTRACTS, process.env.SPONSOR_CONTRACT_ID]
+          : INDEXED_CONTRACTS;
+      await validateContractIds(allContracts);
+    }
     // Initialize deployment tracking table from DEPLOYMENTS config.
     await this.initializeDeployments();
 
@@ -614,7 +621,11 @@ export class Indexer {
     const { events, throughLedger, hasMore } = await withSpan('rpc.getContractEvents', () =>
       collectEvents(this.rpcServer, {
         startLedger,
-        contractIds: INDEXED_CONTRACTS,
+        contractIds:
+          process.env.SPONSOR_CONTRACT_ID &&
+          !INDEXED_CONTRACTS.includes(process.env.SPONSOR_CONTRACT_ID)
+            ? [...INDEXED_CONTRACTS, process.env.SPONSOR_CONTRACT_ID]
+            : INDEXED_CONTRACTS,
         pageSize: this.pageSize,
       }),
     );

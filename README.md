@@ -865,7 +865,6 @@ this table and the schema drift apart.
 | `RECEIPT_CONTRACT_ID` | Yes | — | `CBCJRI2BCZBMZNX77WWDC2NGSV4ZNAN5Q23XHYNBH6UTOQMPJHZGX5C7` | Care-receipt contract id; indexed for minted receipts |
 | `USDC_CONTRACT_ID` | No | — | `CCRLJ7FEIKTR3GBT3VQQPSIJGRBO2WPNMVFKJDP6AYGJQWECOR4QVE5M` | Optional settlement-token (USDC) contract id, validated when set |
 | `FAUCET_CONTRACT_ID` | No | — | `CCB25WG7DQ2CSNXPTOHZO2PDZ324FQPZLH3LSNCCLWYM3FEH52GEXC47` | Testnet demo faucet; optional, drips counted in `/stats` when set |
-| `SPONSOR_CONTRACT_ID` | No | — | `C...` (no deployment of `contracts/sponsor` is published yet) | Matching-funding desk; optional, sponsor budgets and matches indexed into `/sponsors` when set |
 | `DEPLOYMENTS` | No | — | `[{"type":"registry","contractId":"C...","fromLedger":123}]` | Optional JSON array of previous contract deployments for redeployment support |
 | `INDEXER_START_LEDGER` | No | `0` | `4465529` | Ledger to index from; `0` means start at the current tip and skip prior history |
 | `INDEXER_POLL_MS` | No | `5000` | `5000` | Milliseconds between indexer polls once caught up |
