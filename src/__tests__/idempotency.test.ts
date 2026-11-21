@@ -29,6 +29,7 @@ vi.mock('../stellar/paging.js', () => ({
 const PROVIDER = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
 const ATTESTER = 'GBWBYKGC5OCRELVP5WHAKEMBSZMNUY3HOKVSYBQGLFNWWQHNH2SD53FZ';
+const SPONSOR = 'GDFEKR6EXP5WZERLLVT7FE5ZT7W7VRMG63ZBW2DXIXYNXISXJBSXEMWO';
 const BENEFICIARY_REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
 
 const START_LEDGER = 100;
@@ -182,6 +183,91 @@ function lifecycleEvents() {
       }),
     ),
     rawEvent('service_removed', 111, registry, [address(PROVIDER)], nativeToScVal({ code: 101 })),
+    // The matching desk (#317), published on the registry contract id for the
+    // same reason `dripped` is: the test environment has no sponsor deployment
+    // id, and the projector keys off the event name, not the contract.
+    //
+    // The amounts are the contract's own arithmetic: voucher 1 is 30000000 and
+    // 20000 bps would match 60000000 of it, so the 6000000 cap binds and that
+    // is what `match_created` publishes.
+    rawEvent(
+      'budget_deposited',
+      112,
+      registry,
+      [address(SPONSOR)],
+      nativeToScVal({
+        amount: 100000000n,
+        available: 100000000n,
+      }),
+    ),
+    rawEvent(
+      'rules_set',
+      113,
+      registry,
+      [address(SPONSOR)],
+      nativeToScVal({
+        match_bps: 20000,
+        cap_per_voucher: 6000000n,
+        min_voucher_amount: 1000000n,
+        min_voucher_age_secs: 3600n,
+      }),
+    ),
+    rawEvent(
+      'match_created',
+      114,
+      registry,
+      [address(SPONSOR), nativeToScVal(1n, { type: 'u64' })],
+      nativeToScVal({
+        matched_voucher_id: 2n,
+        provider: address(PROVIDER),
+        service_code: 101,
+        amount: 6000000n,
+        matched_at: AT + 200,
+      }),
+    ),
+    rawEvent(
+      'match_settled',
+      115,
+      registry,
+      [address(SPONSOR)],
+      nativeToScVal({
+        matched_voucher_id: 2n,
+        amount: 6000000n,
+      }),
+    ),
+    rawEvent(
+      'budget_withdrawn',
+      116,
+      registry,
+      [address(SPONSOR)],
+      nativeToScVal({
+        amount: 25000000n,
+        available: 75000000n,
+      }),
+    ),
+    rawEvent(
+      'match_created',
+      117,
+      registry,
+      [address(SPONSOR), nativeToScVal(3n, { type: 'u64' })],
+      nativeToScVal({
+        matched_voucher_id: 4n,
+        provider: address(PROVIDER),
+        service_code: 101,
+        amount: 1500000n,
+        matched_at: AT + 300,
+      }),
+    ),
+    rawEvent(
+      'match_refunded',
+      118,
+      registry,
+      [address(SPONSOR)],
+      nativeToScVal({
+        matched_voucher_id: 4n,
+        amount: 1500000n,
+      }),
+    ),
   ];
 }
 
@@ -212,6 +298,9 @@ async function snapshot() {
     servicePriceChanges,
     failedEvents,
     faucetDrips,
+    sponsors,
+    sponsorBudgetEvents,
+    sponsorMatches,
     indexerState,
     dailyStats,
   ] = await Promise.all([
@@ -224,6 +313,9 @@ async function snapshot() {
     prisma.servicePriceChange.findMany({ orderBy: { id: 'asc' } }),
     prisma.failedEvent.findMany({ orderBy: { id: 'asc' } }),
     prisma.faucetDrip.findMany({ orderBy: { id: 'asc' } }),
+    prisma.sponsor.findMany({ orderBy: { address: 'asc' } }),
+    prisma.sponsorBudgetEvent.findMany({ orderBy: { id: 'asc' } }),
+    prisma.sponsorMatch.findMany({ orderBy: { matchedVoucherId: 'asc' } }),
     prisma.indexerState.findMany(),
     prisma.dailyStat.findMany({ orderBy: { date: 'asc' } }),
   ]);
@@ -238,6 +330,9 @@ async function snapshot() {
     servicePriceChanges,
     failedEvents,
     faucetDrips,
+    sponsors: sponsors.map(({ updatedAt: _updatedAt, ...row }) => row),
+    sponsorBudgetEvents,
+    sponsorMatches,
     indexerState: indexerState.map(({ updatedAt: _updatedAt, ...row }) => row),
     dailyStats: dailyStats.map(({ updatedAt: _updatedAt, ...row }) => row),
   };
@@ -260,6 +355,9 @@ beforeEach(async () => {
   await prisma.governanceEvent.deleteMany();
   await prisma.failedEvent.deleteMany();
   await prisma.faucetDrip.deleteMany();
+  await prisma.sponsorMatch.deleteMany();
+  await prisma.sponsorBudgetEvent.deleteMany();
+  await prisma.sponsor.deleteMany();
   await prisma.reconcileMismatch.deleteMany();
   await prisma.dailyStat.deleteMany();
 
@@ -285,7 +383,7 @@ describe('indexer replay', () => {
   it('processing the same page of events twice changes nothing', async () => {
     vi.mocked(collectEvents).mockResolvedValue({
       events: lifecycleEvents(),
-      throughLedger: START_LEDGER + 11,
+      throughLedger: START_LEDGER + 18,
       hasMore: false,
     } as never);
 
@@ -309,7 +407,7 @@ describe('indexer replay', () => {
   it('keeps one row per on-chain event id after replay', async () => {
     vi.mocked(collectEvents).mockResolvedValue({
       events: lifecycleEvents(),
-      throughLedger: START_LEDGER + 11,
+      throughLedger: START_LEDGER + 18,
       hasMore: false,
     } as never);
 
@@ -350,6 +448,9 @@ describe('indexer replay', () => {
     expect(await prisma.providerStatusChange.count()).toBe(1);
     expect(await prisma.servicePriceChange.count()).toBe(1);
     expect(await prisma.faucetDrip.count()).toBe(1);
+    expect(await prisma.sponsor.count()).toBe(1);
+    expect(await prisma.sponsorBudgetEvent.count()).toBe(2);
+    expect(await prisma.sponsorMatch.count()).toBe(2);
     expect(await prisma.failedEvent.count()).toBe(0);
 
     // One row per on-chain id: the counters behind /stats must not double.
@@ -357,5 +458,25 @@ describe('indexer replay', () => {
       await prisma.governanceEvent.findUnique({ where: { id: 'admin_proposed-108' } }),
     ).not.toBeNull();
     expect(await prisma.faucetDrip.findUnique({ where: { id: 'dripped-110' } })).not.toBeNull();
+
+    // The sponsor's balance is the snapshot the last movement reported, not a
+    // running total: adding the replayed movements would double them.
+    const sponsor = await prisma.sponsor.findUniqueOrThrow({ where: { address: SPONSOR } });
+    expect(sponsor).toMatchObject({
+      available: '75000000',
+      matchBps: 20000,
+      capPerVoucher: '6000000',
+      minVoucherAgeSecs: '3600',
+    });
+
+    // Each match keeps the status its resolution event gave it. A handler that
+    // re-ran the create on replay would reset these to Open, and the snapshot
+    // above would catch it only because the count stays at two.
+    expect(
+      await prisma.sponsorMatch.findMany({ orderBy: { matchedVoucherId: 'asc' } }),
+    ).toMatchObject([
+      { matchedVoucherId: '2', originalVoucherId: '1', status: 'Settled' },
+      { matchedVoucherId: '4', originalVoucherId: '3', status: 'Refunded' },
+    ]);
   });
 });

@@ -99,8 +99,9 @@ Errors all use one envelope, whatever layer rejected the request:
 `details` is present only when there is something structured to add (for
 example the Zod issues for a bad query). Error codes: `invalid_query`,
 `filter_required`, `invalid_code`, `provider_not_found`, `service_not_found`,
-`voucher_not_found`, `receipt_not_found`, `route_not_found`, `method_not_allowed`,
-`rate_limited`, `stream_full`, `bad_request`, `internal_error`, `database_unavailable`.
+`voucher_not_found`, `receipt_not_found`, `sponsor_not_found`, `route_not_found`,
+`method_not_allowed`, `rate_limited`, `stream_full`, `bad_request`, `internal_error`,
+`database_unavailable`.
 Any other 5xx is `internal_error`; the cause stays in the log, never in the response.
 
 When the database cannot be reached at all — the server is down, the connection pool is
@@ -141,6 +142,8 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /providers/:address/services/:code/history` | Every observed price for a service, oldest first |
 | `GET /attesters` | Attesters trusted to confirm care; `?all=true` includes removed ones |
 | `GET /attesters/:address` | One attester with its attestation count |
+| `GET /sponsors` | Sponsors of the matching-funding desk, most recently seen first, with what each has matched; empty while `SPONSOR_CONTRACT_ID` is unset |
+| `GET /sponsors/:address` | One sponsor: its terms, its last reported balance and its match totals |
 | `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status`; `?include=receipt,provider` embeds related records |
 | `GET /vouchers/:id` | One voucher, with its care receipt if settled, attester and dispute outcome; `?include=receipt,provider` embeds the canonical forms |
 | `GET /vouchers/:id/events` | Every contract event for a voucher, oldest first, with transaction hashes |
@@ -173,6 +176,20 @@ fetched for the entire page in a fixed number of queries (one `Receipt` and one
 unrequested or empty `include` changes nothing, an unknown name is a
 `400 invalid_query`, and `?fields=` still projects the top-level keys, so
 `?fields=id,receipt&include=receipt` is a valid request.
+
+Every voucher also carries the sponsor's side of its funding, so a patient, a
+clinic and the desk all read the same figure from the same row: `matchedAmount`
+and `matchedAmountDisplay` (what the sponsor put against this voucher),
+`matchedBy` (the sponsor's address), `matchStatus` (`Open`, `Settled` or
+`Refunded`) and `matchedAt`. All five are `null` when nobody matched the
+voucher — never `0`, because "a sponsor matched nothing here" and "no sponsor
+matched here" are different facts, and a zero cannot be told apart afterwards.
+`matchedAmount` is the sponsor's contribution only: the voucher's own `amount`
+is still the original funder's. The desk's voucher (`matchedBy`'s own voucher)
+is indexed as an ordinary voucher and has no match of its own. `GET /sponsors`
+answers the same amounts as totals per sponsor. All of it is empty until
+`SPONSOR_CONTRACT_ID` is set, and `GET /vouchers.csv` gains no columns: the
+export is the funder's view of the voucher, not the desk's.
 
 `GET /vouchers.csv` takes the same `funder`, `provider`, `beneficiaryRef` and
 `status` filters (and also requires at least one). Rows are read in batches

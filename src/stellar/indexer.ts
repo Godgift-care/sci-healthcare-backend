@@ -23,7 +23,7 @@ import {
   markIndexerSuccess,
   recordEventLatency,
 } from '../lib/metrics.js';
-import { server, validateContractIds } from './client.js';
+import { ContractReadError, server, validateContractIds } from './client.js';
 import {
   asAddress,
   asAmount,
@@ -41,7 +41,14 @@ import { recordFailure } from './failed.js';
 import { IndexerLease } from './lease.js';
 import { collectEvents } from './paging.js';
 import { withSpan } from '../tracing.js';
-import { normaliseChainVoucher, readVoucherFromChain, type VoucherReader } from './reconcile.js';
+import {
+  hasPresenceProof,
+  normaliseChainVoucher,
+  readVoucherFromChain,
+  readVoucherOptionsFromChain,
+  type VoucherOptionsReader,
+  type VoucherReader,
+} from './reconcile.js';
 import { pruneContractEvents, purgeExpiredOperationalData } from '../lib/retention.js';
 import type { rpc } from '@stellar/stellar-sdk';
 
@@ -200,6 +207,16 @@ export type IndexerOptions = {
   shutdownTimeoutMs?: number;
   /** Chain reader used to repair a voucher whose creation event was missed. */
   voucherReader?: VoucherReader;
+  /**
+   * Chain reader used to resolve whether a claim carried a presence proof
+   * (#318). Defaults to the simulation read of `get_voucher_options`, except
+   * under `NODE_ENV=test`, where it is absent: like the RPC validation in
+   * `start()`, that keeps a suite run from reaching for a network — and from
+   * behaving differently depending on whether some developer happens to have
+   * a quickstart node listening. A test that wants the field resolved passes
+   * its own reader.
+   */
+  optionsReader?: VoucherOptionsReader;
   /** Optional RPC server interface (for fake RPC testing or custom RPC endpoints). */
   rpcServer?: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
   /** Batch page size passed to collectEvents (default: 200). */
@@ -229,6 +246,7 @@ export class Indexer {
   private readonly lease: IndexerLease;
   private readonly shutdownTimeoutMs: number;
   private readonly voucherReader: VoucherReader;
+  private readonly optionsReader: VoucherOptionsReader | undefined;
   /** Vouchers repaired during this process, so the repair log is one-per-voucher. */
   private readonly repairedVouchers = new Set<string>();
   private readonly rpcServer: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
@@ -241,6 +259,8 @@ export class Indexer {
     this.lease = opts.lease ?? new IndexerLease();
     this.shutdownTimeoutMs = opts.shutdownTimeoutMs ?? env.SHUTDOWN_TIMEOUT_MS;
     this.voucherReader = opts.voucherReader ?? readVoucherFromChain;
+    this.optionsReader =
+      opts.optionsReader ?? (env.NODE_ENV === 'test' ? undefined : readVoucherOptionsFromChain);
     this.rpcServer = opts.rpcServer ?? server;
     this.pageSize = opts.pageSize ?? 200;
   }
@@ -248,7 +268,14 @@ export class Indexer {
   async start(): Promise<void> {
     // Keep the normal test suite network-free; production starts always use
     // the RPC facade and fail before the indexer can silently do nothing.
-    if (env.NODE_ENV !== 'test') await validateContractIds(INDEXED_CONTRACTS);
+    if (env.NODE_ENV !== 'test') {
+      const allContracts =
+        process.env.SPONSOR_CONTRACT_ID &&
+        !INDEXED_CONTRACTS.includes(process.env.SPONSOR_CONTRACT_ID)
+          ? [...INDEXED_CONTRACTS, process.env.SPONSOR_CONTRACT_ID]
+          : INDEXED_CONTRACTS;
+      await validateContractIds(allContracts);
+    }
     // Initialize deployment tracking table from DEPLOYMENTS config.
     await this.initializeDeployments();
 
@@ -594,7 +621,11 @@ export class Indexer {
     const { events, throughLedger, hasMore } = await withSpan('rpc.getContractEvents', () =>
       collectEvents(this.rpcServer, {
         startLedger,
-        contractIds: INDEXED_CONTRACTS,
+        contractIds:
+          process.env.SPONSOR_CONTRACT_ID &&
+          !INDEXED_CONTRACTS.includes(process.env.SPONSOR_CONTRACT_ID)
+            ? [...INDEXED_CONTRACTS, process.env.SPONSOR_CONTRACT_ID]
+            : INDEXED_CONTRACTS,
         pageSize: this.pageSize,
       }),
     );
@@ -831,6 +862,24 @@ export class Indexer {
         return null;
       case 'dripped':
         await this.onDripped(db, e);
+        return null;
+      case 'budget_deposited':
+        await this.onSponsorBudget(db, e, 'Deposited');
+        return null;
+      case 'budget_withdrawn':
+        await this.onSponsorBudget(db, e, 'Withdrawn');
+        return null;
+      case 'rules_set':
+        await this.onSponsorRules(db, e);
+        return null;
+      case 'match_created':
+        await this.onMatchCreated(db, e);
+        return null;
+      case 'match_settled':
+        await this.onMatchResolved(db, e, 'Settled');
+        return null;
+      case 'match_refunded':
+        await this.onMatchResolved(db, e, 'Refunded');
         return null;
       default:
         // Known-but-unprojected events stay silent; anything else is a name
@@ -1252,10 +1301,51 @@ export class Indexer {
         await recordDailyStatRefunded(db, refundedAt, existing.amount);
       }
     }
+    const proof = status === 'Claimed' ? await this.claimProofFlag(db, id, contractId) : null;
     await db.voucher.updateMany({
       where: { id },
-      data: { status, ...extra },
+      data: { status, ...extra, ...(proof === null ? {} : { claimedWithProof: proof }) },
     });
+  }
+
+  /**
+   * Whether the claim being indexed revealed a presence secret, or `null`
+   * when there is nothing new to write.
+   *
+   * `voucher_claimed` is emitted identically by `claim` and `claim_with_proof`,
+   * so the event cannot answer this (#318). The voucher's funding options can:
+   * a presence commitment makes the proof the only way to claim the voucher,
+   * and its absence makes a proof impossible, so the commitment says what the
+   * claim did. One read per claim, skipped once the row knows the answer, so a
+   * replayed page costs nothing. A read that fails — or an indexer built
+   * without a reader, which is what the test suite gets — leaves the field
+   * null and the claim applied: the event is not in question, only this
+   * detail of it.
+   */
+  private async claimProofFlag(db: Db, id: string, contractId: string): Promise<boolean | null> {
+    if (!this.optionsReader) return null;
+    const stored = await db.voucher.findUnique({
+      where: { id },
+      select: { claimedWithProof: true },
+    });
+    if (stored?.claimedWithProof !== null && stored?.claimedWithProof !== undefined) return null;
+    try {
+      const options = await this.optionsReader(id, contractId);
+      return options === null ? null : hasPresenceProof(options);
+    } catch (err) {
+      // A read error text is written for whoever runs the RPC endpoint and can
+      // carry that URL and the contract id along with it, so the log records
+      // which kind of read failed rather than what it said. The voucher id is
+      // enough to find the rest.
+      this.log.warn(
+        {
+          voucherId: id,
+          failure: err instanceof ContractReadError ? 'contract_read' : 'read_failed',
+        },
+        'could not read a voucher presence commitment',
+      );
+      return null;
+    }
   }
 
   /** Rebuilds a voucher whose creation event predates the indexer's cursor. */
@@ -1353,6 +1443,143 @@ export class Indexer {
         deploymentId,
       },
       update: {},
+    });
+  }
+
+  /**
+   * A sponsor moved money in or out of the matching desk (#317).
+   *
+   * Two writes, and neither adds anything up: `SponsorBudgetEvent` is one row
+   * per event keyed by the event id, and `Sponsor.available` is the balance
+   * the contract itself reports *after* the movement. Deriving the balance by
+   * accumulating here would double-count the first time a page is replayed,
+   * which is exactly the class of bug the rest of the indexer avoids.
+   */
+  private async onSponsorBudget(
+    db: Db,
+    e: DecodedEvent,
+    kind: 'Deposited' | 'Withdrawn',
+  ): Promise<void> {
+    const d = e.fields;
+    const address = asAddress(d.sponsor);
+    const amount = asAmount(d.amount);
+    const available = asAmount(d.available);
+
+    await db.sponsor.upsert({
+      where: { address },
+      create: {
+        address,
+        available,
+        lastMovementAt: e.ledgerClosedAt,
+        firstSeenAt: e.ledgerClosedAt,
+      },
+      update: { available, lastMovementAt: e.ledgerClosedAt },
+    });
+    await db.sponsorBudgetEvent.upsert({
+      where: { id: e.id },
+      create: {
+        id: e.id,
+        sponsorAddress: address,
+        kind,
+        amount,
+        available,
+        ledger: e.ledger,
+        occurredAt: e.ledgerClosedAt,
+      },
+      update: {},
+    });
+  }
+
+  /**
+   * The latest terms a sponsor matches on. The four rule columns are a
+   * snapshot of the whole `Rules` struct, so an older row cannot survive a
+   * partial update, and `rulesAt` says which event this came from.
+   */
+  private async onSponsorRules(db: Db, e: DecodedEvent): Promise<void> {
+    const d = e.fields;
+    const address = asAddress(d.sponsor);
+    const rules = {
+      matchBps: asNumber(d.match_bps),
+      capPerVoucher: asAmount(d.cap_per_voucher),
+      minVoucherAmount: asAmount(d.min_voucher_amount),
+      // u64: wider than a Postgres integer, so kept as a decimal string like
+      // every other number this schema cannot put in a JS-safe column.
+      minVoucherAgeSecs: asAmount(d.min_voucher_age_secs),
+      rulesAt: e.ledgerClosedAt,
+    };
+
+    await db.sponsor.upsert({
+      where: { address },
+      create: { address, firstSeenAt: e.ledgerClosedAt, ...rules },
+      update: rules,
+    });
+  }
+
+  /**
+   * The desk matched a voucher: it funded a second voucher of its own.
+   *
+   * Both ids are kept, because they are two different vouchers and the
+   * contract will not create a second match against the same original
+   * voucher. The voucher the desk funded arrives separately as its own
+   * `voucher_created` with the desk as funder; this row is what links them.
+   */
+  private async onMatchCreated(db: Db, e: DecodedEvent): Promise<void> {
+    const d = e.fields;
+    const address = asAddress(d.sponsor);
+    const matchedVoucherId = asId(d.matched_voucher_id);
+    const originalVoucherId = asId(d.original_voucher_id);
+
+    // The sponsor row exists before its first match: a match can be the
+    // first event this indexer sees for that sponsor (a deposit before the
+    // start ledger, or a sponsor that topped up and matched in one go).
+    await db.sponsor.upsert({
+      where: { address },
+      create: { address, firstSeenAt: e.ledgerClosedAt },
+      update: {},
+    });
+    await db.sponsorMatch.upsert({
+      where: { matchedVoucherId },
+      create: {
+        matchedVoucherId,
+        originalVoucherId,
+        sponsorAddress: address,
+        providerAddress: asAddress(d.provider),
+        serviceCode: asNumber(d.service_code),
+        amount: asAmount(d.amount),
+        matchedAt: asTimestamp(d.matched_at),
+      },
+      update: {},
+    });
+  }
+
+  /**
+   * A match's voucher settled or was refunded, as the desk discovered it.
+   *
+   * The desk publishes these from `reconcile`, which only runs when someone
+   * calls it — so this can lag the voucher's own status by however long, and
+   * the amount is the stored `OpenMatch.amount` rather than a fresh read,
+   * which is what lets a test assert the two agree.
+   *
+   * `updateMany`, not an upsert: the event names only the matched voucher,
+   * so it cannot supply the original id a create would need. A match created
+   * before the indexer's start ledger is the same known gap the voucher
+   * lifecycle handlers already have, and `reconcile` repairs vouchers but not
+   * matches; the row simply stays absent until the create is replayed.
+   */
+  private async onMatchResolved(
+    db: Db,
+    e: DecodedEvent,
+    status: 'Settled' | 'Refunded',
+  ): Promise<void> {
+    const d = e.fields;
+    const matchedVoucherId = asId(d.matched_voucher_id);
+    // No timestamp on these events, as with voucher_refunded: the ledger
+    // close time is when the money moved.
+    const at = e.ledgerClosedAt;
+
+    await db.sponsorMatch.updateMany({
+      where: { matchedVoucherId },
+      data: status === 'Settled' ? { status, settledAt: at } : { status, refundedAt: at },
     });
   }
 }

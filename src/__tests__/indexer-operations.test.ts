@@ -27,6 +27,9 @@ function log(): FastifyBaseLogger {
 async function clearDatabase(): Promise<void> {
   await prisma.$transaction([
     prisma.webhookDelivery.deleteMany(),
+    prisma.sponsorMatch.deleteMany(),
+    prisma.sponsorBudgetEvent.deleteMany(),
+    prisma.sponsor.deleteMany(),
     prisma.receipt.deleteMany(),
     prisma.voucher.deleteMany(),
     prisma.service.deleteMany(),
