@@ -1,0 +1,37 @@
+# Caddy's site config for the self-hosted stack (docker-compose.prod.yml).
+#
+# {$SITE_ADDRESS} is Caddy's own environment substitution, filled from the
+# variable the compose file passes to the container.
+#
+# TLS here is entirely automatic. On first boot Caddy registers an account with
+# Let's Encrypt, answers the HTTP-01 challenge on :80, asks for a certificate
+# for SITE_ADDRESS, and redirects plain HTTP to HTTPS from then on. Two things
+# have to be true before that works, and between them they are the cause of
+# almost every "the containers are up but the site is not": the A record for
+# SITE_ADDRESS must already point at this server, and :80 and :443 must be
+# reachable through its firewall.
+
+{$SITE_ADDRESS} {
+	# No `encode`: the API registers @fastify/compress itself, so the responses
+	# already arrive with Content-Encoding set.
+	#
+	# No security headers either, for the same reason - @fastify/helmet is
+	# registered in src/app.ts, and duplicating them here would mean two places
+	# to change when one of them is wrong.
+	#
+	# Caddy proxies without buffering by default, which is what `GET /stream`
+	# needs: an SSE response held in a buffer until the request ends would look
+	# like a server that stopped answering. The heartbeat is the other half of
+	# that - SSE_HEARTBEAT_MS (15s by default) is what stops this proxy's idle
+	# connection timeout from closing a stream that is alive but quiet.
+	reverse_proxy api:8080
+
+	# /metrics is unauthenticated Prometheus text, and this makes it readable
+	# from the public internet - which is exactly how the Render deployment
+	# behaves today, so it is left alone rather than quietly changed here. To
+	# keep it off the listener, uncomment: scraping then has to come from inside
+	# the compose network, since the route still answers on the API container.
+	# handle /metrics {
+	# 	respond "not served over the public listener" 403
+	# }
+}
