@@ -472,19 +472,24 @@ const CONTRACTED_METHODS = [
   'providerHistory',
   'providerServiceHistory',
   'providers',
+  'providersIterate',
   'rawGet',
   'receipt',
   'receipts',
+  'receiptsIterate',
   'ready',
   'service',
   'services',
+  'servicesIterate',
   'stats',
   'stream',
+  'streamEvents',
   'version',
   'voucher',
   'vouchers',
   'vouchersCsv',
   'vouchersDue',
+  'vouchersIterate',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -719,6 +724,22 @@ afterAll(async () => {
   await app.close();
 });
 
+/**
+ * The two stream tests need a real socket: `app.inject()` waits for the
+ * response to end, and a stream never ends. The app listens once, on an
+ * ephemeral port, because Fastify refuses a second `listen`.
+ */
+let liveBaseUrl: string | null = null;
+
+async function liveBase(): Promise<string> {
+  if (liveBaseUrl === null) {
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const { port } = app.server.address() as AddressInfo;
+    liveBaseUrl = `http://127.0.0.1:${port}`;
+  }
+  return liveBaseUrl;
+}
+
 describe('@sci-healthcare/client contract (#310)', () => {
   it('calls every method the client class exposes', () => {
     const prototype = Client.prototype as unknown as Record<string, unknown>;
@@ -780,6 +801,29 @@ describe('@sci-healthcare/client contract (#310)', () => {
     expectShape('ProvidersCursorPage', next);
   });
 
+  /**
+   * The cursor loop (#286) against the real route, not a fake `fetch`: two
+   * clinics match this query and a page holds one, so collecting both is only
+   * possible if the client actually asked for the second page — and stopping at
+   * `rows.length` requests is what proves it asked for exactly those.
+   */
+  it('providersIterate', async () => {
+    const spy = vi.spyOn(client, 'providers');
+    const rows: Provider[] = [];
+    for await (const row of client.providersIterate({ q: 'Contract Clinic', limit: 1 })) {
+      rows.push(row);
+    }
+    const requests = spy.mock.calls.length;
+    spy.mockRestore();
+
+    expect(rows.map((row) => row.address).sort()).toEqual([CLINIC, CLINIC_2].sort());
+    for (const row of rows) {
+      expectShape('Provider', row);
+      expectShape('ProviderMetadata', row.metadata);
+    }
+    expect(requests, 'one request per page, and no trailing empty one').toBe(2);
+  });
+
   it('provider', async () => {
     const clinic = await client.provider(CLINIC);
     expectShape('Provider', clinic);
@@ -811,6 +855,23 @@ describe('@sci-healthcare/client contract (#310)', () => {
     expectEveryShape('ServiceCatalogueItem', res.services);
   });
 
+  /**
+   * `GET /services` is one uncursored page, so the iterator's contract is that
+   * it is the same rows in the same order — and that it asks once.
+   */
+  it('servicesIterate', async () => {
+    const expected = await client.services();
+    const spy = vi.spyOn(client, 'services');
+    const rows: ServiceCatalogueItem[] = [];
+    for await (const row of client.servicesIterate()) rows.push(row);
+    const requests = spy.mock.calls.length;
+    spy.mockRestore();
+
+    expect(rows.map((row) => row.code)).toEqual(expected.services.map((row) => row.code));
+    expectEveryShape('ServiceCatalogueItem', rows);
+    expect(requests, 'the uncursored route needs one request').toBe(1);
+  });
+
   it('service', async () => {
     const res = await client.service(CONSULT);
     expectShape('ServiceClinics', res);
@@ -825,6 +886,41 @@ describe('@sci-healthcare/client contract (#310)', () => {
 
     const truncated = await client.vouchers({ provider: CLINIC, limit: 1 });
     expectShape('VouchersPage', truncated);
+  });
+
+  /**
+   * Paging over vouchers (#286) and the promise a fake `fetch` cannot keep with
+   * a real route: `break` is cheap. There is more than one seeded voucher here,
+   * so a page of one is only collected in full by asking for the next page —
+   * and a consumer who leaves after the first row must not cause that ask.
+   */
+  it('vouchersIterate', async () => {
+    const paged = await client.vouchers({ provider: CLINIC });
+    expect(paged.vouchers.length, 'this needs more than one page of one').toBeGreaterThan(1);
+
+    const fullPass = vi.spyOn(client, 'vouchers');
+    const rows: Voucher[] = [];
+    for await (const row of client.vouchersIterate({ provider: CLINIC, limit: 1 })) {
+      rows.push(row);
+    }
+    const requests = fullPass.mock.calls.length;
+    fullPass.mockRestore();
+
+    expect(rows.map((row) => row.id)).toEqual(paged.vouchers.map((row) => row.id));
+    expectEveryShape('Voucher', rows);
+    for (const row of rows) expectShape('VoucherProvider', row.provider);
+    expect(requests, 'one request per page, and no trailing empty one').toBe(rows.length);
+
+    const afterBreak = vi.spyOn(client, 'vouchers');
+    let seen = 0;
+    for await (const row of client.vouchersIterate({ provider: CLINIC, limit: 1 })) {
+      seen += 1;
+      expectShape('Voucher', row);
+      break;
+    }
+    expect(seen).toBe(1);
+    expect(afterBreak.mock.calls.length, 'leaving the loop fired a page never consumed').toBe(1);
+    afterBreak.mockRestore();
   });
 
   it('voucher', async () => {
@@ -871,6 +967,31 @@ describe('@sci-healthcare/client contract (#310)', () => {
     expectEveryShape('ReceiptPatientView', patientView.receipts);
   });
 
+  /**
+   * The receipts cursor loop (#286). The seed answers this query in one page, so
+   * what is checked is the part that does not depend on row counts: the iterator
+   * yields the same rows the paged route returns, in the same order, for one
+   * request per page. `providersIterate` and `vouchersIterate` carry the
+   * multi-page claim.
+   */
+  it('receiptsIterate', async () => {
+    const paged = await client.receipts({ provider: CLINIC });
+    expectEveryShape('Receipt', paged.receipts);
+
+    const spy = vi.spyOn(client, 'receipts');
+    const rows: Receipt[] = [];
+    for await (const row of client.receiptsIterate({ provider: CLINIC, limit: 1 })) {
+      rows.push(row);
+    }
+    const requests = spy.mock.calls.length;
+    spy.mockRestore();
+
+    expect(rows.map((row) => row.voucherId)).toEqual(paged.receipts.map((row) => row.voucherId));
+    expectEveryShape('Receipt', rows);
+    for (const row of rows) expectShape('ReceiptProvider', row.provider);
+    expect(requests, 'one request per page, and no trailing empty one').toBe(rows.length);
+  });
+
   it('receipt', async () => {
     expectShape('Receipt', await client.receipt('contract-settled'));
   });
@@ -890,16 +1011,14 @@ describe('@sci-healthcare/client contract (#310)', () => {
 
   /**
    * `stream()` is the one method that answers with no JSON body, so its
-   * contract is the frame itself. This is also the only test here that binds a
+   * contract is the frame itself. This is also one of two tests here that bind a
    * socket: `app.inject()` waits for the response to end and a stream never
    * does. `client-stream.test.ts` drives the client against a hand-written SSE
    * server, which proves the client parses what it is told; nothing proved the
    * real route tells it what the client's type declares. That gap is this test.
    */
   it('stream', async () => {
-    await app.listen({ port: 0, host: '127.0.0.1' });
-    const { port } = app.server.address() as AddressInfo;
-    const live = createClient({ baseUrl: `http://127.0.0.1:${port}` });
+    const live = createClient({ baseUrl: await liveBase() });
 
     const voucherId = 'contract-streamed';
     const signal: VoucherSignal = {
@@ -948,6 +1067,73 @@ describe('@sci-healthcare/client contract (#310)', () => {
       expect(handle.closed).toBe(true);
       await handle.done;
     }
+  });
+
+  /**
+   * `streamEvents()` (#290) is `stream()` behind `for await`, so the frame
+   * itself is already contracted above. What belongs to the wrapper alone is the
+   * promise its comment makes — leaving the loop closes what it opened — and the
+   * bus answers with its listener count, so that is measured, not asserted.
+   */
+  it('streamEvents', async () => {
+    const live = createClient({ baseUrl: await liveBase() });
+    const voucherId = 'contract-stream-events';
+    const signal: VoucherSignal = {
+      type: 'voucher_settled',
+      voucherId,
+      providerAddress: CLINIC,
+      status: 'Settled',
+      ledger: TIP,
+      txHash: '4'.repeat(64),
+      at: new Date().toISOString(),
+    };
+    // The `stream` test above closes its handle, but the route drops its bus
+    // listener when the aborted request unwinds, which is not synchronous with
+    // that test finishing. Wait for a quiet bus so the count below is this
+    // connection alone; publishing for a voucher no filter matches forwards
+    // nothing to anyone.
+    const probe = { ...signal, voucherId: 'contract-stream-events-probe' };
+    await vi.waitFor(
+      () => expect(publishVoucherSignals([probe]), 'a stream outlived the test above').toBe(0),
+      { timeout: 5_000, interval: 20 },
+    );
+
+    const frames: VoucherStreamEvent[] = [];
+    const consumed = (async () => {
+      for await (const frame of live.streamEvents({ voucher: voucherId })) {
+        frames.push(frame);
+        break;
+      }
+    })();
+
+    // The generator connects on its first `next()` and the bus keeps no
+    // history, so the signal goes nowhere until this process has a listener.
+    // Polling with the real publish is how the open is observed: the count it
+    // returns is the count of streams registered at that moment.
+    let opened = 0;
+    await vi.waitFor(
+      () => {
+        opened = publishVoucherSignals([signal]);
+        expect(opened, 'the stream never opened').toBe(1);
+      },
+      { timeout: 5_000, interval: 20 },
+    );
+    await consumed;
+
+    expect(frames).toHaveLength(1);
+    expectShape('VoucherStreamEvent', frames[0]);
+    expect(frames[0]!.voucherId, 'the route forwarded a different voucher').toBe(voucherId);
+
+    // `break` runs the generator's `finally`, which closes the handle; the
+    // route then drops its listener when the aborted request unwinds.
+    await vi.waitFor(
+      () =>
+        expect(
+          publishVoucherSignals([{ ...signal, voucherId: 'contract-stream-events-after' }]),
+          'leaving the `streamEvents` loop left the stream open',
+        ).toBe(0),
+      { timeout: 5_000, interval: 20 },
+    );
   });
 
   it('rawGet', async () => {
