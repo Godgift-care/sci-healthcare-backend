@@ -1,8 +1,5 @@
 import { prisma } from '../db.js';
-import {
-  formatServicePrice,
-  type ScheduledPriceRow,
-} from './services.js';
+import { formatServicePrice, type ScheduledPriceRow } from './services.js';
 import { providerMetadataOf, type ProviderMetadata } from './provider-metadata.js';
 
 /**

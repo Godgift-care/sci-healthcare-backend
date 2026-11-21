@@ -2722,9 +2722,7 @@ describe('scheduled price changes in the API (#315)', () => {
     const list = await get('/providers');
 
     const priceOf = (entries: { code: number; price: string; upcomingPrice: string }[]) =>
-      entries
-        .filter((s) => s.code === 101)
-        .map((s) => [s.price, s.upcomingPrice])[0];
+      entries.filter((s) => s.code === 101).map((s) => [s.price, s.upcomingPrice])[0];
 
     const listed = list.body.providers.find((p: { address: string }) => p.address === CLINIC);
     expect(priceOf(detail.body.services)).toEqual(priceOf(standalone.body.services));

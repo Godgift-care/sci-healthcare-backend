@@ -4,7 +4,12 @@ import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
 import { lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
 import { ApiError } from '../lib/errors.js';
-import { serviceKey, serviceLabels, formatServicePrice, scheduledPriceOf } from '../lib/services.js';
+import {
+  serviceKey,
+  serviceLabels,
+  formatServicePrice,
+  scheduledPriceOf,
+} from '../lib/services.js';
 
 type CatalogueRow = {
   code: number;

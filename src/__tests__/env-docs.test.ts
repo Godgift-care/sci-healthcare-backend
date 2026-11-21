@@ -12,10 +12,7 @@ import { describe, expect, it } from 'vitest';
  */
 
 const envSource = readFileSync(new URL('../env.ts', import.meta.url), 'utf8');
-const environmentDoc = readFileSync(
-  new URL('../../docs/environment.md', import.meta.url),
-  'utf8',
-);
+const environmentDoc = readFileSync(new URL('../../docs/environment.md', import.meta.url), 'utf8');
 
 type SchemaVar = { name: string; required: boolean; defaultValue: string | null };
 

@@ -118,6 +118,9 @@ export type ServiceClinic = {
   country: string;
   price: string;
   priceDisplay: string;
+  /** Pending schedule for this clinic's price, when one exists (#315). */
+  upcomingPrice?: string | null;
+  upcomingFrom?: string | Date | null;
 };
 
 /**
@@ -431,6 +434,7 @@ export function isApiErrorCode(code: string): code is ApiErrorCode {
   return (API_ERROR_CODES as readonly string[]).includes(code);
 }
 
+/**
  * Filters for `GET /providers/:address/services` (issue #314).
  *
  * `active` is absent by default, which returns the whole catalogue including

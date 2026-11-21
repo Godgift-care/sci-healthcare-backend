@@ -107,6 +107,9 @@ export type ServiceClinic = {
     country: string;
     price: string;
     priceDisplay: string;
+    /** Pending schedule for this clinic's price, when one exists (#315). */
+    upcomingPrice?: string | null;
+    upcomingFrom?: string | Date | null;
 };
 /**
  * The per-code detail page. Not the same shape as a `GET /services` entry:
@@ -369,7 +372,7 @@ export type ApiErrorEnvelope = {
 };
 /** Whether an `ApiError.error` is one of the codes the API documents. */
 export declare function isApiErrorCode(code: string): code is ApiErrorCode;
-
+/**
  * Filters for `GET /providers/:address/services` (issue #314).
  *
  * `active` is absent by default, which returns the whole catalogue including

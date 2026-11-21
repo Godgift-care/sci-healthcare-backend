@@ -283,20 +283,20 @@ describe('service_price_scheduled projection (#315)', () => {
     );
   }
 
-  async function upsert(ledger: number, price: bigint, label = 'Outpatient consult'): Promise<void> {
-    await apply(
-      rawEvent('service_upserted', ledger, { label, price }, [addr(CLINIC), u32(101)]),
-    );
+  async function upsert(
+    ledger: number,
+    price: bigint,
+    label = 'Outpatient consult',
+  ): Promise<void> {
+    await apply(rawEvent('service_upserted', ledger, { label, price }, [addr(CLINIC), u32(101)]));
   }
 
   async function schedule(ledger: number, price: bigint, effectiveAt: bigint): Promise<void> {
     await apply(
-      rawEvent(
-        'service_price_scheduled',
-        ledger,
-        { price, effective_at: effectiveAt },
-        [addr(CLINIC), u32(101)],
-      ),
+      rawEvent('service_price_scheduled', ledger, { price, effective_at: effectiveAt }, [
+        addr(CLINIC),
+        u32(101),
+      ]),
     );
   }
 

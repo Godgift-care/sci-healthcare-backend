@@ -12,7 +12,7 @@
 > and are kept for the reasoning; where they say "pending", read "landed".
 
 Status (original): **plan + pending SQL**. The SQL in
-[`prisma/postgres-pending/20260107000000_amount_numeric_to_decimal/migration.sql`](../prisma/postgres-pending/20260107000000_amount_numeric_to_decimal/migration.sql)
+[`prisma/migrations/20261119000001_amount_numeric_to_decimal/migration.sql`](../prisma/migrations/20261119000001_amount_numeric_to_decimal/migration.sql)
 converts the i128-as-string amount columns of the **Postgres deploy database**
 to `numeric`, but it is *deliberately not applied yet* — see
 [Why the migration is pending](#why-the-migration-is-pending). Nothing in this
