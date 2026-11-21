@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
+import type { ApiErrorEnvelope, ClinicServicesParams, ClinicServicesResponse, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
 import { type StreamFilters, type StreamHandle, type StreamHandlers, type StreamOptions, type VoucherStreamEvent } from './stream.js';
 export declare class ApiError extends Error {
     readonly status: number;
@@ -39,6 +39,15 @@ export declare class Client {
     dailyStats(days?: number): Promise<DailyStats>;
     providers(params?: ListProvidersParams): Promise<ProvidersResponse>;
     provider(address: string): Promise<Provider>;
+    /**
+     * One clinic's price list on its own (issue #314), sorted by price
+     * ascending by default.
+     *
+     * Priced separately from the clinic record because the catalogue changes
+     * far more often than the profile around it, so refreshing prices does not
+     * refetch — or revalidate — the whole provider.
+     */
+    providerServices(address: string, params?: ClinicServicesParams): Promise<ClinicServicesResponse>;
     providerHistory(address: string): Promise<ProviderHistory>;
     providerServiceHistory(address: string, code: number): Promise<ServicePriceChangeHistory>;
     countries(): Promise<{

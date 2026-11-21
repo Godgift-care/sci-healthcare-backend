@@ -830,19 +830,25 @@
                           "code": 101,
                           "label": "Outpatient consult",
                           "price": "33600000",
-                          "priceDisplay": "3.3600000"
+                          "priceDisplay": "3.3600000",
+                          "upcomingPrice": null,
+                          "upcomingFrom": null
                         },
                         {
                           "code": 201,
                           "label": "Routine bloodwork",
                           "price": "27250000",
-                          "priceDisplay": "2.7250000"
+                          "priceDisplay": "2.7250000",
+                          "upcomingPrice": null,
+                          "upcomingFrom": null
                         },
                         {
                           "code": 404,
                           "label": "Paediatric vaccination",
                           "price": "23800000",
-                          "priceDisplay": "2.3800000"
+                          "priceDisplay": "2.3800000",
+                          "upcomingPrice": null,
+                          "upcomingFrom": null
                         }
                       ]
                     }
@@ -979,6 +985,8 @@
                       "label": "Outpatient consult",
                       "price": "33600000",
                       "priceDisplay": "3.3600000",
+                      "upcomingPrice": null,
+                      "upcomingFrom": null,
                       "active": true
                     },
                     {
@@ -986,6 +994,8 @@
                       "label": "Routine bloodwork",
                       "price": "27250000",
                       "priceDisplay": "2.7250000",
+                      "upcomingPrice": null,
+                      "upcomingFrom": null,
                       "active": true
                     },
                     {
@@ -993,6 +1003,8 @@
                       "label": "Paediatric vaccination",
                       "price": "23800000",
                       "priceDisplay": "2.3800000",
+                      "upcomingPrice": null,
+                      "upcomingFrom": null,
                       "active": true
                     }
                   ]
@@ -1013,6 +1025,262 @@
               }
             },
             "description": "`error: provider_not_found` for an address the registry event never carried."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "database_unavailable",
+                  "message": "Database is unavailable, retry in 5 seconds"
+                }
+              }
+            },
+            "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/providers/{address}/services": {
+      "get": {
+        "summary": "A clinic's services and price list",
+        "tags": [
+          "providers"
+        ],
+        "description": "Filters: `active=true` or `active=false` to take only the listed or only the delisted half of the catalogue (both by default), `sort=price` (default) or `sort=code`, and `order=asc` (default) or `desc`. Equal prices always order by code ascending.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One clinic's price list: the price in effect now and any price already scheduled to replace it. `price` is what the service costs today, which is the scheduled price once `upcomingFrom` has passed, so `upcomingPrice` is null from that moment on. Both halves of the catalogue are listed unless `active=true` or `active=false` filters one out. Prices are base-unit decimal strings and `sort=price` orders them numerically, not lexicographically.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "providerAddress": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Entries matching the filters."
+                    },
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "string",
+                            "description": "Price in effect, as a base-unit decimal string."
+                          },
+                          "priceDisplay": {
+                            "type": "string"
+                          },
+                          "active": {
+                            "type": "boolean",
+                            "description": "False once the clinic delisted the service."
+                          },
+                          "upcomingPrice": {
+                            "description": "Price scheduled to take effect, or null when nothing is pending.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "upcomingFrom": {
+                            "description": "ISO instant `upcomingPrice` takes effect; null with no pending schedule.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "label",
+                          "price",
+                          "priceDisplay",
+                          "active",
+                          "upcomingPrice",
+                          "upcomingFrom"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "providerAddress",
+                    "name",
+                    "total",
+                    "services"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "providerAddress": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
+                  "name": "Kumasi Community Clinic",
+                  "total": 3,
+                  "services": [
+                    {
+                      "code": 404,
+                      "label": "Paediatric vaccination",
+                      "price": "23800000",
+                      "priceDisplay": "2.3800000",
+                      "active": false,
+                      "upcomingPrice": null,
+                      "upcomingFrom": null
+                    },
+                    {
+                      "code": 201,
+                      "label": "Routine bloodwork",
+                      "price": "27250000",
+                      "priceDisplay": "2.7250000",
+                      "active": true,
+                      "upcomingPrice": "30000000",
+                      "upcomingFrom": "2026-12-01T00:00:00.000Z"
+                    },
+                    {
+                      "code": 101,
+                      "label": "Outpatient consult",
+                      "price": "33600000",
+                      "priceDisplay": "3.3600000",
+                      "active": true,
+                      "upcomingPrice": null,
+                      "upcomingFrom": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "code": "invalid_value",
+                      "values": [
+                        "price",
+                        "code"
+                      ],
+                      "path": [
+                        "sort"
+                      ],
+                      "message": "Invalid option: expected one of \"price\"|\"code\""
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` for a filter outside its range: `active` other than `true`/`false`, `sort` other than `price`/`code`, or `order` other than `asc`/`desc`."
+          },
+          "404": {
+            "description": "`error: provider_not_found` for an address the registry event never carried.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "provider_not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "error": "provider_not_found"
+                }
+              }
+            }
           },
           "429": {
             "content": {
@@ -4849,19 +5117,25 @@
                           "code": 101,
                           "label": "Outpatient consult",
                           "price": "33600000",
-                          "priceDisplay": "3.3600000"
+                          "priceDisplay": "3.3600000",
+                          "upcomingPrice": null,
+                          "upcomingFrom": null
                         },
                         {
                           "code": 201,
                           "label": "Routine bloodwork",
                           "price": "27250000",
-                          "priceDisplay": "2.7250000"
+                          "priceDisplay": "2.7250000",
+                          "upcomingPrice": null,
+                          "upcomingFrom": null
                         },
                         {
                           "code": 404,
                           "label": "Paediatric vaccination",
                           "price": "23800000",
-                          "priceDisplay": "2.3800000"
+                          "priceDisplay": "2.3800000",
+                          "upcomingPrice": null,
+                          "upcomingFrom": null
                         }
                       ]
                     }
@@ -4998,6 +5272,8 @@
                       "label": "Outpatient consult",
                       "price": "33600000",
                       "priceDisplay": "3.3600000",
+                      "upcomingPrice": null,
+                      "upcomingFrom": null,
                       "active": true
                     },
                     {
@@ -5005,6 +5281,8 @@
                       "label": "Routine bloodwork",
                       "price": "27250000",
                       "priceDisplay": "2.7250000",
+                      "upcomingPrice": null,
+                      "upcomingFrom": null,
                       "active": true
                     },
                     {
@@ -5012,6 +5290,8 @@
                       "label": "Paediatric vaccination",
                       "price": "23800000",
                       "priceDisplay": "2.3800000",
+                      "upcomingPrice": null,
+                      "upcomingFrom": null,
                       "active": true
                     }
                   ]
@@ -5032,6 +5312,262 @@
               }
             },
             "description": "`error: provider_not_found` for an address the registry event never carried."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "database_unavailable",
+                  "message": "Database is unavailable, retry in 5 seconds"
+                }
+              }
+            },
+            "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/{address}/services": {
+      "get": {
+        "summary": "A clinic's services and price list",
+        "tags": [
+          "providers"
+        ],
+        "description": "Filters: `active=true` or `active=false` to take only the listed or only the delisted half of the catalogue (both by default), `sort=price` (default) or `sort=code`, and `order=asc` (default) or `desc`. Equal prices always order by code ascending.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One clinic's price list: the price in effect now and any price already scheduled to replace it. `price` is what the service costs today, which is the scheduled price once `upcomingFrom` has passed, so `upcomingPrice` is null from that moment on. Both halves of the catalogue are listed unless `active=true` or `active=false` filters one out. Prices are base-unit decimal strings and `sort=price` orders them numerically, not lexicographically.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "providerAddress": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Entries matching the filters."
+                    },
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "string",
+                            "description": "Price in effect, as a base-unit decimal string."
+                          },
+                          "priceDisplay": {
+                            "type": "string"
+                          },
+                          "active": {
+                            "type": "boolean",
+                            "description": "False once the clinic delisted the service."
+                          },
+                          "upcomingPrice": {
+                            "description": "Price scheduled to take effect, or null when nothing is pending.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "upcomingFrom": {
+                            "description": "ISO instant `upcomingPrice` takes effect; null with no pending schedule.",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "label",
+                          "price",
+                          "priceDisplay",
+                          "active",
+                          "upcomingPrice",
+                          "upcomingFrom"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "providerAddress",
+                    "name",
+                    "total",
+                    "services"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "providerAddress": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
+                  "name": "Kumasi Community Clinic",
+                  "total": 3,
+                  "services": [
+                    {
+                      "code": 404,
+                      "label": "Paediatric vaccination",
+                      "price": "23800000",
+                      "priceDisplay": "2.3800000",
+                      "active": false,
+                      "upcomingPrice": null,
+                      "upcomingFrom": null
+                    },
+                    {
+                      "code": 201,
+                      "label": "Routine bloodwork",
+                      "price": "27250000",
+                      "priceDisplay": "2.7250000",
+                      "active": true,
+                      "upcomingPrice": "30000000",
+                      "upcomingFrom": "2026-12-01T00:00:00.000Z"
+                    },
+                    {
+                      "code": 101,
+                      "label": "Outpatient consult",
+                      "price": "33600000",
+                      "priceDisplay": "3.3600000",
+                      "active": true,
+                      "upcomingPrice": null,
+                      "upcomingFrom": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "code": "invalid_value",
+                      "values": [
+                        "price",
+                        "code"
+                      ],
+                      "path": [
+                        "sort"
+                      ],
+                      "message": "Invalid option: expected one of \"price\"|\"code\""
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` for a filter outside its range: `active` other than `true`/`false`, `sort` other than `price`/`code`, or `order` other than `asc`/`desc`."
+          },
+          "404": {
+            "description": "`error: provider_not_found` for an address the registry event never carried.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "provider_not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "error": "provider_not_found"
+                }
+              }
+            }
           },
           "429": {
             "content": {

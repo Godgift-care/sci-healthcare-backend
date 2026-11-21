@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import { fromBaseUnits } from './amounts.js';
+import { formatServicePrice, type ScheduledPriceRow } from './services.js';
 import { providerMetadataOf, type ProviderMetadata } from './provider-metadata.js';
 
 /**
@@ -66,6 +66,10 @@ export type ProviderDetail = {
     price: string;
     priceDisplay: string;
     active: boolean;
+    // The price scheduled with notice, and when it takes effect — both null
+    // while nothing is pending and once a schedule has been applied (#315).
+    upcomingPrice: string | null;
+    upcomingFrom: Date | null;
   }[];
 };
 
@@ -81,6 +85,10 @@ export type ProviderDetail = {
  * `openVouchers` is passed in rather than read here: the detail route counts
  * one clinic and `providerDetails()` counts a whole page, and doing the count
  * per clinic inside this pure function would turn the page into an N+1.
+ *
+ * The price reported is whichever of `price` and the pending schedule applies
+ * at `now`, because the registry makes a scheduled price current on a read and
+ * publishes no event when it does (`scheduledPriceOf()`, #315).
  */
 export function serialiseProviderDetail(
   p: {
@@ -91,9 +99,14 @@ export function serialiseProviderDetail(
     registeredAt: Date;
     metadata: string | null;
     capacity: number | null;
-    services: readonly { code: number; label: string; price: string; active: boolean }[];
+    services: readonly (ScheduledPriceRow & {
+      code: number;
+      label: string;
+      active: boolean;
+    })[];
   },
   openVouchers: number,
+  now: Date = new Date(),
 ): ProviderDetail {
   return {
     address: p.address,
@@ -109,8 +122,7 @@ export function serialiseProviderDetail(
       .map((s) => ({
         code: s.code,
         label: s.label,
-        price: s.price,
-        priceDisplay: fromBaseUnits(s.price),
+        ...formatServicePrice(s, now),
         active: s.active,
       })),
   };

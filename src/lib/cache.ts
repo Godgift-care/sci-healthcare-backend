@@ -41,6 +41,7 @@ const CACHEABLE_ROUTES = new Set([
   '/providers',
   '/providers/:address',
   '/providers/:address/history',
+  '/providers/:address/services',
   '/providers/:address/services/:code/history',
   '/services',
   '/services/:code',

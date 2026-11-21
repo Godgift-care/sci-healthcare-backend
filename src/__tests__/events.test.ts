@@ -8,6 +8,7 @@ import {
   asHex,
   asId,
   asNumber,
+  asTimestamp,
   decodeEvent,
   providerStatusName,
   serialiseEventData,
@@ -119,6 +120,26 @@ describe('decodeEvent', () => {
     expect(asAmount(decoded!.fields.amount)).toBe('100000000');
   });
 
+  it('decodes a scheduled price change, with the service in the topic and the new price in the data', () => {
+    const decoded = decodeEvent(
+      raw(
+        [sym('service_price_scheduled'), Address.fromString(CLINIC).toScVal(), nativeToScVal(101)],
+        nativeToScVal({ price: 45_000_000n, effective_at: 1_788_439_037n }),
+      ),
+    );
+    expect(decoded!.name).toBe('service_price_scheduled');
+    // (provider, code) are topic fields; a decoder reading them from the data
+    // map would get `undefined` and write the text "undefined" to the row.
+    expect(asAddress(decoded!.fields.provider)).toBe(CLINIC);
+    expect(asNumber(decoded!.fields.code)).toBe(101);
+    expect(asAmount(decoded!.fields.price)).toBe('45000000');
+    // The contract requires at least MIN_PRICE_NOTICE_SECS of notice, so this
+    // is a day after the fixture's ledger close time of 2026-09-02T12:00:00Z.
+    expect(asTimestamp(decoded!.fields.effective_at).toISOString()).toBe(
+      '2026-09-03T12:37:17.000Z',
+    );
+  });
+
   it('returns null when the first topic is not an event name', () => {
     expect(decodeEvent(raw([nativeToScVal(42)], nativeToScVal({})))).toBeNull();
   });
@@ -139,6 +160,7 @@ describe('TOPIC_FIELDS', () => {
       'provider_registered',
       'provider_status_changed',
       'service_upserted',
+      'service_price_scheduled',
       'service_removed',
       'voucher_created',
       'voucher_claimed',

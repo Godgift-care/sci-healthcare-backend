@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The environment reference in the README must match the Zod schema in
- * `src/env.ts`: every variable documented, nothing documented that the
+ * The environment reference in `docs/environment.md` must match the Zod schema
+ * in `src/env.ts`: every variable documented, nothing documented that the
  * schema does not accept, and the Required/Default columns agreeing with
  * the schema's own definitions.
  *
@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
  */
 
 const envSource = readFileSync(new URL('../env.ts', import.meta.url), 'utf8');
-const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+const environmentDoc = readFileSync(new URL('../../docs/environment.md', import.meta.url), 'utf8');
 
 type SchemaVar = { name: string; required: boolean; defaultValue: string | null };
 
@@ -41,16 +41,15 @@ function schemaVars(): SchemaVar[] {
   });
 }
 
-type ReadmeVar = { required: string; defaultValue: string; purpose: string };
+type DocVar = { required: string; defaultValue: string; purpose: string };
 
-function readmeVars(): Map<string, ReadmeVar> {
-  const start = readme.indexOf('## Environment');
-  const rest = readme.slice(start + 1);
-  const nextHeading = rest.indexOf('\n## ');
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-
-  const vars = new Map<string, ReadmeVar>();
-  for (const line of section.split('\n')) {
+/**
+ * Every `| \`NAME\` | … |` row in the page. The page is the environment
+ * reference end to end, so there is no section to cut out of it.
+ */
+function documentedVars(): Map<string, DocVar> {
+  const vars = new Map<string, DocVar>();
+  for (const line of environmentDoc.split('\n')) {
     if (!/^\| `[A-Z][A-Z0-9_]*` \|/.test(line)) continue;
     const cells = line
       .split('|')
@@ -67,9 +66,13 @@ function readmeVars(): Map<string, ReadmeVar> {
   return vars;
 }
 
-describe('README environment reference', () => {
+describe('environment reference (docs/environment.md)', () => {
   const schema = schemaVars();
-  const documented = readmeVars();
+  const documented = documentedVars();
+
+  it('reads a page that still has a table (canary for the assertions below)', () => {
+    expect(documented.size).toBeGreaterThan(20);
+  });
 
   it('parses the Zod schema (canary for the assertions below)', () => {
     expect(schema.find((v) => v.name === 'DATABASE_URL')).toEqual({
