@@ -71,8 +71,12 @@ export function createWebhookServer(options) {
             catch (err) {
                 const errorMsg = err instanceof Error ? err.message : String(err);
                 logger(`Privacy or formatting rejection: ${errorMsg}`);
+                const isPrivacyViolation = errorMsg.includes('Privacy violation');
+                const clientMessage = isPrivacyViolation
+                    ? 'Privacy violation: payload contains beneficiary references'
+                    : 'Payload rejected: formatting or validation error';
                 res.writeHead(400, { 'content-type': 'application/json' });
-                res.end(JSON.stringify({ error: 'payload_rejected', message: errorMsg }));
+                res.end(JSON.stringify({ error: 'payload_rejected', message: clientMessage }));
             }
         });
     });

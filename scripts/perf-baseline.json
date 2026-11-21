@@ -1,0 +1,22 @@
+{
+  "tolerance": 0.5,
+  "runs": 3,
+  "routes": {
+    "/v1/vouchers?status=Funded&limit=20": {
+      "name": "vouchers_list",
+      "p95": 30.0
+    },
+    "/v1/vouchers/:id": {
+      "name": "voucher_detail",
+      "p95": 20.0
+    },
+    "/v1/providers": {
+      "name": "providers_list",
+      "p95": 25.0
+    },
+    "/v1/stats": {
+      "name": "stats_aggregate",
+      "p95": 35.0
+    }
+  }
+}

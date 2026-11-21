@@ -1,21 +1,34 @@
 import { scValToNative, xdr } from '@stellar/stellar-sdk';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../db.js';
-import { ContractReadError } from '../stellar/client.js';
+import { ContractReadError, readContract } from '../stellar/client.js';
 import {
   diffVoucher,
+  diffVoucherOptions,
   isVoucherNotFound,
   normaliseChainVoucher,
+  normaliseChainVoucherOptions,
+  readVoucherOptionsFromChain,
   reconcile,
   voucherIdScVal,
   type ChainVoucher,
+  type ChainVoucherOptions,
 } from '../stellar/reconcile.js';
+
+// Only `readContract` is replaced, so the real `ContractReadError` class the
+// tests below construct still passes `instanceof` in the code under test.
+vi.mock('../stellar/client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stellar/client.js')>();
+  return { ...actual, readContract: vi.fn() };
+});
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const OTHER_CLINIC = 'GCMDQZBBTZBR3ZDPCEFSDNNWVQFA44VHOJHR2JZTL7CHJHZ3N2LQDW3B';
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
 const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
+/** A presence commitment: 32 bytes, hex like every other byte field (#319). */
+const COMMITMENT = 'ab'.repeat(32);
 
 const CREATED = 1_760_000_000;
 const EXPIRES = 1_770_000_000;
@@ -37,6 +50,17 @@ function chainVoucher(overrides: Partial<ChainVoucher> = {}): ChainVoucher {
     dispute_deadline: 0n,
     ...overrides,
   };
+}
+
+/**
+ * `get_voucher_options` as the RPC returns it (#319).
+ *
+ * Soroban has no `Option` on the wire: `None` is `ScVal::Void`, which
+ * `scValToNative` hands back as `null`, and `Some(v)` is just `v`. A plain
+ * voucher is therefore both fields null, not a missing struct.
+ */
+function chainOptions(overrides: Partial<ChainVoucherOptions> = {}): ChainVoucherOptions {
+  return { dispute_window: null, presence_commitment: null, ...overrides };
 }
 
 /** The row the indexer would have written for that voucher. */
@@ -178,6 +202,229 @@ describe('diffVoucher', () => {
       { field: 'amount', db: '1', chain: '30000000' },
       { field: 'status', db: 'Claimed', chain: 'Funded' },
     ]);
+  });
+});
+
+describe('reading the voucher options from the chain (#319)', () => {
+  afterEach(() => vi.mocked(readContract).mockReset());
+
+  it('calls get_voucher_options with the voucher id on the deployment it names', async () => {
+    const contract = 'C'.repeat(56);
+    vi.mocked(readContract).mockResolvedValue(chainOptions({ dispute_window: 86_400n }));
+
+    await expect(readVoucherOptionsFromChain('7', contract)).resolves.toEqual(
+      chainOptions({ dispute_window: 86_400n }),
+    );
+    expect(readContract).toHaveBeenCalledWith(contract, 'get_voucher_options', [
+      voucherIdScVal('7'),
+    ]);
+  });
+
+  it('reads a voucher the contract never heard of as nothing, not a failure', async () => {
+    vi.mocked(readContract).mockRejectedValue(
+      new ContractReadError(
+        'C'.repeat(56),
+        'get_voucher_options',
+        'HostError: Error(Contract, #4)',
+      ),
+    );
+    await expect(readVoucherOptionsFromChain('1')).resolves.toBeNull();
+  });
+
+  it('passes any other failure up, because it says nothing about the options', async () => {
+    // A deployment old enough to have no such view lands here too, which is
+    // why reconcile treats it as "do not compare" rather than as drift.
+    vi.mocked(readContract).mockRejectedValue(
+      new ContractReadError(
+        'C'.repeat(56),
+        'get_voucher_options',
+        'Error(WasmRuntime, NotPresent)',
+      ),
+    );
+    await expect(readVoucherOptionsFromChain('1')).rejects.toThrow('NotPresent');
+  });
+});
+
+describe('normaliseChainVoucherOptions', () => {
+  it('reads a voucher funded without options as no options at all', () => {
+    expect(normaliseChainVoucherOptions(chainOptions())).toEqual({
+      disputeWindowSecs: null,
+      presenceCommitment: null,
+    });
+  });
+
+  it('keeps the window and the presence proof a funder chose', () => {
+    const chain = normaliseChainVoucherOptions(
+      chainOptions({
+        dispute_window: 86_400n,
+        presence_commitment: Buffer.from(COMMITMENT, 'hex'),
+      }),
+    );
+    expect(chain).toEqual({ disputeWindowSecs: 86_400, presenceCommitment: COMMITMENT });
+  });
+
+  it('refuses a window the projection cannot name', () => {
+    // The column is a 32-bit int and the protocol's own ceiling is thirty
+    // days, so a wider value means this decoder and the contract disagree
+    // about what the number is — better to report nothing than to store a
+    // wrapped one.
+    expect(() =>
+      normaliseChainVoucherOptions(chainOptions({ dispute_window: 2_147_483_648n })),
+    ).toThrow(RangeError);
+    // Past 2^53 a Number is not the value the chain named.
+    expect(() =>
+      normaliseChainVoucherOptions(chainOptions({ dispute_window: 9_007_199_254_740_993n })),
+    ).toThrow(RangeError);
+  });
+
+  it('reads a commitment that is not bytes as a failure', () => {
+    expect(() => normaliseChainVoucherOptions(chainOptions({ presence_commitment: 7n }))).toThrow(
+      TypeError,
+    );
+  });
+});
+
+describe('diffVoucherOptions', () => {
+  it('reports nothing when the row and the chain both hold no options', async () => {
+    const row = await seedVoucher('1');
+    expect(diffVoucherOptions(row, normaliseChainVoucherOptions(chainOptions()))).toEqual([]);
+  });
+
+  it('names each option the row is missing', async () => {
+    const row = await seedVoucher('1');
+    const chain = normaliseChainVoucherOptions(
+      chainOptions({
+        dispute_window: 86_400n,
+        presence_commitment: Buffer.from(COMMITMENT, 'hex'),
+      }),
+    );
+    expect(diffVoucherOptions(row, chain)).toEqual([
+      { field: 'disputeWindowSecs', db: null, chain: '86400' },
+      { field: 'presenceCommitment', db: null, chain: COMMITMENT },
+    ]);
+  });
+
+  it('names an option the row invented as much as one it forgot', async () => {
+    const row = await seedVoucher('1', { disputeWindowSecs: 86_400 });
+    const chain = normaliseChainVoucherOptions(chainOptions());
+    expect(diffVoucherOptions(row, chain)).toEqual([
+      { field: 'disputeWindowSecs', db: '86400', chain: null },
+    ]);
+  });
+});
+
+describe('reconciling the options no event announced (#319)', () => {
+  it('compares them, and says so when only they disagree', async () => {
+    await seedVoucher('1');
+    const read = vi.fn(async () => chainVoucher());
+    const readOptions = vi.fn(async () =>
+      chainOptions({ presence_commitment: Buffer.from(COMMITMENT, 'hex') }),
+    );
+
+    const result = await reconcile({ read, readOptions, log: fakeLog() });
+
+    expect(result).toMatchObject({ checked: 1, matched: 0, mismatched: 1, fixed: 0 });
+    expect(readOptions).toHaveBeenCalledTimes(1);
+    const row = await prisma.reconcileMismatch.findUniqueOrThrow({ where: { voucherId: '1' } });
+    expect(row.kind).toBe('field_mismatch');
+    expect(JSON.parse(row.fields)).toEqual([
+      { field: 'presenceCommitment', db: null, chain: COMMITMENT },
+    ]);
+    // Report only: the row is untouched without --fix.
+    expect(
+      (await prisma.voucher.findUniqueOrThrow({ where: { id: '1' } })).presenceCommitment,
+    ).toBeNull();
+  });
+
+  it('--fix writes the options from chain state', async () => {
+    await seedVoucher('1');
+    const read = vi.fn(async () => chainVoucher());
+    const readOptions = vi.fn(async () =>
+      chainOptions({
+        dispute_window: 259_200n,
+        presence_commitment: Buffer.from(COMMITMENT, 'hex'),
+      }),
+    );
+
+    const result = await reconcile({ read, readOptions, fix: true, log: fakeLog() });
+
+    expect(result).toMatchObject({ mismatched: 1, fixed: 1, openMismatches: 0 });
+    const fixed = await prisma.voucher.findUniqueOrThrow({ where: { id: '1' } });
+    expect(fixed.disputeWindowSecs).toBe(259_200);
+    expect(fixed.presenceCommitment).toBe(COMMITMENT);
+  });
+
+  it('reads the options once for every voucher it checks', async () => {
+    await seedVoucher('1');
+    await seedVoucher('2', { status: 'Claimed', claimedAt: new Date(1_765_000_000 * 1000) });
+    const read = vi.fn(async (id: string) =>
+      id === '2' ? chainVoucher({ id: 2n, status: 1, claimed_at: 1_765_000_000n }) : chainVoucher(),
+    );
+    const readOptions = vi.fn(async () => chainOptions());
+
+    const result = await reconcile({ read, readOptions, log: fakeLog() });
+
+    expect(result).toMatchObject({ checked: 2, matched: 2, mismatched: 0 });
+    expect(readOptions).toHaveBeenCalledTimes(2);
+    expect(readOptions).toHaveBeenCalledWith('1');
+  });
+
+  it('treats an options read failure as unknown, not as drift', async () => {
+    // A voucher whose options could not be read is not evidence that the
+    // stored columns are wrong — and it must not lose what they hold.
+    await seedVoucher('1', { disputeWindowSecs: 86_400, presenceCommitment: COMMITMENT });
+    const read = vi.fn(async () => chainVoucher());
+    const readOptions = vi.fn(async () => {
+      throw new Error('rpc unavailable');
+    });
+    const log = fakeLog();
+
+    const result = await reconcile({ read, readOptions, fix: true, log });
+
+    expect(result).toMatchObject({ checked: 1, matched: 1, mismatched: 0, fixed: 0 });
+    expect(await prisma.reconcileMismatch.count()).toBe(0);
+    const row = await prisma.voucher.findUniqueOrThrow({ where: { id: '1' } });
+    expect(row.disputeWindowSecs).toBe(86_400);
+    expect(row.presenceCommitment).toBe(COMMITMENT);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ voucherId: '1' }),
+      expect.stringContaining('could not read voucher options'),
+    );
+  });
+
+  it('treats an undecodable option as unknown, not as drift', async () => {
+    await seedVoucher('1');
+    const read = vi.fn(async () => chainVoucher());
+    const readOptions = vi.fn(async () => chainOptions({ dispute_window: 'not-a-number' }));
+    const log = fakeLog();
+
+    const result = await reconcile({ read, readOptions, log });
+
+    expect(result).toMatchObject({ checked: 1, matched: 1, mismatched: 0 });
+    expect(await prisma.reconcileMismatch.count()).toBe(0);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ voucherId: '1' }),
+      expect.stringContaining('options did not decode'),
+    );
+  });
+
+  it('compares the struct alone when no options reader is given', async () => {
+    // The callers that existed before the options — and the tests that only
+    // care about the struct — keep behaving exactly as they did: a voucher
+    // funded with options still matches the row that never heard of them.
+    await seedVoucher('1');
+    const read = vi.fn(async () => chainVoucher());
+    const readOptions = vi.fn(async () =>
+      chainOptions({
+        dispute_window: 86_400n,
+        presence_commitment: Buffer.from(COMMITMENT, 'hex'),
+      }),
+    );
+
+    const result = await reconcile({ read, log: fakeLog() });
+
+    expect(result).toMatchObject({ matched: 1, mismatched: 0 });
+    expect(readOptions).not.toHaveBeenCalled();
   });
 });
 

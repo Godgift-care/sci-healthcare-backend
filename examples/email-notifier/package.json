@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Example webhook receiver that forwards notifications by email over SMTP",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

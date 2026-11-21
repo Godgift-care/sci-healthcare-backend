@@ -46,7 +46,17 @@ export default tseslint.config(
   {
     // Node scripts, config files and examples run outside `src/` and reach for
     // the runtime globals; ESLint's `no-undef` only knows them when declared.
-    files: ['scripts/**/*.{ts,mts,mjs}', '*.ts', '*.mjs', 'test/**/*.ts', 'test/**/*.mts'],
+    // `examples/**/*.js` belongs here too: the TypeScript examples never hit
+    // `no-undef` because typescript-eslint switches it off for `.ts`, so only
+    // a plain-JS example like `email-notifier` exposes the gap.
+    files: [
+      'scripts/**/*.{ts,mts,mjs}',
+      '*.ts',
+      '*.mjs',
+      'test/**/*.ts',
+      'test/**/*.mts',
+      'examples/**/*.js',
+    ],
     languageOptions: {
       globals: {
         process: 'readonly',

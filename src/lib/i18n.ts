@@ -54,11 +54,13 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
     service_not_found: 'Service not found',
     receipt_not_found: 'Receipt not found',
     voucher_not_found: 'Voucher not found',
+    maintenance_mode: 'Service is undergoing maintenance, retry in {seconds} seconds',
     filter_required: 'Provide at least one of: {filters}',
   },
   fr: {
     internal_error: 'Erreur interne du serveur',
     database_unavailable: 'La base de données est indisponible, réessayez dans {seconds} secondes',
+    maintenance_mode: 'Le service est en maintenance, réessayez dans {seconds} secondes',
     rate_limited: 'Trop de requêtes',
     bad_request: 'Requête invalide',
     route_not_found: 'Route {method} {url} introuvable',
@@ -77,6 +79,7 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
   sw: {
     internal_error: 'Hitilafuo ya ndani ya seva',
     database_unavailable: 'Hifadhidata haipatikani, jaribu tena baada ya sekunde {seconds}',
+    maintenance_mode: 'Huduma inafanyiwa matengenezo, jaribu tena baada ya sekunde {seconds}',
     rate_limited: 'Maombi mengi mno',
     bad_request: 'Ombi lisilokubalika',
     route_not_found: 'Njia {method} {url} haipatikani',

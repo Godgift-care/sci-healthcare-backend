@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   scanAddedLines, scanFile, scanPackageJson, scanNpmLock, scanCargoLock, decide, classifyNewDependency, levenshtein,
-  scriptsRunningNewFiles,
+  scriptsRunningNewFiles, escapeMarkdownCell, formatReport,
 } = require('./security-scan.cjs');
 
 const config = {
@@ -198,4 +198,37 @@ test('an npm script that runs a file the pull request adds blocks', () => {
   // Paths resolve relative to the package.json that declares the script.
   const nested = scanPackageJson('examples/x/package.json', base, JSON.stringify({ scripts: { build: 'node ./run.js' } }));
   assert.equal(scriptsRunningNewFiles(nested, [{ status: 'A', file: 'examples/x/run.js' }]).length, 1);
+});
+
+test('escapeMarkdownCell escapes backslashes first, then pipes and backticks', () => {
+  assert.equal(escapeMarkdownCell('plain'), 'plain');
+  assert.equal(escapeMarkdownCell('a\\b'), 'a\\\\b');
+  assert.equal(escapeMarkdownCell('a|b'), 'a\\|b');
+  assert.equal(escapeMarkdownCell('a`b'), 'a\\`b');
+  // Backslash before pipe: \ + | should escape backslash to \\ and pipe to \| -> \\\|
+  assert.equal(escapeMarkdownCell('path\\|with|pipe'), 'path\\\\\\|with\\|pipe');
+});
+
+test('formatReport properly escapes paths and messages containing backslashes and pipes (\\|)', () => {
+  const findings = [
+    {
+      severity: 'review',
+      rule: 'test-rule',
+      path: 'src/weird\\|file`name.ts',
+      line: 42,
+      message: 'Suspicious pattern | with pipe and \\ backslash',
+    },
+  ];
+  const decision = { state: 'failure', description: 'One finding needs review' };
+  const report = formatReport(findings, decision, 0);
+
+  // Verifies path containing \\| is escaped so table columns are not forged
+  assert.ok(report.includes('`src/weird\\\\\\|file\\`name.ts:42`'));
+  assert.ok(report.includes('Suspicious pattern \\| with pipe and \\\\ backslash'));
+  // Ensure the table structure has 4 columns per row
+  const tableRows = report.split('\n').filter((l) => l.startsWith('|') && !l.includes('---'));
+  for (const row of tableRows) {
+    const cols = row.split(/(?<!\\)\|/).map((c) => c.trim()).filter(Boolean);
+    assert.equal(cols.length, 4, `Row must have exactly 4 columns: ${row}`);
+  }
 });

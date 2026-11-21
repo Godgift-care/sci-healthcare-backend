@@ -450,10 +450,7 @@ export async function runCli(options) {
         return 0;
     }
     try {
-        const baseUrl = (flagValue(flags, 'baseUrl') ??
-            env.SCI_API_URL ??
-            env.API_URL ??
-            DEFAULT_BASE_URL).replace(/\/+$/, '');
+        const baseUrl = flagValue(flags, 'baseUrl') ?? env.SCI_API_URL ?? env.API_URL ?? DEFAULT_BASE_URL;
         const clientOptions = { baseUrl };
         if (options.fetchImpl)
             clientOptions.fetch = options.fetchImpl;

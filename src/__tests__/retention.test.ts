@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '../db.js';
-import { purgeExpiredOperationalData } from '../lib/retention.js';
+import { pruneContractEvents, purgeExpiredOperationalData } from '../lib/retention.js';
 import { recordFailure, retryFailed } from '../stellar/failed.js';
 
 describe('Operational data retention (#142)', () => {
@@ -207,5 +207,113 @@ describe('Operational data retention (#142)', () => {
     // Re-running retryFailed should not re-attempt already resolved events
     const secondRes = await retryFailed(async () => {});
     expect(secondRes.retried).toBe(0);
+  });
+});
+
+describe('ContractEvent pruning (#275)', () => {
+  const PROVIDER = 'GRETENTIONCLINIC0000000000000000000000000000000000000000';
+  const OLD = new Date('2020-01-01T00:00:00Z');
+  const RECENT = new Date('2020-05-25T00:00:00Z');
+  const NOW = new Date('2020-06-01T00:00:00Z');
+  const ids = (prefix: string) => ({ id: { startsWith: prefix } });
+
+  function event(id: string, voucherId: string | null, closedAt: Date) {
+    return {
+      id: `ret275-${id}`,
+      contractId: 'C',
+      contract: 'voucher',
+      name: 'voucher_funded',
+      ledger: 1,
+      txHash: 'tx',
+      closedAt,
+      voucherId,
+      data: '{}',
+    };
+  }
+
+  async function voucher(id: string, status: string) {
+    await prisma.voucher.create({
+      data: {
+        id,
+        funder: 'GF',
+        beneficiaryRef: 'r'.repeat(64),
+        providerAddress: PROVIDER,
+        serviceCode: 1,
+        amount: '100',
+        status,
+        createdAt: OLD,
+        expiresAt: NOW,
+      },
+    });
+  }
+
+  beforeEach(async () => {
+    await prisma.contractEvent.deleteMany({ where: ids('ret275-') });
+    await prisma.voucher.deleteMany({ where: { providerAddress: PROVIDER } });
+    await prisma.provider.upsert({
+      where: { address: PROVIDER },
+      create: {
+        address: PROVIDER,
+        name: 'Retention Clinic',
+        country: 'NG',
+        status: 'Active',
+        registeredAt: OLD,
+      },
+      update: {},
+    });
+    await voucher('ret275-open', 'Claimed');
+    await voucher('ret275-settled', 'Settled');
+    await voucher('ret275-refunded', 'Refunded');
+    await prisma.contractEvent.createMany({
+      data: [
+        event('open-old', 'ret275-open', OLD),
+        event('settled-old-1', 'ret275-settled', OLD),
+        event('settled-old-2', 'ret275-settled', OLD),
+        event('settled-recent', 'ret275-settled', RECENT),
+        event('refunded-old', 'ret275-refunded', OLD),
+        event('none-old', null, OLD),
+        event('orphan-old', 'ret275-no-such-voucher', OLD),
+      ],
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.contractEvent.deleteMany({ where: ids('ret275-') });
+    await prisma.voucher.deleteMany({ where: { providerAddress: PROVIDER } });
+    await prisma.provider.deleteMany({ where: { address: PROVIDER } });
+  });
+
+  const remaining = async () =>
+    (await prisma.contractEvent.findMany({ where: ids('ret275-'), select: { id: true } }))
+      .map((e) => e.id.replace('ret275-', ''))
+      .sort();
+
+  it('is off by default and deletes nothing', async () => {
+    for (const retentionDays of [undefined, 0, -5, Number.NaN]) {
+      const res = await pruneContractEvents({
+        now: NOW,
+        ...(retentionDays === undefined ? {} : { retentionDays }),
+      });
+      expect(res).toEqual({ enabled: false, deleted: 0, batches: 0, cutoff: null });
+    }
+    expect(await remaining()).toHaveLength(7);
+  });
+
+  it('prunes old events of final vouchers only, keeping open-voucher history', async () => {
+    const res = await pruneContractEvents({ retentionDays: 30, now: NOW });
+    expect(res.enabled).toBe(true);
+    expect(res.deleted).toBe(4);
+    expect(await remaining()).toEqual(['open-old', 'orphan-old', 'settled-recent']);
+  });
+
+  it('works in bounded batches and gives the same result', async () => {
+    const res = await pruneContractEvents({ retentionDays: 30, now: NOW, batchSize: 2 });
+    expect(res.deleted).toBe(4);
+    expect(res.batches).toBeGreaterThan(1);
+    expect(await remaining()).toEqual(['open-old', 'orphan-old', 'settled-recent']);
+    // A second run has nothing left to do.
+    expect((await pruneContractEvents({ retentionDays: 30, now: NOW, batchSize: 2 })).deleted).toBe(
+      0,
+    );
   });
 });

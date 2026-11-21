@@ -26,6 +26,14 @@ import type {
   VouchersResponse,
 } from './types.js';
 
+import {
+  subscribe,
+  type StreamFilters,
+  type StreamHandle,
+  type StreamHandlers,
+  type StreamOptions,
+} from './stream.js';
+
 export class ApiError extends Error {
   readonly status: number;
   readonly error: string;
@@ -87,13 +95,19 @@ export interface ClientOptions {
   headers?: Record<string, string>;
 }
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
+  return value.slice(0, end);
+}
+
 export class Client {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly defaultHeaders: Record<string, string>;
 
   constructor(options: ClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = trimTrailingSlashes(options.baseUrl);
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.defaultHeaders = options.headers ?? {};
   }
@@ -257,6 +271,27 @@ export class Client {
 
   async governance(): Promise<GovernanceResponse> {
     return this.request<GovernanceResponse>('/governance');
+  }
+
+  /**
+   * Subscribes to `GET /stream` for one voucher or one clinic.
+   *
+   * Works in a browser and in Node 22, because it runs on `fetch` rather than
+   * `EventSource`: the latter is absent on Node 22 and cannot carry the
+   * `Last-Event-ID` header this uses to resume. Exactly one of `voucher` or
+   * `provider` is required, matching the route, and the returned `close()`
+   * stops reconnecting for good.
+   *
+   * The server frames no SSE `id:` today, so a drop loses whatever happened
+   * while disconnected; re-read the JSON routes after `onReconnect` to be
+   * certain of current state.
+   */
+  stream(
+    filters: StreamFilters,
+    handlers: StreamHandlers = {},
+    options: StreamOptions = {},
+  ): StreamHandle {
+    return subscribe(this.baseUrl, this.defaultHeaders, this.fetchImpl, filters, handlers, options);
   }
 
   async rawGet<T>(path: string, params?: Record<string, unknown>): Promise<T> {

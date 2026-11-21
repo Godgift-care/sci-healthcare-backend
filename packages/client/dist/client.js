@@ -1,3 +1,4 @@
+import { subscribe, } from './stream.js';
 export class ApiError extends Error {
     status;
     error;
@@ -43,12 +44,18 @@ export function providerLocation(p) {
     }
     return { lat, lng };
 }
+function trimTrailingSlashes(value) {
+    let end = value.length;
+    while (end > 0 && value.charCodeAt(end - 1) === 47)
+        end--;
+    return value.slice(0, end);
+}
 export class Client {
     baseUrl;
     fetchImpl;
     defaultHeaders;
     constructor(options) {
-        this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+        this.baseUrl = trimTrailingSlashes(options.baseUrl);
         this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
         this.defaultHeaders = options.headers ?? {};
     }
@@ -175,6 +182,22 @@ export class Client {
     }
     async governance() {
         return this.request('/governance');
+    }
+    /**
+     * Subscribes to `GET /stream` for one voucher or one clinic.
+     *
+     * Works in a browser and in Node 22, because it runs on `fetch` rather than
+     * `EventSource`: the latter is absent on Node 22 and cannot carry the
+     * `Last-Event-ID` header this uses to resume. Exactly one of `voucher` or
+     * `provider` is required, matching the route, and the returned `close()`
+     * stops reconnecting for good.
+     *
+     * The server frames no SSE `id:` today, so a drop loses whatever happened
+     * while disconnected; re-read the JSON routes after `onReconnect` to be
+     * certain of current state.
+     */
+    stream(filters, handlers = {}, options = {}) {
+        return subscribe(this.baseUrl, this.defaultHeaders, this.fetchImpl, filters, handlers, options);
     }
     async rawGet(path, params) {
         return this.request(path, params);

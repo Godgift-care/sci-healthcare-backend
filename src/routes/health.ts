@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { env, WEBHOOKS_ENABLED } from '../env.js';
-import { lastIndexedLedger } from '../lib/cache.js';
+import { clearLedgerMemos, lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
 import { isPostgres } from '../lib/database.js';
 import { webhookBacklog } from '../lib/webhooks.js';
 import { APP_VERSION, deployedCommit, STARTED_AT } from '../lib/version.js';
@@ -81,11 +81,10 @@ type SettledTotals = {
  * On Postgres the sums are computed **in SQL** (#60): `SUM(x::numeric)` is
  * arbitrary-precision, so it is exact for every amount the chain can
  * produce, and the route stops fetching every settled voucher just to add
- * them up in JavaScript — the scaling problem the issue names. The cast
- * also works today, while the deploy columns are still `text` (decimal
- * strings), and is a no-op once
- * `prisma/postgres-pending/20260107000000_amount_numeric_to_decimal`
- * lands, so this query needs no change when the migration is promoted.
+ * them up in JavaScript — the scaling problem the issue names. The columns
+ * are `NUMERIC(39,0)` since migration
+ * `20261119000001_amount_numeric_to_decimal` (#273); the `::numeric` cast is
+ * a no-op there and keeps the query valid on a not-yet-migrated `text` column.
  *
  * On SQLite the BigInt pass stays: SQLite's arithmetic caps integers at
  * 2^63-1 and promotes larger sums to float64, so a SQL sum there would be
@@ -137,15 +136,92 @@ type StatsResponse = {
   faucetWallets: number;
 };
 
-type CachedStats = {
-  ledger: number;
-  data: StatsResponse;
-};
+/**
+ * The computed answers for the aggregate routes, each tagged with the ledger
+ * it was computed from (#320).
+ *
+ * `GET /stats` and `GET /stats/funnel` are the same numbers a dashboard asks
+ * for on every visit, and both are full scans of the voucher and receipt
+ * tables. The cursor is what makes caching them safe rather than clever:
+ * nothing in the read model can change without the indexer advancing it.
+ */
+const statsMemo = ledgerMemo<StatsResponse>();
+const funnelMemo = ledgerMemo<Awaited<ReturnType<typeof funnelStats>>>();
 
-let statsCache: CachedStats | null = null;
-
+/**
+ * Forgets every cached aggregate, so the next request recomputes.
+ *
+ * Exported for tests, which run against a fixture cursor that hardly moves:
+ * without this, a case would be answered from the previous case's data.
+ */
 export function resetStatsCache(): void {
-  statsCache = null;
+  clearLedgerMemos();
+}
+
+/**
+ * Voucher stages and median time between them for one ledger, optionally
+ * scoped to a country or a clinic.
+ *
+ * The whole response is a function of the cursor plus these two filters, which
+ * is what lets `funnelMemo` answer a repeated question without a read.
+ */
+async function funnelStats(country?: string, clinic?: string) {
+  const providerAddresses =
+    country !== undefined || clinic !== undefined
+      ? (
+          await prisma.provider.findMany({
+            where: { ...(country ? { country } : {}), ...(clinic ? { address: clinic } : {}) },
+            select: { address: true },
+          })
+        ).map((provider) => provider.address)
+      : undefined;
+  const providerFilter =
+    providerAddresses === undefined ? {} : { providerAddress: { in: providerAddresses } };
+
+  const [vouchers, receipts] = await Promise.all([
+    prisma.voucher.findMany({
+      where: providerFilter,
+      select: { id: true, createdAt: true, claimedAt: true, attestedAt: true },
+    }),
+    prisma.receipt.findMany({
+      where: providerAddresses === undefined ? {} : { providerAddress: { in: providerAddresses } },
+      select: { voucherId: true, settledAt: true },
+    }),
+  ]);
+
+  const byVoucherId = new Map(vouchers.map((voucher) => [voucher.id, voucher]));
+  const claimTimes = vouchers.flatMap((voucher) => {
+    if (!voucher.claimedAt) return [];
+    const hours = elapsedHours(voucher.createdAt, voucher.claimedAt);
+    return hours === null ? [] : [hours];
+  });
+  const attestationTimes = vouchers.flatMap((voucher) => {
+    if (!voucher.claimedAt || !voucher.attestedAt) return [];
+    const hours = elapsedHours(voucher.claimedAt, voucher.attestedAt);
+    return hours === null ? [] : [hours];
+  });
+  const settlementTimes = receipts.flatMap((receipt) => {
+    const voucher = byVoucherId.get(receipt.voucherId);
+    if (!voucher?.attestedAt) return [];
+    const hours = elapsedHours(voucher.attestedAt, receipt.settledAt);
+    return hours === null ? [] : [hours];
+  });
+
+  return {
+    country: country ?? null,
+    clinic: clinic ?? null,
+    counts: {
+      funded: vouchers.length,
+      claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
+      attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
+      settled: receipts.length,
+    },
+    medianHours: {
+      fundedToClaimed: medianHours(claimTimes),
+      claimedToAttested: medianHours(attestationTimes),
+      attestedToSettled: medianHours(settlementTimes),
+    },
+  };
 }
 
 export function healthRoutes(app: FastifyInstance): void {
@@ -336,9 +412,8 @@ export function healthRoutes(app: FastifyInstance): void {
     },
     async () => {
       const currentLedger = await lastIndexedLedger();
-      if (statsCache !== null && currentLedger !== null && statsCache.ledger === currentLedger) {
-        return statsCache.data;
-      }
+      const cached = statsMemo.peek('', currentLedger);
+      if (cached !== undefined) return cached;
 
       const [providers, activeProviders, vouchers, totals, receipts, faucetDrips, faucetWallets] =
         await Promise.all([
@@ -367,10 +442,7 @@ export function healthRoutes(app: FastifyInstance): void {
         faucetWallets: faucetWallets.length,
       };
 
-      if (currentLedger !== null) {
-        statsCache = { ledger: currentLedger, data: result };
-      }
-
+      statsMemo.remember('', currentLedger, result);
       return result;
     },
   );
@@ -388,63 +460,17 @@ export function healthRoutes(app: FastifyInstance): void {
     },
     async (req) => {
       const { country, clinic } = funnelQuery.parse(req.query);
-      const providerAddresses =
-        country !== undefined || clinic !== undefined
-          ? (
-              await prisma.provider.findMany({
-                where: { ...(country ? { country } : {}), ...(clinic ? { address: clinic } : {}) },
-                select: { address: true },
-              })
-            ).map((provider) => provider.address)
-          : undefined;
-      const providerFilter =
-        providerAddresses === undefined ? {} : { providerAddress: { in: providerAddresses } };
+      const currentLedger = await lastIndexedLedger();
+      // The filters are part of the key: `?country=NG` and `?clinic=G…` are two
+      // different questions, and answering either from the other's cache would
+      // be a wrong number on a dashboard rather than a slow one.
+      const key = `${country ?? ''}|${clinic ?? ''}`;
+      const cached = funnelMemo.peek(key, currentLedger);
+      if (cached !== undefined) return cached;
 
-      const [vouchers, receipts] = await Promise.all([
-        prisma.voucher.findMany({
-          where: providerFilter,
-          select: { id: true, createdAt: true, claimedAt: true, attestedAt: true },
-        }),
-        prisma.receipt.findMany({
-          where:
-            providerAddresses === undefined ? {} : { providerAddress: { in: providerAddresses } },
-          select: { voucherId: true, settledAt: true },
-        }),
-      ]);
-
-      const byVoucherId = new Map(vouchers.map((voucher) => [voucher.id, voucher]));
-      const claimTimes = vouchers.flatMap((voucher) => {
-        if (!voucher.claimedAt) return [];
-        const hours = elapsedHours(voucher.createdAt, voucher.claimedAt);
-        return hours === null ? [] : [hours];
-      });
-      const attestationTimes = vouchers.flatMap((voucher) => {
-        if (!voucher.claimedAt || !voucher.attestedAt) return [];
-        const hours = elapsedHours(voucher.claimedAt, voucher.attestedAt);
-        return hours === null ? [] : [hours];
-      });
-      const settlementTimes = receipts.flatMap((receipt) => {
-        const voucher = byVoucherId.get(receipt.voucherId);
-        if (!voucher?.attestedAt) return [];
-        const hours = elapsedHours(voucher.attestedAt, receipt.settledAt);
-        return hours === null ? [] : [hours];
-      });
-
-      return {
-        country: country ?? null,
-        clinic: clinic ?? null,
-        counts: {
-          funded: vouchers.length,
-          claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
-          attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
-          settled: receipts.length,
-        },
-        medianHours: {
-          fundedToClaimed: medianHours(claimTimes),
-          claimedToAttested: medianHours(attestationTimes),
-          attestedToSettled: medianHours(settlementTimes),
-        },
-      };
+      const result = await funnelStats(country, clinic);
+      funnelMemo.remember(key, currentLedger, result);
+      return result;
     },
   );
 

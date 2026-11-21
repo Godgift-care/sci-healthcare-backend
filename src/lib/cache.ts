@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { prisma } from '../db.js';
 
 /**
- * Short-lived HTTP caching for the read API.
+ * Short-lived HTTP caching for the read API, and the in-process memo that
+ * backs the aggregate routes.
  *
  * The read model only changes when the indexer commits a new ledger, which
  * happens at most about once every five seconds. A page reloaded in between
@@ -12,9 +13,15 @@ import { prisma } from '../db.js';
  *
  * The ETag is derived from the cursor (`IndexerState.lastLedger`) plus the
  * exact request URL, so changing any filter or path yields a different tag
- * and a different tag after a new ledger is indexed. Nothing is cached
- * server-side and no state is shared between instances: two API replicas
- * that have read the same cursor produce the same ETag.
+ * and a different tag after a new ledger is indexed. Nothing about the
+ * *validators* is cached server-side and no state is shared between
+ * instances: two API replicas that have read the same cursor produce the
+ * same ETag.
+ *
+ * The one thing this process does keep in memory is `ledgerMemo` below: the
+ * computed answer for an aggregate, tagged with the cursor it was computed
+ * from. That is per-instance and deliberately not shared, so a replica that
+ * restarts simply recomputes on its next request.
  */
 
 /** Reusable for five seconds, with a grace window while a revalidation runs. */
@@ -128,10 +135,12 @@ export function matchesEtag(header: string | string[] | undefined, etag: string)
 /**
  * The cursor the read model is current to.
  *
- * Read once per cacheable request rather than cached in memory: a stale
- * value would hand out a 304 for data that has since changed, and this is a
- * single primary-key lookup. Null means the state row could not be read, in
- * which case the response is still served but without a validator.
+ * Read per cacheable request rather than remembered in memory: a stale value
+ * would hand out a 304 for data that has since changed, and this is a single
+ * primary-key lookup. `ledgerMemo` below is only as trustworthy as this
+ * reading, since the cursor is what decides whether a memo is still current.
+ * Null means the state row could not be read, in which case the response is
+ * still served but without a validator, and nothing is memoized.
  */
 export async function lastIndexedLedger(): Promise<number | null> {
   try {
@@ -143,4 +152,78 @@ export async function lastIndexedLedger(): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+/** Everything this process memoizes, so one call can drop all of it. */
+const memos: { clear: () => void }[] = [];
+
+/**
+ * Drops every ledger memo in the process.
+ *
+ * A route has no reason to remember across a restart of the indexer, but a
+ * test does: the cursor in a fixture database hardly moves, and a memo that
+ * survives between cases would answer one test's aggregates with another's
+ * data.
+ */
+export function clearLedgerMemos(): void {
+  for (const memo of memos) memo.clear();
+}
+
+/** A `ledgerMemo` view of one computed value. */
+export type LedgerMemo<T> = {
+  /** The value computed for `key` at `ledger`, or undefined if there is none. */
+  peek: (key: string, ledger: number | null) => T | undefined;
+  /** Records `value` as the answer for `key` at `ledger`. */
+  remember: (key: string, ledger: number | null, value: T) => void;
+  /** Forgets everything remembered so far. */
+  clear: () => void;
+};
+
+/**
+ * A value recomputed only when the indexer cursor moves.
+ *
+ * This is what an aggregate route can actually afford: the answer is a
+ * function of the ledger it was read from, so within one ledger it cannot be
+ * wrong, and the ledger is one primary-key lookup away. The stats routes
+ * (#320) and any future one use it because a dashboard page asks the same
+ * question several times in a row, and each recompute is a full scan of the
+ * voucher and receipt tables.
+ *
+ * Values are grouped into a *generation* per ledger rather than keyed by it,
+ * so a memo holds the answers for one ledger only: the moment the cursor
+ * advances, the previous generation and every filter in it is dropped with
+ * it. That is what keeps a route whose key is user input — a country code, a
+ * clinic address — from growing this map forever, and it is also why a
+ * re-indexed ledger never serves a stale value.
+ *
+ * Nothing here is shared between instances or survives a restart, so a cache
+ * miss is always a correct recomputation and two replicas can disagree
+ * happily.
+ */
+export function ledgerMemo<T>(): LedgerMemo<T> {
+  let generation: { ledger: number; values: Map<string, T> } | null = null;
+
+  const memo: LedgerMemo<T> = {
+    peek(key, ledger) {
+      if (generation === null || ledger === null || generation.ledger !== ledger) {
+        return undefined;
+      }
+      return generation.values.get(key);
+    },
+    remember(key, ledger, value) {
+      // No cursor means no basis for claiming a value is current, so the next
+      // request recomputes rather than trusting an answer it cannot date.
+      if (ledger === null) return;
+      if (generation === null || generation.ledger !== ledger) {
+        generation = { ledger, values: new Map() };
+      }
+      generation.values.set(key, value);
+    },
+    clear() {
+      generation = null;
+    },
+  };
+
+  memos.push(memo);
+  return memo;
 }

@@ -44,16 +44,24 @@ nobody has restored is a rumour.
 
 **Restore from a dump** into a fresh database:
 
-1. Create an empty Postgres database (Render dashboard, or a scratch
+1. Enable maintenance mode by setting `MAINTENANCE_MODE=true` in the service's
+   environment. During restore and indexer catch-up, every data route answers
+   `503 maintenance_mode` with a `Retry-After: 30` header so clients and frontends
+   show the waking-up/maintenance state and wait rather than see a half-restored
+   read model. Liveness probe `/health` stays `200 ok` so Render and health
+   monitors keep the container alive.
+2. Create an empty Postgres database (Render dashboard, or a scratch
    instance — never overwrite the live one in place).
-2. `pg_restore --no-owner -d "$NEW_DATABASE_URL" /backups/sci-YYYY-MM-DD.dump`
-3. Point `DATABASE_URL` at it and restart the service. `npm run db:migrate`
+3. `pg_restore --no-owner -d "$NEW_DATABASE_URL" /backups/sci-YYYY-MM-DD.dump`
+4. Point `DATABASE_URL` at it and restart the service. `npm run db:migrate`
    runs on boot (`render.yaml` startCommand), so an older dump is
    migrated up to the current schema before the indexer resumes.
-4. The indexer resumes from the `IndexerState.lastLedger` cursor inside
+5. The indexer resumes from the `IndexerState.lastLedger` cursor inside
    the restored data. If that cursor is older than the RPC retention
    window, the service goes degraded on `/ready` — follow "Indexer falls
    outside the RPC retention window" below.
+6. Once the indexer has caught up and `/ready` reports healthy, clear
+   `MAINTENANCE_MODE` (or set it to `false`) to resume normal serving.
 
 ### Local development (SQLite)
 
@@ -201,6 +209,11 @@ rolling sample of terminal ones (least recently updated first, so repeated
 runs cover the history). Differences are written to `ReconcileMismatch`
 and surfaced on `/ready` as `checks.reconcileMismatches`; the row is
 deleted as soon as a run sees the voucher agree.
+
+The same vouchers are read a second time, through `get_voucher_options`,
+for the terms a funder chose when it funded them (#319). No event
+announces those, so a report-only run can only compare them: the columns
+stay null until a run with `--fix` writes them.
 
 ### Symptoms
 
@@ -474,6 +487,53 @@ Disabling webhooks (`WEBHOOK_URLS` empty) makes `/ready` report
 `checks.webhooks.state = "disabled"` and stop degrading, which is what you
 want only if you have decided those notifications are not being delivered at
 all. Pending rows from before are then never drained.
+
+## Rolling back the NUMERIC amount columns (#273)
+
+Migration `20261119000001_amount_numeric_to_decimal` converted every i128
+amount/price column on Postgres from `text` to `NUMERIC(39,0)`. The values are
+integers, so converting back is lossless; only ordering returns to
+lexicographic text order (and `Voucher.amountKey` keeps amount sorts correct).
+
+1. Stop the API and the indexer (the conversion locks and rewrites the tables).
+2. Run, in one transaction (`psql "$DATABASE_URL"`):
+
+   ```sql
+   BEGIN;
+   ALTER TABLE "Voucher" DROP CONSTRAINT "voucher_amount_non_negative";
+   ALTER TABLE "Voucher" DROP CONSTRAINT "voucher_settled_net_check";
+   ALTER TABLE "Voucher" DROP CONSTRAINT "voucher_settled_fee_check";
+   ALTER TABLE "Receipt" DROP CONSTRAINT "receipt_amount_non_negative";
+   ALTER TABLE "Service" DROP CONSTRAINT "service_price_non_negative";
+
+   ALTER TABLE "Voucher"            ALTER COLUMN "amount"     SET DATA TYPE text USING "amount"::text;
+   ALTER TABLE "Voucher"            ALTER COLUMN "settledNet" SET DATA TYPE text USING "settledNet"::text;
+   ALTER TABLE "Voucher"            ALTER COLUMN "settledFee" SET DATA TYPE text USING "settledFee"::text;
+   ALTER TABLE "Receipt"            ALTER COLUMN "amount"     SET DATA TYPE text USING "amount"::text;
+   ALTER TABLE "FaucetDrip"         ALTER COLUMN "amount"     SET DATA TYPE text USING "amount"::text;
+   ALTER TABLE "Service"            ALTER COLUMN "price"      SET DATA TYPE text USING "price"::text;
+   ALTER TABLE "ServicePriceChange" ALTER COLUMN "price"      SET DATA TYPE text USING "price"::text;
+
+   ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_amount_non_negative" CHECK ("amount" ~ '^[0-9]+$');
+   ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_settled_net_check" CHECK ("settledNet" IS NULL OR "settledNet" ~ '^[0-9]+$');
+   ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_settled_fee_check" CHECK ("settledFee" IS NULL OR "settledFee" ~ '^[0-9]+$');
+   ALTER TABLE "Receipt" ADD CONSTRAINT "receipt_amount_non_negative" CHECK ("amount" ~ '^[0-9]+$');
+   ALTER TABLE "Service" ADD CONSTRAINT "service_price_non_negative" CHECK ("price" ~ '^[0-9]+$');
+
+   DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261119000001_amount_numeric_to_decimal';
+   COMMIT;
+   ```
+
+3. Deploy the application version from before the change. The current code
+   also runs against `text` columns (the shared client only converts values
+   that Prisma returns as `Decimal`), so the order of steps 2 and 3 is not
+   critical, but do not run `./scripts/use-postgres.sh` from this version
+   against the rolled-back database: the schema it writes says `Decimal`.
+4. Start the API and the indexer, and check `/ready`.
+
+Before running the forward migration in production, its preflight reports any
+row that is not a plain decimal integer of at most 39 digits and changes
+nothing; fix those rows first.
 
 ## Uptime monitoring
 

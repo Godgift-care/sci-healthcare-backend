@@ -40,7 +40,22 @@ export const SEED_ADDRESS_PREFIX = 'GSEED';
 /** Fixed key for seeded beneficiary HMACs — local fake data, nothing secret. */
 const SEED_BENEFICIARY_KEY = 'seed-local-beneficiary-key-0000000000000000';
 
+/** Named dataset sizes for `--size`: `[vouchers, providers]`. */
+export const SEED_SIZES = {
+  small: { vouchers: 120, providers: 4 },
+  medium: { vouchers: 2500, providers: 12 },
+  large: { vouchers: 25_000, providers: 40 },
+} as const;
+export type SeedSize = keyof typeof SEED_SIZES;
+
 export type SeedOptions = {
+  /**
+   * PRNG seed (default 0). The same seed always produces identical rows;
+   * a different seed produces a different but equally repeatable dataset.
+   */
+  seed?: number;
+  /** Named size; `vouchers`/`providers` override it when given. */
+  size?: SeedSize;
   /** Vouchers to generate (default 2500). */
   vouchers?: number;
   /** Clinics to generate (default 12). */
@@ -99,24 +114,61 @@ function rng(seed: number): () => number {
 }
 
 /** Independent random stream per entity, keyed by a label and index. */
-function stream(label: string, index: number): () => number {
-  const digest = createHash('sha256').update(`sci-healthcare-seed:${label}:${index}`).digest();
+function stream(seed: number, label: string, index: number): () => number {
+  // Seed 0 hashes the same text as before `--seed` existed, so the default
+  // dataset is unchanged.
+  const salt = seed === 0 ? '' : `:${seed}`;
+  const digest = createHash('sha256')
+    .update(`sci-healthcare-seed:${label}:${index}${salt}`)
+    .digest();
   return rng(digest.readUInt32BE(0));
+}
+
+/**
+ * Parses `--seed <n>` / `--seed=<n>` and `--size small|medium|large` from an
+ * argv tail. Throws on anything malformed so a typo never silently seeds the
+ * default dataset.
+ */
+export function parseSeedArgs(argv: readonly string[]): { seed?: number; size?: SeedSize } {
+  const out: { seed?: number; size?: SeedSize } = {};
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    const eq = arg.indexOf('=');
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    if (flag !== '--seed' && flag !== '--size') continue;
+    const value = eq === -1 ? argv[++i] : arg.slice(eq + 1);
+    if (value === undefined || value === '') throw new Error(`${flag} needs a value`);
+    if (flag === '--seed') {
+      if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+        throw new Error(`--seed must be a non-negative integer, got "${value}"`);
+      }
+      out.seed = Number(value);
+    } else {
+      if (!Object.hasOwn(SEED_SIZES, value)) {
+        throw new Error(`--size must be one of small, medium, large, got "${value}"`);
+      }
+      out.size = value as SeedSize;
+    }
+  }
+  return out;
 }
 
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; // Stellar key alphabet (no I, O, L, 0-1, 8-9).
 
 /** A realistic-shaped but fake G... account address, 56 characters. */
-function seedAddress(kind: string, index: number): string {
-  const r = stream(`address:${kind}`, index);
+function seedAddress(seed: number, kind: string, index: number): string {
+  const r = stream(seed, `address:${kind}`, index);
   let out = SEED_ADDRESS_PREFIX;
   while (out.length < 56) out += BASE32[Math.floor(r() * 32)]!;
   return out.slice(0, 56);
 }
 
 /** The same HMAC shape the browser produces for a real beneficiary. */
-function seedBeneficiaryRef(index: number): string {
-  return createHmac('sha256', SEED_BENEFICIARY_KEY).update(`seed-patient-${index}`).digest('hex');
+function seedBeneficiaryRef(seed: number, index: number): string {
+  const salt = seed === 0 ? '' : `:${seed}`;
+  return createHmac('sha256', SEED_BENEFICIARY_KEY)
+    .update(`seed-patient-${index}${salt}`)
+    .digest('hex');
 }
 
 const CLINIC_NAMES = [
@@ -190,8 +242,13 @@ type SeedVoucher = {
 };
 
 /** Builds every seeded row up front, then writes them in dependency order. */
-function buildVoucher(index: number, providerAddress: string, funder: string): SeedVoucher {
-  const r = stream(`voucher`, index);
+function buildVoucher(
+  seed: number,
+  index: number,
+  providerAddress: string,
+  funder: string,
+): SeedVoucher {
+  const r = stream(seed, `voucher`, index);
   const id = String(SEED_VOUCHER_ID_BASE + BigInt(index));
   const catalog = SERVICE_CATALOGUE[Math.floor(r() * SERVICE_CATALOGUE.length)]!;
   const quantity = 1 + Math.floor(r() * 3);
@@ -236,7 +293,7 @@ function buildVoucher(index: number, providerAddress: string, funder: string): S
     // and indexed rows sort alike.
     seq: voucherSeq(id),
     funder,
-    beneficiaryRef: seedBeneficiaryRef(index % 40),
+    beneficiaryRef: seedBeneficiaryRef(seed, index % 40),
     serviceCode: catalog.code,
     amount,
     // This script writes with its own client, which does not fill the
@@ -275,8 +332,13 @@ export async function seedLocalData(
   client: PrismaClient,
   options: SeedOptions = {},
 ): Promise<SeedSummary> {
-  const voucherCount = options.vouchers ?? 2500;
-  const providerCount = options.providers ?? 12;
+  const seed = options.seed ?? 0;
+  if (!Number.isSafeInteger(seed) || seed < 0) {
+    throw new Error('Seed must be a non-negative integer');
+  }
+  const size = SEED_SIZES[options.size ?? 'medium'];
+  const voucherCount = options.vouchers ?? size.vouchers;
+  const providerCount = options.providers ?? size.providers;
   if (!Number.isInteger(voucherCount) || voucherCount < STATUSES.length) {
     throw new Error(`Seed voucher count must be an integer >= ${STATUSES.length} (one per status)`);
   }
@@ -285,7 +347,7 @@ export async function seedLocalData(
   }
 
   const providers = Array.from({ length: providerCount }, (_, i) => ({
-    address: seedAddress('provider', i),
+    address: seedAddress(seed, 'provider', i),
     name: CLINIC_NAMES[i % CLINIC_NAMES.length]!,
     country: COUNTRIES[i % COUNTRIES.length]!,
     // One Pending and one Suspended clinic among mostly-active ones, so the
@@ -295,12 +357,12 @@ export async function seedLocalData(
   }));
 
   const funders = Array.from({ length: Math.max(4, Math.round(providerCount * 2)) }, (_, i) =>
-    seedAddress('funder', i),
+    seedAddress(seed, 'funder', i),
   );
 
   const services: Prisma.ServiceCreateManyInput[] = [];
   providers.forEach((p, i) => {
-    const r = stream('services', i);
+    const r = stream(seed, 'services', i);
     const count = 3 + Math.floor(r() * 3); // 3-5 services per clinic
     const chosen = new Set<number>();
     while (chosen.size < count) {
@@ -321,9 +383,10 @@ export async function seedLocalData(
   });
 
   const vouchers: SeedVoucher[] = Array.from({ length: voucherCount }, (_, i) => {
-    const provider = providers[Math.floor(stream('voucher-provider', i)() * providers.length)]!;
-    const funder = funders[Math.floor(stream('voucher-funder', i)() * funders.length)]!;
-    return buildVoucher(i, provider.address, funder);
+    const provider =
+      providers[Math.floor(stream(seed, 'voucher-provider', i)() * providers.length)]!;
+    const funder = funders[Math.floor(stream(seed, 'voucher-funder', i)() * funders.length)]!;
+    return buildVoucher(seed, i, provider.address, funder);
   });
 
   // Every settled voucher minted a receipt on chain, so the seed mints one

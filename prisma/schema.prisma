@@ -79,7 +79,7 @@ model Service {
   code     Int
   label    String
   /// Postgres enforces non-negative price via CHECK constraint (SQLite skips it).
-  price    String  // i128 as decimal string; JS numbers cannot hold these
+  price    String  // i128 as decimal string; JS numbers cannot hold these // pg:decimal
   active   Boolean @default(true)
 
   provider        Provider @relation(fields: [providerAddress], references: [address])
@@ -108,7 +108,7 @@ model Voucher {
   beneficiaryRef  String    // opaque 32-byte hex. Not reversible to an identity.
   serviceCode     Int
   /// Postgres enforces non-negative amounts via CHECK constraint (SQLite skips it).
-  amount          String    // i128 as decimal string
+  amount          String    // i128 as decimal string // pg:decimal
   /// `amount` zero-padded to 39 digits (`amountKey()` in src/lib/amounts.ts),
   /// so string order is numeric order and `GET /vouchers?sort=amount` and the
   /// minAmount/maxAmount band run in the database instead of in memory
@@ -127,6 +127,24 @@ model Voucher {
   /// Nullable so `prisma db push` adds it in place on the existing database.
   attestedBy      String?
   disputeDeadline DateTime?
+  /// The dispute window the funder chose for this voucher, in seconds, when
+  /// it was funded with `create_voucher_with_options` instead of taking the
+  /// protocol-wide `Config.dispute_window` (#319). `disputeDeadline` stays
+  /// the authoritative moment; this is the length behind it, which is what a
+  /// funder-facing screen needs instead of the default it cannot see.
+  ///
+  /// No contract event carries the options — `VoucherCreated` has only the
+  /// funding fields — so these arrive with reconciliation, which reads
+  /// `get_voucher_options` for every voucher that has not settled or
+  /// refunded. Null means either that no option was set, which is most
+  /// vouchers, or that nothing has looked yet.
+  disputeWindowSecs Int?
+  /// SHA-256 of a secret the funder gave the patient. When set, the clinic
+  /// can only claim with `claim_with_proof`, revealing it, so a claim shows
+  /// the patient was in front of the clinic rather than only saying so.
+  /// Null for a voucher claimable without a proof. Hex, like every other
+  /// byte field in this projection.
+  presenceCommitment String?
   /// reason_code from voucher_disputed; meanings are documented in
   /// docs/protocol/lifecycle.md. The contract treats it as opaque.
   disputeReason   Int?
@@ -135,8 +153,8 @@ model Voucher {
   disputeResolvedAt DateTime?
   disputeResolvedBy String?
   disputeOutcome    String?
-  settledNet      String?
-  settledFee      String?
+  settledNet      String? // pg:decimal
+  settledFee      String? // pg:decimal
   /// When the voucher was refunded, from the voucher_refunded event's
   /// ledger close time. Null until a refund is observed. This is what makes
   /// the daily activity series able to bucket refunds by day.
@@ -172,6 +190,11 @@ model Voucher {
   // GET /vouchers?status=... (single or comma-separated) and the
   // `status: 'Settled'` scan behind GET /stats, each sorted by createdAt.
   @@index([status, createdAt])
+  // The clinic desk's list: one clinic, one status, in voucher-id (`seq`)
+  // order, forwards or backwards (#274). Equality on the first two columns
+  // and the order column last lets a keyset page read one index range and
+  // stop at LIMIT instead of sorting the clinic's whole history.
+  @@index([providerAddress, status, seq])
   // GET /vouchers?...&sort=amount and the minAmount/maxAmount band (#96).
   @@index([amountKey])
   @@index([expiresAt])
@@ -202,7 +225,7 @@ model Receipt {
   providerAddress String
   serviceCode     Int
   /// Postgres enforces non-negative amounts via CHECK constraint (SQLite skips it).
-  amount          String
+  amount          String // pg:decimal
   settledAt       DateTime
 
   /// Which deployment this receipt was settled under.
@@ -258,7 +281,7 @@ model ServicePriceChange {
   id              String   @id // on-chain event id
   providerAddress String
   code            Int
-  price           String // i128 as decimal string
+  price           String // i128 as decimal string // pg:decimal
   ledger          Int
   changedAt       DateTime
 
@@ -348,7 +371,7 @@ model IndexerState {
 model FaucetDrip {
   id        String   @id // on-chain event id
   wallet    String
-  amount    String // i128 as decimal string
+  amount    String // i128 as decimal string // pg:decimal
   ledger    Int
   drippedAt DateTime
 
