@@ -3954,7 +3954,46 @@
         "description": "One row per sponsor the indexer has seen, most recently seen first, with its terms, the budget the contract last reported for it, and totals over the matches it has made. Accepts `?fields=`; empty while `SPONSOR_CONTRACT_ID` is unset, which is a valid state rather than a failure — a directory of nobody is a truer answer than a 503.",
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "Sponsors of the matching-funding desk, with their terms, budget and match totals.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "total": 1,
+                  "limit": 50,
+                  "offset": 0,
+                  "sponsors": [
+                    {
+                      "address": "GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P",
+                      "available": "75000000",
+                      "availableDisplay": "7.5000000",
+                      "availableAsOf": "2026-10-01T03:00:00.000Z",
+                      "matchBps": 20000,
+                      "capPerVoucher": "6000000",
+                      "capPerVoucherDisplay": "0.6000000",
+                      "minVoucherAmount": "10000000",
+                      "minVoucherAmountDisplay": "1.0000000",
+                      "minVoucherAgeSecs": "3600",
+                      "rulesAt": "2026-10-01T02:00:00.000Z",
+                      "firstSeenAt": "2026-10-01T01:00:00.000Z",
+                      "deposited": "100000000",
+                      "depositedDisplay": "10.0000000",
+                      "withdrawn": "25000000",
+                      "withdrawnDisplay": "2.5000000",
+                      "matchCount": 3,
+                      "openMatchCount": 1,
+                      "settledMatchCount": 1,
+                      "refundedMatchCount": 1,
+                      "matchedAmount": "9500000",
+                      "matchedAmountDisplay": "0.9500000",
+                      "settledMatchedAmount": "6000000",
+                      "settledMatchedAmountDisplay": "0.6000000",
+                      "refundedMatchedAmount": "2000000",
+                      "refundedMatchedAmountDisplay": "0.2000000"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -3975,7 +4014,39 @@
         ],
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "One sponsor of the matching-funding desk: terms, budget and match totals.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "address": "GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P",
+                  "available": "75000000",
+                  "availableDisplay": "7.5000000",
+                  "availableAsOf": "2026-10-01T03:00:00.000Z",
+                  "matchBps": 20000,
+                  "capPerVoucher": "6000000",
+                  "capPerVoucherDisplay": "0.6000000",
+                  "minVoucherAmount": "10000000",
+                  "minVoucherAmountDisplay": "1.0000000",
+                  "minVoucherAgeSecs": "3600",
+                  "rulesAt": "2026-10-01T02:00:00.000Z",
+                  "firstSeenAt": "2026-10-01T01:00:00.000Z",
+                  "deposited": "100000000",
+                  "depositedDisplay": "10.0000000",
+                  "withdrawn": "25000000",
+                  "withdrawnDisplay": "2.5000000",
+                  "matchCount": 3,
+                  "openMatchCount": 1,
+                  "settledMatchCount": 1,
+                  "refundedMatchCount": 1,
+                  "matchedAmount": "9500000",
+                  "matchedAmountDisplay": "0.9500000",
+                  "settledMatchedAmount": "6000000",
+                  "settledMatchedAmountDisplay": "0.6000000",
+                  "refundedMatchedAmount": "2000000",
+                  "refundedMatchedAmountDisplay": "0.2000000"
+                }
+              }
+            }
           }
         }
       }
@@ -8005,7 +8076,46 @@
         "description": "One row per sponsor the indexer has seen, most recently seen first, with its terms, the budget the contract last reported for it, and totals over the matches it has made. Accepts `?fields=`; empty while `SPONSOR_CONTRACT_ID` is unset, which is a valid state rather than a failure — a directory of nobody is a truer answer than a 503.",
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "Sponsors of the matching-funding desk, with their terms, budget and match totals.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "total": 1,
+                  "limit": 50,
+                  "offset": 0,
+                  "sponsors": [
+                    {
+                      "address": "GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P",
+                      "available": "75000000",
+                      "availableDisplay": "7.5000000",
+                      "availableAsOf": "2026-10-01T03:00:00.000Z",
+                      "matchBps": 20000,
+                      "capPerVoucher": "6000000",
+                      "capPerVoucherDisplay": "0.6000000",
+                      "minVoucherAmount": "10000000",
+                      "minVoucherAmountDisplay": "1.0000000",
+                      "minVoucherAgeSecs": "3600",
+                      "rulesAt": "2026-10-01T02:00:00.000Z",
+                      "firstSeenAt": "2026-10-01T01:00:00.000Z",
+                      "deposited": "100000000",
+                      "depositedDisplay": "10.0000000",
+                      "withdrawn": "25000000",
+                      "withdrawnDisplay": "2.5000000",
+                      "matchCount": 3,
+                      "openMatchCount": 1,
+                      "settledMatchCount": 1,
+                      "refundedMatchCount": 1,
+                      "matchedAmount": "9500000",
+                      "matchedAmountDisplay": "0.9500000",
+                      "settledMatchedAmount": "6000000",
+                      "settledMatchedAmountDisplay": "0.6000000",
+                      "refundedMatchedAmount": "2000000",
+                      "refundedMatchedAmountDisplay": "0.2000000"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -8026,7 +8136,39 @@
         ],
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "One sponsor of the matching-funding desk: terms, budget and match totals.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "address": "GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P",
+                  "available": "75000000",
+                  "availableDisplay": "7.5000000",
+                  "availableAsOf": "2026-10-01T03:00:00.000Z",
+                  "matchBps": 20000,
+                  "capPerVoucher": "6000000",
+                  "capPerVoucherDisplay": "0.6000000",
+                  "minVoucherAmount": "10000000",
+                  "minVoucherAmountDisplay": "1.0000000",
+                  "minVoucherAgeSecs": "3600",
+                  "rulesAt": "2026-10-01T02:00:00.000Z",
+                  "firstSeenAt": "2026-10-01T01:00:00.000Z",
+                  "deposited": "100000000",
+                  "depositedDisplay": "10.0000000",
+                  "withdrawn": "25000000",
+                  "withdrawnDisplay": "2.5000000",
+                  "matchCount": 3,
+                  "openMatchCount": 1,
+                  "settledMatchCount": 1,
+                  "refundedMatchCount": 1,
+                  "matchedAmount": "9500000",
+                  "matchedAmountDisplay": "0.9500000",
+                  "settledMatchedAmount": "6000000",
+                  "settledMatchedAmountDisplay": "0.6000000",
+                  "refundedMatchedAmount": "2000000",
+                  "refundedMatchedAmountDisplay": "0.2000000"
+                }
+              }
+            }
           }
         }
       }
