@@ -10,6 +10,7 @@ import { applyFields, columnSelect, includesField, parseFields } from '../lib/fi
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { providerMetadataOf } from '../lib/provider-metadata.js';
 import { serialiseProviderDetail, openVoucherCounts } from '../lib/providers.js';
+import { formatServicePrice, type ScheduledPriceRow } from '../lib/services.js';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
@@ -85,7 +86,13 @@ function providerSelect(fieldSet: readonly string[] | null) {
       ? {
           services: {
             where: { active: true },
-            select: { code: true, label: true, price: true },
+            select: {
+              code: true,
+              label: true,
+              price: true,
+              upcomingPrice: true,
+              upcomingFrom: true,
+            },
           },
         }
       : {}),
@@ -113,11 +120,11 @@ type DirectoryRow = {
   /** Absent on a page whose fieldset left `capacity` out (#321). */
   capacity?: number | null;
   /** Absent on a page whose fieldset left `services` out (#321). */
-  services?: { code: number; label: string; price: string }[];
+  services?: (ScheduledPriceRow & { code: number; label: string })[];
 };
 
 /** One clinic as the directory lists it. */
-function formatProvider(p: DirectoryRow, openVouchers: number) {
+function formatProvider(p: DirectoryRow, openVouchers: number, now: Date) {
   return {
     address: p.address,
     name: p.name,
@@ -135,8 +142,7 @@ function formatProvider(p: DirectoryRow, openVouchers: number) {
     services: (p.services ?? []).map((s) => ({
       code: s.code,
       label: s.label,
-      price: s.price,
-      priceDisplay: fromBaseUnits(s.price),
+      ...formatServicePrice(s, now),
     })),
   };
 }
@@ -175,6 +181,64 @@ const providerStatsResponses = {
   404: z.object({ error: z.literal('provider_not_found') }),
 };
 
+/**
+ * One entry of `GET /providers/:address/services` (#314).
+ *
+ * `price` is what the service costs now — the scheduled price once its time
+ * has come, which is why `upcomingPrice` is null from that moment on (#315).
+ */
+const clinicServiceEntry = z.object({
+  code: z.number().int().nonnegative(),
+  label: z.string(),
+  price: z.string().describe('Price in effect, as a base-unit decimal string.'),
+  priceDisplay: z.string(),
+  active: z.boolean().describe('False once the clinic delisted the service.'),
+  upcomingPrice: z
+    .string()
+    .nullable()
+    .describe('Price scheduled to take effect, or null when nothing is pending.'),
+  upcomingFrom: z
+    .string()
+    .nullable()
+    .describe('ISO instant `upcomingPrice` takes effect; null with no pending schedule.'),
+});
+
+const clinicServicesResponse = z.object({
+  providerAddress: z.string(),
+  name: z.string(),
+  total: z.number().int().nonnegative().describe('Entries matching the filters.'),
+  services: z.array(clinicServiceEntry),
+});
+
+/**
+ * The query filters `GET /providers/:address/services` accepts (#314), in one
+ * place so the parser and the OpenAPI fragment cannot drift apart.
+ *
+ * `active` is absent by default — the route can then replace the array
+ * embedded in `GET /providers/:address` without changing what a client sees.
+ * Prices are i128 decimal strings, so the price sort runs in memory on BigInt
+ * rather than in the database, where `"900000000"` sorts above `"30000000000"`.
+ */
+const CLINIC_SERVICE_FILTERS = {
+  active: ['true', 'false'],
+  sort: ['price', 'code'],
+  order: ['asc', 'desc'],
+} as const;
+
+const clinicServicesQuery = z.object({
+  active: z.enum(CLINIC_SERVICE_FILTERS.active).optional(),
+  sort: z.enum(CLINIC_SERVICE_FILTERS.sort).default('price'),
+  order: z.enum(CLINIC_SERVICE_FILTERS.order).default('asc'),
+});
+
+/** Numeric order of two base-unit amounts too large for a JS number. */
+function comparePrices(a: string, b: string): number {
+  const av = BigInt(a);
+  const bv = BigInt(b);
+  if (av === bv) return 0;
+  return av < bv ? -1 : 1;
+}
+
 /** Numeric median; keep fractional seconds when averaging an even sample. */
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -208,7 +272,10 @@ export function providerRoutes(app: FastifyInstance): void {
       const openBy = includesField(fieldSet, 'openVouchers')
         ? await openVoucherCounts(page.map((p) => p.address))
         : new Map<string, number>();
-      return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0));
+      // One instant for the page, so two rows cannot disagree about whether a
+      // schedule has taken effect (#315).
+      const now = new Date();
+      return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0, now));
     };
 
     if (cursor) {
@@ -278,6 +345,103 @@ export function providerRoutes(app: FastifyInstance): void {
     const openBy = await openVoucherCounts([address]);
     return serialiseProviderDetail(p, openBy.get(address) ?? 0);
   });
+
+  /**
+   * A clinic's price list on its own (#314).
+   *
+   * The same entries `GET /providers/:address` embeds, but fetchable by
+   * themselves: a price list changes far more often than the clinic profile
+   * around it, and a client that only needs the catalogue should not pay for
+   * the rest of the record — or lose the ETag on the big one.
+   *
+   * Sorted by price ascending by default, because the reason to open a price
+   * list is to compare the prices in it. Amounts are i128 decimal strings, so
+   * the comparison is BigInt; a database or string sort would put `900000000`
+   * before `30000000000`.
+   */
+  app.get(
+    '/providers/:address/services',
+    {
+      schema: {
+        tags: ['providers'],
+        summary: "A clinic's services and price list",
+        // The filters are spelled out here rather than declared in
+        // `schema.query`, like every other list route in this API: they are
+        // parsed with `safeParse` below so a bad value answers `invalid_query`
+        // in the house envelope instead of Fastify's generic `bad_request`,
+        // and declaring them would make the framework validate them first.
+        description:
+          'Filters: `active=true` or `active=false` to take only the listed or ' +
+          'only the delisted half of the catalogue (both by default), ' +
+          '`sort=price` (default) or `sort=code`, and `order=asc` (default) or ' +
+          '`desc`. Equal prices always order by code ascending.',
+        response: {
+          200: clinicServicesResponse,
+          404: z.object({ error: z.literal('provider_not_found') }),
+        },
+      },
+    },
+    async (req, reply) => {
+      const { address } = req.params as { address: string };
+      const parsed = clinicServicesQuery.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
+      }
+      const { active, sort, order } = parsed.data;
+
+      const provider = await prisma.provider.findUnique({
+        where: { address },
+        select: { address: true, name: true },
+      });
+      if (!provider) return reply.code(404).send({ error: 'provider_not_found' });
+
+      const rows = await prisma.service.findMany({
+        where: {
+          providerAddress: address,
+          ...(active === undefined ? {} : { active: active === 'true' }),
+        },
+        select: {
+          code: true,
+          label: true,
+          price: true,
+          active: true,
+          upcomingPrice: true,
+          upcomingFrom: true,
+        },
+      });
+
+      // One moment for the whole page, so two entries cannot disagree about
+      // whether a schedule has taken effect.
+      const now = new Date();
+      const services = rows
+        .map((row) => {
+          const priced = formatServicePrice(row, now);
+          return {
+            code: row.code,
+            label: row.label,
+            active: row.active,
+            ...priced,
+            // Declared as a string because the response schema is checked on the
+            // way out; `JSON.stringify` sends a Date as the same ISO instant, so
+            // this route and the one that embeds the catalogue are identical.
+            upcomingFrom: priced.upcomingFrom?.toISOString() ?? null,
+          };
+        })
+        .sort((a, b) => {
+          const cmp = sort === 'code' ? a.code - b.code : comparePrices(a.price, b.price);
+          // Tie-break on the code so equal prices keep a stable, repeatable order.
+          const primary = cmp !== 0 ? cmp : a.code - b.code;
+          return order === 'desc' ? -primary : primary;
+        });
+
+      return {
+        providerAddress: provider.address,
+        name: provider.name,
+        total: services.length,
+        services,
+      };
+    },
+  );
 
   /**
    * A clinic's own throughput: how many vouchers it received, in what state,

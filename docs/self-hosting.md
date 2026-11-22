@@ -11,7 +11,7 @@ takes its password from an env file, and applies the reviewed migrations in
 [`prisma/migrations`](../prisma/migrations) instead of pushing a schema over
 whatever is already there.
 
-It is also optional. [Render](../README.md#deploying) remains the reference
+It is also optional. [Render](../README.md) remains the reference
 deployment, and `render.yaml` sets it up in one click. A VPS is worth it when
 the indexer has to run continuously and the free tier's spin-down stops being
 acceptable: `/ready` goes 503 while the API sleeps, and a sleeping indexer is
@@ -113,8 +113,7 @@ at boot and exits if they do not, which is the reason both are in the file
 rather than one derived from the other.
 
 Anything else the app accepts can go in the same file — the full list with
-defaults is the [`## Environment` table in the
-README](../README.md#environment). The database credentials are the one group
+defaults is the [Environment reference](environment.md). The database credentials are the one group
 that is used twice: the `x-database-url` anchor at the top of the compose file
 assembles `DATABASE_URL` from `POSTGRES_USER`, `POSTGRES_PASSWORD` and
 `POSTGRES_DB`, so the API, the migration job and the Postgres container cannot

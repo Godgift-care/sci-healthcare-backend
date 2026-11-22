@@ -29,6 +29,8 @@ const BLOCKED_REASONS: Record<string, string> = {
     'the deployed register_provider self-registers a provider as Pending and upsert_service requires Active (live registry error #6); activation is admin-only',
   service_removed:
     'same Active gate as service_upserted — no self-service path to Active on the deployed bytecode',
+  service_price_scheduled:
+    'schedule_service_price requires the provider signature over an Active provider (#315), so it is gated exactly like service_upserted; the deployment is also past its ~7-day RPC retention window, so no such event is still readable even where one was published',
   attester_added: 'registry.add_attester is admin-only',
   attester_removed: 'registry.remove_attester is admin-only',
   admin_proposed: 'registry.propose_admin is admin-only',
