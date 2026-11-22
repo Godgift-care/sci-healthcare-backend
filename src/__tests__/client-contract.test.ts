@@ -266,9 +266,14 @@ const CONTRACTS = {
     present: ['name', 'address', 'location', 'hours', 'phone', 'languages'],
     absent: [],
   },
-  ServiceListItem: { present: ['code', 'label', 'price', 'priceDisplay'], absent: ['active'] },
+  ServiceListItem: {
+    // #315: every service-bearing route reports the pending schedule beside
+    // the current price, so both list shapes carry the pair.
+    present: ['code', 'label', 'price', 'priceDisplay', 'upcomingPrice', 'upcomingFrom'],
+    absent: ['active'],
+  },
   ServiceDetailItem: {
-    present: ['code', 'label', 'price', 'priceDisplay', 'active'],
+    present: ['code', 'label', 'price', 'priceDisplay', 'active', 'upcomingPrice', 'upcomingFrom'],
     absent: [],
   },
   ProviderHistory: { present: ['address', 'history'], absent: [] },
@@ -297,7 +302,15 @@ const CONTRACTS = {
   },
   ServiceClinics: { present: ['code', 'clinicCount', 'clinics'], absent: [] },
   ServiceClinic: {
-    present: ['address', 'name', 'country', 'price', 'priceDisplay'],
+    present: [
+      'address',
+      'name',
+      'country',
+      'price',
+      'priceDisplay',
+      'upcomingPrice',
+      'upcomingFrom',
+    ],
     absent: [],
   },
   VouchersResponse: {
@@ -471,6 +484,7 @@ const CONTRACTED_METHODS = [
   'provider',
   'providerHistory',
   'providerServiceHistory',
+  'providerServices',
   'providers',
   'providersIterate',
   'rawGet',

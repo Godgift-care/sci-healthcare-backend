@@ -35,6 +35,7 @@ import {
   onProviderRegistered,
   onProviderStatus,
   onReceiptMinted,
+  onServicePriceScheduled,
   onServiceRemoved,
   onServiceUpserted,
   onVoucherAttested,
@@ -735,6 +736,9 @@ export class Indexer {
         return null;
       case 'service_upserted':
         await onServiceUpserted(db, e);
+        return null;
+      case 'service_price_scheduled':
+        await onServicePriceScheduled(db, e);
         return null;
       case 'service_removed':
         await onServiceRemoved(db, d);

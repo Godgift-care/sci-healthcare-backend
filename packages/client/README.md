@@ -42,6 +42,13 @@ const { providers } = await client.providers({
   limit: 20,
 });
 
+// A clinic's price list on its own, without refetching the profile
+const { services } = await client.providerServices(providers[0].address, {
+  active: 'true',
+  sort: 'price',
+  order: 'asc',
+});
+
 // Retrieve voucher details
 const voucher = await client.voucher('0001');
 

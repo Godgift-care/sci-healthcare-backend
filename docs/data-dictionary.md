@@ -36,6 +36,7 @@ schema does not have. Documentation cannot drift from the schema unnoticed.
 | `provider_status_changed` | `Provider.status`, `ProviderStatusChange` |
 | `provider_metadata_changed` | `Provider.metadataUri` (the cached `metadata` is dropped with it) |
 | `service_upserted` | `Service`, `ServicePriceChange` (price changes only) |
+| `service_price_scheduled` | `Service.upcomingPrice`, `Service.upcomingFrom` |
 | `service_removed` | `Service.active = false` |
 | `admin_proposed` | `GovernanceEvent` (`kind = Proposed`) |
 | `admin_changed` | `GovernanceEvent` (`kind = Changed`) |
@@ -111,6 +112,8 @@ writing history; only a price change reaches `ServicePriceChange`.
 | `label` | `String` | No | `service_upserted.label` | Human-readable name, can change without a price change |
 | `price` | `String` | No | `service_upserted.price` | `i128` as a decimal string, base units of the settlement token |
 | `active` | `Boolean` | No | `service_upserted` sets `true`, `service_removed` sets `false` | Soft delete: the row is kept so old vouchers still resolve a label |
+| `upcomingPrice` | `String?` | Yes | `service_price_scheduled.price` | Price scheduled with notice, `i128` decimal string. Null when nothing is pending, and null once the schedule has taken effect — the contract swaps it into `price` on the next read and emits nothing, so `scheduledPriceOf()` in `src/lib/services.ts` decides which is current (#315) |
+| `upcomingFrom` | `DateTime?` | Yes | `service_price_scheduled.effective_at` | When `upcomingPrice` becomes the price. Null exactly when `upcomingPrice` is; a deployment whose registry predates scheduling never writes either |
 | `provider` | `Provider` | No | relation | Owning clinic |
 | `providerAddress` | `String` | No | `service_upserted.provider` | Foreign key to `Provider.address` |
 

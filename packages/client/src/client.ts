@@ -1,5 +1,7 @@
 import type {
   ApiErrorEnvelope,
+  ClinicServicesParams,
+  ClinicServicesResponse,
   CountryStats,
   CsvVouchersParams,
   DailyStats,
@@ -200,6 +202,24 @@ export class Client {
 
   async provider(address: string): Promise<Provider> {
     return this.request<Provider>(`/providers/${encodeURIComponent(address)}`);
+  }
+
+  /**
+   * One clinic's price list on its own (issue #314), sorted by price
+   * ascending by default.
+   *
+   * Priced separately from the clinic record because the catalogue changes
+   * far more often than the profile around it, so refreshing prices does not
+   * refetch — or revalidate — the whole provider.
+   */
+  async providerServices(
+    address: string,
+    params?: ClinicServicesParams,
+  ): Promise<ClinicServicesResponse> {
+    return this.request<ClinicServicesResponse>(
+      `/providers/${encodeURIComponent(address)}/services`,
+      params as Record<string, unknown>,
+    );
   }
 
   async providerHistory(address: string): Promise<ProviderHistory> {

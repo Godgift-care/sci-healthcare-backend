@@ -105,6 +105,34 @@ describe('@sci-healthcare/client', () => {
     expect(provider.name).toBe(first.name);
   });
 
+  it('fetches a clinic price list as its own resource (#314)', async () => {
+    const res = await client.providers({ status: 'Active' });
+    const address = res.providers[0]!.address;
+
+    const list = await client.providerServices(address);
+    expect(list).toMatchObject({ providerAddress: address });
+    expect(list.total).toBe(list.services.length);
+    expect(list.services.length).toBeGreaterThan(0);
+
+    const byPrice = await client.providerServices(address, { sort: 'price', order: 'asc' });
+    const prices = byPrice.services.map((s) => BigInt(s.price));
+    expect(prices).toEqual([...prices].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+
+    const byCode = await client.providerServices(address, { sort: 'code', order: 'desc' });
+    const codes = byCode.services.map((s) => s.code);
+    expect(codes).toEqual([...codes].sort((a, b) => b - a));
+
+    const delisted = await client.providerServices(address, { active: false });
+    expect(delisted.services.every((s) => s.active === false)).toBe(true);
+    const stillOn = await client.providerServices(address, { active: true });
+    expect(stillOn.services.every((s) => s.active)).toBe(true);
+    expect(stillOn.total + delisted.total).toBe(list.total);
+
+    await expect(
+      client.providerServices('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+    ).rejects.toThrow(ApiError);
+  });
+
   it('queries services catalogue and single service by code', async () => {
     const res = await client.services();
     expect(res.total).toBeGreaterThan(0);
