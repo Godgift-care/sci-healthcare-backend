@@ -1,22 +1,9 @@
-import type { Prisma } from '@prisma/client';
 import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
 import { contractName, env, getAllDeployments, INDEXED_CONTRACTS } from '../env.js';
-import { voucherSeq } from '../lib/voucher-seq.js';
-import { scheduledPriceOf } from '../lib/services.js';
-import { enqueueWebhook } from '../lib/webhooks.js';
-import {
-  metadataUriOf,
-  METADATA_URI_MAX_LENGTH,
-  refreshDueProviderMetadata,
-} from '../lib/provider-metadata.js';
+import { refreshDueProviderMetadata } from '../lib/provider-metadata.js';
 import { hasStreamListeners, publishVoucherSignals, type VoucherSignal } from '../lib/event-bus.js';
-import {
-  recordDailyStatFunded,
-  recordDailyStatRefunded,
-  recordDailyStatSettled,
-} from '../lib/daily-stats.js';
 import {
   eventsApplied,
   eventsSkipped,
@@ -25,47 +12,41 @@ import {
   recordEventLatency,
 } from '../lib/metrics.js';
 import { server, validateContractIds } from './client.js';
-import {
-  asAddress,
-  asAmount,
-  asBoolean,
-  asHex,
-  asId,
-  asNumber,
-  asTimestamp,
-  decodeEvent,
-  providerStatusName,
-  serialiseEventData,
-  type DecodedEvent,
-} from './events.js';
+import { asId, decodeEvent, serialiseEventData, type DecodedEvent } from './events.js';
 import { recordFailure } from './failed.js';
 import { IndexerLease } from './lease.js';
 import { collectEvents } from './paging.js';
 import { withSpan } from '../tracing.js';
-import { normaliseChainVoucher, readVoucherFromChain, type VoucherReader } from './reconcile.js';
+import { readVoucherFromChain, type VoucherReader } from './reconcile.js';
 import { pruneContractEvents, purgeExpiredOperationalData } from '../lib/retention.js';
 import type { rpc } from '@stellar/stellar-sdk';
+import {
+  type Db,
+  type PendingSignal,
+  type VoucherHandlerContext,
+  onAdminChanged,
+  onAdminProposed,
+  onAttesterAdded,
+  onAttesterRemoved,
+  onCapacityChanged,
+  onDisputeResolved,
+  onDripped,
+  onProviderMetadataChanged,
+  onProviderRegistered,
+  onProviderStatus,
+  onReceiptMinted,
+  onServicePriceScheduled,
+  onServiceRemoved,
+  onServiceUpserted,
+  onVoucherAttested,
+  onVoucherClaimed,
+  onVoucherCreated,
+  onVoucherDisputed,
+  onVoucherRefunded,
+  onVoucherSettled,
+} from './handlers/index.js';
 
-type Db = Prisma.TransactionClient;
-
-/**
- * A committed voucher event waiting to be handed to the open streams.
- *
- * Shaped like `VoucherSignal` except that the clinic may still be unknown:
- * `voucher_attested`, `voucher_disputed` and `voucher_refunded` put an
- * attester or a funder in their topic and not the provider, so the address is
- * read back from the row the handler just wrote (see `TOPIC_FIELDS` in
- * `src/stellar/events.ts`).
- */
-type PendingSignal = {
-  type: string;
-  voucherId: string;
-  status: string;
-  providerAddress: string | null;
-  ledger: number;
-  txHash: string;
-  at: Date;
-};
+export type { PendingSignal };
 
 /**
  * Contract events that are known but deliberately not part of the read
@@ -357,18 +338,6 @@ export class Indexer {
     return work.finally(() => {
       if (this.inFlight === work) this.inFlight = null;
     });
-  }
-
-  /**
-   * Look up the deployment ID for a given contract ID.
-   * Returns null if the contract is not tracked in the Deployment table.
-   */
-  private async lookupDeploymentId(contractId: string, db: Db = prisma): Promise<number | null> {
-    const deployment = await db.deployment.findUnique({
-      where: { contractId },
-      select: { id: true },
-    });
-    return deployment?.id ?? null;
   }
 
   /**
@@ -745,96 +714,69 @@ export class Indexer {
     // claim an event whose projection rolled back, or the reverse.
     await this.recordEvent(db, e);
     const d = e.fields;
+
+    const voucherCtx: VoucherHandlerContext = {
+      voucherReader: this.voucherReader,
+      repairedVouchers: this.repairedVouchers,
+      log: this.log,
+    };
+
     switch (e.name) {
       case 'provider_registered':
-        await this.onProviderRegistered(db, e);
+        await onProviderRegistered(db, e, { log: this.log });
         return null;
       case 'provider_status_changed':
-        await this.onProviderStatus(db, e);
+        await onProviderStatus(db, e);
         return null;
       case 'provider_metadata_changed':
-        await this.onProviderMetadataChanged(db, e);
+        await onProviderMetadataChanged(db, e);
         return null;
       case 'capacity_changed':
-        await this.onCapacityChanged(db, e);
+        await onCapacityChanged(db, e);
         return null;
       case 'service_upserted':
-        await this.onServiceUpserted(db, e);
+        await onServiceUpserted(db, e);
         return null;
       case 'service_price_scheduled':
-        await this.onServicePriceScheduled(db, e);
+        await onServicePriceScheduled(db, e);
         return null;
       case 'service_removed':
-        await this.onServiceRemoved(db, d);
+        await onServiceRemoved(db, d);
         return null;
       case 'admin_proposed':
-        await this.onAdminProposed(db, e);
+        await onAdminProposed(db, e);
         return null;
       case 'admin_changed':
-        await this.onAdminChanged(db, e);
+        await onAdminChanged(db, e);
         return null;
       case 'attester_added':
-        await this.onAttesterAdded(db, e);
+        await onAttesterAdded(db, e);
         return null;
       case 'attester_removed':
-        await this.onAttesterRemoved(db, e);
+        await onAttesterRemoved(db, e);
         return null;
       case 'dispute_resolved':
-        await this.onDisputeResolved(db, e);
+        await onDisputeResolved(db, e);
         return null;
       case 'voucher_created':
-        await this.onVoucherCreated(db, e);
-        return this.voucherSignal(e, 'Funded', this.topicProvider(e));
+        return onVoucherCreated(db, e);
       case 'voucher_claimed':
-        return this.voucherStatus(
-          db,
-          e,
-          'Claimed',
-          { claimedAt: asTimestamp(d.claimed_at) },
-          this.topicProvider(e),
-        );
+        return onVoucherClaimed(db, e, voucherCtx);
       case 'voucher_attested':
-        // The topic carries the attester, not the clinic.
-        return this.voucherStatus(
-          db,
-          e,
-          'Attested',
-          {
-            attestedAt: asTimestamp(d.attested_at),
-            attestedBy: asAddress(d.attester),
-            disputeDeadline: asTimestamp(d.dispute_deadline),
-          },
-          null,
-        );
+        return onVoucherAttested(db, e, voucherCtx);
       case 'voucher_disputed':
-        // The topic carries the funder.
-        return this.voucherStatus(
-          db,
-          e,
-          'Disputed',
-          { disputeReason: asNumber(d.reason_code) },
-          null,
-        );
+        return onVoucherDisputed(db, e, voucherCtx);
       case 'voucher_settled':
-        return this.voucherStatus(
-          db,
-          e,
-          'Settled',
-          { settledNet: asAmount(d.net), settledFee: asAmount(d.fee) },
-          this.topicProvider(e),
-        );
+        return onVoucherSettled(db, e, voucherCtx);
       case 'voucher_refunded':
-        // The topic carries the funder.
-        // The contract emits no timestamp on a refund, so the ledger close
-        // time is the timestamp: it is when the refund became true.
-        return this.voucherStatus(db, e, 'Refunded', { refundedAt: e.ledgerClosedAt }, null);
+        return onVoucherRefunded(db, e, voucherCtx);
       case 'receipt_minted':
-        await this.onReceiptMinted(db, e);
+        await onReceiptMinted(db, e);
         // Not published: the settlement it follows is already on the stream,
         // and this event's payload includes the beneficiary reference.
         return null;
       case 'dripped':
-        await this.onDripped(db, e);
+        await onDripped(db, e);
         return null;
       default:
         // Known-but-unprojected events stay silent; anything else is a name
@@ -842,70 +784,6 @@ export class Indexer {
         this.noteUnknown(e);
         return null;
     }
-  }
-
-  /**
-   * The clinic in an event's topic, or `null` when it is not a usable address.
-   *
-   * Deliberately not `asAddress`. That one throws, and the stream is a reader
-   * of what the projection decided — it must never be the reason an event the
-   * indexer used to apply starts dead-lettering. `voucher_claimed` and
-   * `voucher_settled` name their provider in the topic and never read it in
-   * the handler, so a malformed topic used to be harmless here; now it just
-   * sends the signal through the same read-from-the-row fallback an attestation
-   * already uses. `publish` resolves it, and the stream simply reports what the
-   * read model says.
-   */
-  private topicProvider(e: DecodedEvent): string | null {
-    const raw = e.fields.provider;
-    return typeof raw === 'string' && raw.length === 56 ? raw : null;
-  }
-
-  /**
-   * The stream signal for one voucher event.
-   *
-   * `asId(d.voucher_id)` is already how the handler picked the row, so by the
-   * time this runs the field has decoded once and cannot fail here.
-   */
-  private voucherSignal(
-    e: DecodedEvent,
-    status: string,
-    providerAddress: string | null,
-  ): PendingSignal {
-    return {
-      type: e.name,
-      voucherId: asId(e.fields.voucher_id),
-      status,
-      providerAddress,
-      ledger: e.ledger,
-      txHash: e.txHash,
-      at: e.ledgerClosedAt,
-    };
-  }
-
-  /**
-   * Applies a status transition and returns its stream signal in one step, so
-   * the row that commits and the update that follows it cannot disagree about
-   * which status an event was.
-   */
-  private async voucherStatus(
-    db: Db,
-    e: DecodedEvent,
-    status: string,
-    extra: Record<string, unknown>,
-    providerAddress: string | null,
-  ): Promise<PendingSignal> {
-    await this.onVoucherStatus(db, e.fields, status, extra, e.contractId);
-    // Queued in the same transaction, so nothing is announced that did not
-    // land in the read model. Delivery happens on its own loop.
-    await enqueueWebhook(db, {
-      event: e.name,
-      voucherId: asId(e.fields.voucher_id),
-      status,
-      txHash: e.txHash,
-      ledger: e.ledger,
-    });
-    return this.voucherSignal(e, status, providerAddress);
   }
 
   private noteUnknown(e: DecodedEvent): void {
@@ -937,474 +815,6 @@ export class Indexer {
         closedAt: e.ledgerClosedAt,
         voucherId: voucherIdOf(e.fields),
         data: serialiseEventData(e.fields),
-      },
-      update: {},
-    });
-  }
-
-  /**
-   * An attester was added to the registry. Re-adding one that was removed
-   * reactivates the row, matching the contract, where an address is either
-   * in the set or not.
-   */
-  private async onAttesterAdded(db: Db, e: DecodedEvent): Promise<void> {
-    const address = asAddress(e.fields.attester);
-    await db.attester.upsert({
-      where: { address },
-      create: { address, active: true, addedAt: e.ledgerClosedAt },
-      update: { active: true, removedAt: null },
-    });
-  }
-
-  private async onAttesterRemoved(db: Db, e: DecodedEvent): Promise<void> {
-    const address = asAddress(e.fields.attester);
-    // Upsert rather than update: a removal can be the first event this
-    // indexer sees for an attester added before its start ledger.
-    await db.attester.upsert({
-      where: { address },
-      create: { address, active: false, addedAt: e.ledgerClosedAt, removedAt: e.ledgerClosedAt },
-      update: { active: false, removedAt: e.ledgerClosedAt },
-    });
-  }
-
-  /**
-   * Records who resolved a dispute and how. The voucher's final status
-   * arrives separately through voucher_settled or voucher_refunded in the
-   * same transaction, so this only writes the outcome fields and works in
-   * either order.
-   */
-  private async onDisputeResolved(db: Db, e: DecodedEvent): Promise<void> {
-    const id = asId(e.fields.voucher_id);
-    await db.voucher.updateMany({
-      where: { id },
-      data: {
-        disputeResolvedAt: e.ledgerClosedAt,
-        disputeResolvedBy: asAddress(e.fields.admin),
-        disputeOutcome: asBoolean(e.fields.refunded_funder) ? 'Funder' : 'Provider',
-      },
-    });
-  }
-
-  private async onProviderRegistered(db: Db, e: DecodedEvent): Promise<void> {
-    const d = e.fields;
-    const address = asAddress(d.provider);
-    // Look up deployment ID from the contract ID in the event
-    const deploymentId = await this.lookupDeploymentId(e.contractId, db);
-
-    await db.provider.upsert({
-      where: { address },
-      create: {
-        address,
-        name: String(d.name),
-        country: String(d.country),
-        status: 'Pending',
-        registeredAt: asTimestamp(d.registered_at),
-        deploymentId,
-        ...this.storedMetadataUri(d.metadata_uri),
-      },
-      update: { name: String(d.name), country: String(d.country) },
-    });
-
-    // A re-registration that repoints the URI must invalidate the cached
-    // document: serving the old clinic's hours under the new URI would be
-    // worse than serving none. The guard is what makes a replay a no-op
-    // while a genuine change clears the cache, so it has to mean "the row
-    // does not already hold this URI" exactly.
-    //
-    // `NOT: { metadataUri: uri }` is not that guard. Under SQL's NULL
-    // semantics a `NULL` column fails every comparison, so the first
-    // registration of a new URI would match nothing and be dropped, while
-    // a replay — whose `metadataUri` already equals `uri` — would match
-    // the row and wipe the document it had just cached. The disjunction
-    // spells the intent out: different value, or no value stored yet.
-    const uri = metadataUriOf(d.metadata_uri);
-    if (uri !== null) {
-      await db.provider.updateMany({
-        where: {
-          address,
-          OR: [{ metadataUri: { not: uri } }, { metadataUri: null }],
-        },
-        data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
-      });
-    }
-  }
-
-  /**
-   * The clinic repointed (or cleared) its metadata URI (contracts #10).
-   *
-   * The URI itself is on-chain public and is stored; the document it points
-   * at is fetched later by the refresh pass, outside this transaction. The
-   * cached document is cleared the moment the pointer changes — it describes
-   * a different URI now — and the fetch stamp goes with it, so the new URI
-   * is due immediately.
-   */
-  private async onProviderMetadataChanged(db: Db, e: DecodedEvent): Promise<void> {
-    const address = asAddress(e.fields.provider);
-    const uri = metadataUriOf(e.fields.metadata_uri);
-    // Same guard as registration, and the same reason: a replay of this
-    // event must not clear a document the refresh pass has since cached,
-    // while a genuine repoint (including clearing the pointer to null)
-    // must. A stored `NULL` differs from every URI, including none.
-    const differs =
-      uri === null
-        ? { metadataUri: { not: null } }
-        : { OR: [{ metadataUri: { not: uri } }, { metadataUri: null }] };
-    await db.provider.updateMany({
-      where: { address, ...differs },
-      data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
-    });
-  }
-
-  /**
-   * The clinic set its outstanding-voucher cap (registry `set_capacity`).
-   *
-   * `max_outstanding` is an absolute value, not an increment, so storing it
-   * directly is replay-idempotent: re-applying the event writes the same
-   * number. `0` is the contract's "unlimited" and is stored as such; a clinic
-   * that has never called `set_capacity` keeps `capacity` null, which the
-   * routes distinguish from an explicit `0` only by absence.
-   */
-  private async onCapacityChanged(db: Db, e: DecodedEvent): Promise<void> {
-    const address = asAddress(e.fields.provider);
-    const capacity = asNumber(e.fields.max_outstanding);
-    await db.provider.updateMany({ where: { address }, data: { capacity } });
-  }
-
-  /**
-   * The metadata fields for a `create` payload: the URI when it fits the
-   * cap, nothing otherwise. A URI that looked like one but was refused is
-   * logged once, with the length that lost it, rather than stored truncated.
-   */
-  private storedMetadataUri(input: unknown): { metadataUri?: string } {
-    const uri = metadataUriOf(input);
-    if (uri !== null) return { metadataUri: uri };
-    if (typeof input === 'string' && input.trim() !== '') {
-      this.log.warn(
-        { length: input.length, max: METADATA_URI_MAX_LENGTH },
-        'provider metadata URI ignored; over the length cap',
-      );
-    }
-    return {};
-  }
-
-  private async onProviderStatus(db: Db, e: DecodedEvent): Promise<void> {
-    const address = asAddress(e.fields.provider);
-    const status = providerStatusName(e.fields.status);
-    // `db` is the cycle's (or applyEvent's) transaction, so the status update
-    // and its history row commit together.
-    await db.provider.updateMany({ where: { address }, data: { status } });
-    await db.providerStatusChange.upsert({
-      where: { id: e.id },
-      create: {
-        id: e.id,
-        providerAddress: address,
-        status,
-        ledger: e.ledger,
-        changedAt: e.ledgerClosedAt,
-      },
-      update: {},
-    });
-  }
-
-  private async onServiceUpserted(db: Db, e: DecodedEvent): Promise<void> {
-    const d = e.fields;
-    const providerAddress = asAddress(d.provider);
-    const code = asNumber(d.code);
-    const id = `${providerAddress}:${code}`;
-    const price = asAmount(d.price);
-    const label = String(d.label);
-
-    const existing = await db.service.findUnique({
-      where: { id },
-      select: { price: true, upcomingPrice: true, upcomingFrom: true },
-    });
-    // The contract reads the service through `apply_due_price` before it
-    // writes, so a schedule whose time has already passed is consumed by the
-    // upsert and only a still-future one survives it (contracts
-    // `upsert_service`, `..existing`). Mirroring that here is what keeps a
-    // later price *decrease* from being overridden by a schedule that had
-    // already become the current price.
-    const pending = existing ? scheduledPriceOf(existing, e.ledgerClosedAt) : null;
-    await db.service.upsert({
-      where: { id },
-      create: {
-        id,
-        code,
-        label,
-        price,
-        active: true,
-        providerAddress,
-        upcomingPrice: pending?.upcomingPrice ?? null,
-        upcomingFrom: pending?.upcomingFrom ?? null,
-      },
-      update: {
-        label,
-        price,
-        active: true,
-        upcomingPrice: pending?.upcomingPrice ?? null,
-        upcomingFrom: pending?.upcomingFrom ?? null,
-      },
-    });
-    // Only a price change is history; a relabelled service is not. Compared
-    // against the price in effect, which is the scheduled one once due.
-    if (!existing || (pending?.price ?? existing.price) !== price) {
-      await db.servicePriceChange.upsert({
-        where: { id: e.id },
-        create: {
-          id: e.id,
-          providerAddress,
-          code,
-          price,
-          ledger: e.ledger,
-          changedAt: e.ledgerClosedAt,
-        },
-        update: {},
-      });
-    }
-  }
-
-  /**
-   * Record a price the clinic scheduled with notice (#315).
-   *
-   * Nothing takes effect here: `effective_at` is a future ledger time, and
-   * the contract makes the price swap on the next read rather than in a second
-   * event. So this writes the two pending columns and leaves `price` alone;
-   * `scheduledPriceOf()` decides at read time when the schedule becomes the
-   * current price.
-   *
-   * Scheduling again replaces the earlier schedule, including cancelling it —
-   * scheduling the current price is how a clinic calls one off, so the row
-   * simply ends up with a pending price equal to the live one.
-   *
-   * `updateMany` rather than `update` because a service listed by a deployment
-   * that predates scheduling has no row here until this event, but an event
-   * for a code the indexer never saw must not wedge the pipeline (#315: "Old
-   * deployments without the event still index").
-   */
-  private async onServicePriceScheduled(db: Db, e: DecodedEvent): Promise<void> {
-    const d = e.fields;
-    const id = `${asAddress(d.provider)}:${asNumber(d.code)}`;
-    await db.service.updateMany({
-      where: { id },
-      data: { upcomingPrice: asAmount(d.price), upcomingFrom: asTimestamp(d.effective_at) },
-    });
-  }
-
-  private async onAdminProposed(db: Db, e: DecodedEvent): Promise<void> {
-    await db.governanceEvent.upsert({
-      where: { id: e.id },
-      create: {
-        id: e.id,
-        contractId: e.contractId,
-        contract: contractName(e.contractId),
-        kind: 'Proposed',
-        admin: asAddress(e.fields.admin),
-        pendingAdmin: asAddress(e.fields.pending_admin),
-        ledger: e.ledger,
-        occurredAt: e.ledgerClosedAt,
-      },
-      update: {},
-    });
-  }
-
-  private async onAdminChanged(db: Db, e: DecodedEvent): Promise<void> {
-    await db.governanceEvent.upsert({
-      where: { id: e.id },
-      create: {
-        id: e.id,
-        contractId: e.contractId,
-        contract: contractName(e.contractId),
-        kind: 'Changed',
-        admin: asAddress(e.fields.new_admin),
-        pendingAdmin: null,
-        ledger: e.ledger,
-        occurredAt: e.ledgerClosedAt,
-      },
-      update: {},
-    });
-  }
-
-  private async onServiceRemoved(db: Db, d: Record<string, unknown>): Promise<void> {
-    const id = `${asAddress(d.provider)}:${asNumber(d.code)}`;
-    await db.service.updateMany({ where: { id }, data: { active: false } });
-  }
-
-  private async onVoucherCreated(db: Db, e: DecodedEvent): Promise<void> {
-    const d = e.fields;
-    const id = asId(d.voucher_id);
-    const providerAddress = asAddress(d.provider);
-
-    // A voucher references a provider row; if the indexer started after the
-    // provider was registered, backfill a stub so the relation holds.
-    await db.provider.upsert({
-      where: { address: providerAddress },
-      create: {
-        address: providerAddress,
-        name: 'Unknown provider',
-        country: '??',
-        status: 'Active',
-        registeredAt: new Date(0),
-      },
-      update: {},
-    });
-
-    const deploymentId = await this.lookupDeploymentId(e.contractId, db);
-
-    const existing = await db.voucher.findUnique({
-      where: { id },
-      select: { id: true },
-    });
-    if (!existing) {
-      await recordDailyStatFunded(db, asTimestamp(d.created_at), asAmount(d.amount));
-    }
-
-    await db.voucher.upsert({
-      where: { id },
-      create: {
-        id,
-        // Numeric mirror of the id, so ordering by `seq` gives voucher 9
-        // before voucher 10 instead of the string order (#61).
-        seq: voucherSeq(id),
-        funder: asAddress(d.funder),
-        beneficiaryRef: asHex(d.beneficiary_ref),
-        providerAddress,
-        serviceCode: asNumber(d.service_code),
-        amount: asAmount(d.amount),
-        status: 'Funded',
-        createdAt: asTimestamp(d.created_at),
-        expiresAt: asTimestamp(d.expires_at),
-        deploymentId,
-      },
-      update: {},
-    });
-
-    await enqueueWebhook(db, {
-      event: e.name,
-      voucherId: id,
-      status: 'Funded',
-      txHash: e.txHash,
-      ledger: e.ledger,
-    });
-  }
-
-  private async onVoucherStatus(
-    db: Db,
-    d: Record<string, unknown>,
-    status: string,
-    extra: Record<string, unknown>,
-    contractId: string,
-  ): Promise<void> {
-    const id = asId(d.voucher_id);
-    await this.repairMissingVoucher(db, id, contractId);
-    if (status === 'Refunded') {
-      const existing = await db.voucher.findUnique({
-        where: { id },
-        select: { refundedAt: true, amount: true },
-      });
-      if (existing && !existing.refundedAt) {
-        const refundedAt = (extra.refundedAt as Date) ?? new Date();
-        await recordDailyStatRefunded(db, refundedAt, existing.amount);
-      }
-    }
-    await db.voucher.updateMany({
-      where: { id },
-      data: { status, ...extra },
-    });
-  }
-
-  /** Rebuilds a voucher whose creation event predates the indexer's cursor. */
-  private async repairMissingVoucher(db: Db, id: string, contractId: string): Promise<void> {
-    const existing = await db.voucher.findUnique({ where: { id }, select: { id: true } });
-    if (existing) return;
-
-    const chain = await this.voucherReader(id, contractId);
-    if (!chain) throw new Error(`Cannot repair missing voucher ${id}: voucher is not on chain`);
-    const voucher = normaliseChainVoucher(chain);
-
-    await db.provider.upsert({
-      where: { address: voucher.providerAddress },
-      create: {
-        address: voucher.providerAddress,
-        name: 'Unknown provider',
-        country: '??',
-        status: 'Active',
-        registeredAt: new Date(0),
-      },
-      update: {},
-    });
-
-    const deploymentId = await this.lookupDeploymentId(contractId, db);
-    await recordDailyStatFunded(db, voucher.createdAt, voucher.amount);
-    await db.voucher.create({
-      data: {
-        id,
-        seq: voucherSeq(id),
-        funder: voucher.funder,
-        beneficiaryRef: voucher.beneficiaryRef,
-        providerAddress: voucher.providerAddress,
-        serviceCode: voucher.serviceCode,
-        amount: voucher.amount,
-        status: voucher.status,
-        createdAt: voucher.createdAt,
-        expiresAt: voucher.expiresAt,
-        claimedAt: voucher.claimedAt,
-        attestedAt: voucher.attestedAt,
-        disputeDeadline: voucher.disputeDeadline,
-        deploymentId,
-      },
-    });
-
-    if (!this.repairedVouchers.has(id)) {
-      this.repairedVouchers.add(id);
-      this.log.warn({ voucherId: id }, 'repaired voucher missing its creation event');
-    }
-  }
-  /**
-   * Records one testnet faucet drip.
-   *
-   * A row per event rather than a bare counter: replay is idempotent only
-   * if the key is the on-chain event id, and keeping the wallet is what
-   * lets `/stats` report how many distinct people tried the demo rather
-   * than how many times anyone pressed the button.
-   */
-  private async onDripped(db: Db, e: DecodedEvent): Promise<void> {
-    const d = e.fields;
-    await db.faucetDrip.upsert({
-      where: { id: e.id },
-      create: {
-        id: e.id,
-        wallet: asAddress(d.to),
-        amount: asAmount(d.amount),
-        ledger: e.ledger,
-        drippedAt: e.ledgerClosedAt,
-      },
-      update: {},
-    });
-  }
-
-  private async onReceiptMinted(db: Db, e: DecodedEvent): Promise<void> {
-    const d = e.fields;
-    const voucherId = asId(d.voucher_id);
-    const deploymentId = await this.lookupDeploymentId(e.contractId, db);
-
-    const existing = await db.receipt.findUnique({
-      where: { voucherId },
-      select: { voucherId: true },
-    });
-    if (!existing) {
-      await recordDailyStatSettled(db, asTimestamp(d.settled_at), asAmount(d.amount));
-    }
-
-    await db.receipt.upsert({
-      where: { voucherId },
-      create: {
-        voucherId,
-        beneficiaryRef: asHex(d.beneficiary_ref),
-        providerAddress: asAddress(d.provider),
-        serviceCode: asNumber(d.service_code),
-        amount: asAmount(d.amount),
-        settledAt: asTimestamp(d.settled_at),
-        deploymentId,
       },
       update: {},
     });
