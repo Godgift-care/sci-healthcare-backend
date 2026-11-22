@@ -1,8 +1,10 @@
 import type {
+  ApiErrorEnvelope,
   CountryStats,
   CsvVouchersParams,
   DailyStats,
   DueVouchersParams,
+  DueVouchersResponse,
   GovernanceResponse,
   HealthStatus,
   ListProvidersParams,
@@ -16,6 +18,7 @@ import type {
   ReceiptsResponse,
   ReadyStatus,
   ServiceCatalogueItem,
+  ServiceClinics,
   ServicePriceChangeHistory,
   ServicesResponse,
   Stats,
@@ -31,6 +34,7 @@ import {
   type StreamHandle,
   type StreamHandlers,
   type StreamOptions,
+  type VoucherStreamEvent,
 } from './stream.js';
 
 export class ApiError extends Error {
@@ -38,14 +42,31 @@ export class ApiError extends Error {
   readonly error: string;
   readonly details?: unknown;
   readonly issues?: unknown;
+  /**
+   * The error body as the API sent it, typed as the one documented envelope
+   * (#296).
+   *
+   * `message` on this class is a fallback-protected string because `Error`
+   * needs one; `envelope` is the honest record, so a route that answers a
+   * lookup failure without a localised `message` shows that here rather than
+   * inheriting a sentence the server never sent.
+   */
+  readonly envelope: ApiErrorEnvelope;
 
-  constructor(status: number, error: string, message: string, details?: unknown) {
+  constructor(
+    status: number,
+    error: string,
+    message: string,
+    details?: unknown,
+    envelope?: ApiErrorEnvelope,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.error = error;
     this.details = details;
     this.issues = details;
+    this.envelope = envelope ?? { error, message, ...(details === undefined ? {} : { details }) };
   }
 }
 
@@ -134,21 +155,20 @@ export class Client {
     }
 
     if (!res.ok) {
-      let body: { error?: string; message?: string; details?: unknown; issues?: unknown } = {};
+      let body: Partial<ApiErrorEnvelope> = {};
       try {
-        body = (await res.json()) as {
-          error?: string;
-          message?: string;
-          details?: unknown;
-          issues?: unknown;
-        };
+        body = (await res.json()) as Partial<ApiErrorEnvelope>;
       } catch {
         // Not a JSON error body
       }
       const errCode = body.error ?? `http_${res.status}`;
       const message = body.message ?? res.statusText ?? 'Request failed';
       const details = body.details ?? body.issues;
-      throw new ApiError(res.status, errCode, message, details);
+      // `error` is the only required member of the envelope, so a body that
+      // does not carry one is not an envelope and is left out rather than
+      // dressed up as one.
+      const envelope = body.error === undefined ? undefined : (body as ApiErrorEnvelope);
+      throw new ApiError(res.status, errCode, message, details, envelope);
     }
 
     return (await res.json()) as T;
@@ -200,8 +220,8 @@ export class Client {
     return this.request<ServicesResponse>('/services');
   }
 
-  async service(code: number): Promise<ServiceCatalogueItem> {
-    return this.request<ServiceCatalogueItem>(`/services/${code}`);
+  async service(code: number): Promise<ServiceClinics> {
+    return this.request<ServiceClinics>(`/services/${code}`);
   }
 
   async vouchers(params?: ListVouchersParams): Promise<VouchersResponse> {
@@ -212,11 +232,8 @@ export class Client {
     return this.request<VoucherDetail>(`/vouchers/${encodeURIComponent(id)}`);
   }
 
-  async vouchersDue(params: DueVouchersParams): Promise<{ vouchers: Voucher[] }> {
-    return this.request<{ vouchers: Voucher[] }>(
-      '/vouchers/due',
-      params as Record<string, unknown>,
-    );
+  async vouchersDue(params: DueVouchersParams): Promise<DueVouchersResponse> {
+    return this.request<DueVouchersResponse>('/vouchers/due', params as Record<string, unknown>);
   }
 
   async vouchersCsv(params?: CsvVouchersParams): Promise<string> {
@@ -277,6 +294,114 @@ export class Client {
     return subscribe(this.baseUrl, this.defaultHeaders, this.fetchImpl, filters, handlers, options);
   }
 
+  /**
+   * The same subscription as an async iterator, for `for await` and for
+   * `sci watch` (#290): one event per frame.
+   *
+   * It wraps `stream()` rather than reading the socket again, so the resume,
+   * heartbeat and backoff rules live in one place. Iteration ends when the
+   * handle ends — a fatal status, `close()`, or the `signal` aborting — so a
+   * stream the server closed is followed by a reconnect, not a quiet finish.
+   * A recoverable drop yields nothing at all: the handle is still retrying it.
+   *
+   * Breaking out of the loop closes the handle before `next()` returns.
+   */
+  async *streamEvents(
+    filters: StreamFilters,
+    options: StreamOptions = {},
+  ): AsyncGenerator<VoucherStreamEvent> {
+    // One queue for both signals: the handle reports events and fatal errors
+    // from its own callbacks, and the consumer decides the order they surface.
+    type Frame =
+      | { readonly kind: 'event'; readonly event: VoucherStreamEvent }
+      | { readonly kind: 'error'; readonly error: unknown };
+    const queue: Frame[] = [];
+    let wake: (() => void) | null = null;
+    const notify = (): void => {
+      const resume = wake;
+      wake = null;
+      if (resume !== null) resume();
+    };
+
+    // `stream()` validates the filter synchronously, so a bad request rejects
+    // the first `next()` like any other failing async iterator.
+    const handle = this.stream(
+      filters,
+      {
+        onEvent: (event) => {
+          queue.push({ kind: 'event', event });
+          notify();
+        },
+        onError: (error, info) => {
+          if (!info.fatal) return;
+          queue.push({ kind: 'error', error });
+          notify();
+        },
+      },
+      options,
+    );
+    void handle.done.then(notify, notify);
+
+    try {
+      while (!handle.closed || queue.length > 0) {
+        const next = queue.shift();
+        if (next === undefined) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+          continue;
+        }
+        if (next.kind === 'error') throw next.error;
+        yield next.event;
+      }
+    } finally {
+      handle.close();
+    }
+  }
+
+  /**
+   * Every voucher across all pages (#286). One request per page, and only
+   * when the previous page has been fully consumed: breaking out of the
+   * loop makes no further requests.
+   */
+  vouchersIterate(params?: ListVouchersParams): AsyncGenerator<Voucher> {
+    return iteratePages<Voucher, ListVouchersParams, VouchersResponse>(
+      (p) => this.vouchers(p),
+      (res) => res.vouchers,
+      (res) => res.nextCursor,
+      params,
+    );
+  }
+
+  /** Every clinic across all pages (#286), same paging semantics. */
+  providersIterate(params?: ListProvidersParams): AsyncGenerator<Provider> {
+    return iteratePages<Provider, ListProvidersParams, ProvidersResponse>(
+      (p) => this.providers(p),
+      (res) => res.providers,
+      (res) => res.nextCursor,
+      params,
+    );
+  }
+
+  /** Every receipt across all pages (#286), same paging semantics. */
+  receiptsIterate(params: ListReceiptsParams): AsyncGenerator<Receipt> {
+    return iteratePages<Receipt, ListReceiptsParams, ReceiptsResponse>(
+      (p) => this.receipts(p),
+      (res) => res.receipts,
+      (res) => res.nextCursor,
+      params,
+    );
+  }
+
+  /**
+   * Every service in the catalogue (#286). `GET /services` is a single
+   * uncursored page, so this is one request and a full pass over it.
+   */
+  async *servicesIterate(): AsyncGenerator<ServiceCatalogueItem> {
+    const res = await this.services();
+    for (const service of res.services) yield service;
+  }
+
   async rawGet<T>(path: string, params?: Record<string, unknown>): Promise<T> {
     return this.request<T>(path, params);
   }
@@ -284,4 +409,29 @@ export class Client {
 
 export function createClient(options: ClientOptions): Client {
   return new Client(options);
+}
+
+/**
+ * The cursor-loop behind the `*Iterate` methods (#286).
+ *
+ * The next page is requested only after the previous one has been yielded
+ * in full, which is what makes `break` cheap: the generator suspends at the
+ * `yield`, so leaving the loop never fires the following request.
+ */
+async function* iteratePages<T, P extends { cursor?: string; limit?: number }, R>(
+  fetchPage: (params: P) => Promise<R>,
+  rowsOf: (res: R) => T[],
+  cursorOf: (res: R) => string | null | undefined,
+  params?: P,
+): AsyncGenerator<T> {
+  let cursor = params?.cursor;
+  for (;;) {
+    const page: P = { ...params } as P;
+    if (cursor !== undefined) page.cursor = cursor;
+    else delete page.cursor;
+    const res = await fetchPage(page);
+    for (const row of rowsOf(res)) yield row;
+    cursor = cursorOf(res) ?? undefined;
+    if (cursor === undefined) return;
+  }
 }

@@ -1,0 +1,56 @@
+name: API reference (GitHub Pages)
+
+# The rendered reference is the one thing here that should not depend on the
+# API process being awake: `/docs` is a Swagger UI served by Fastify, so it is
+# down whenever the service is. This publishes the same contract as a static
+# page from `openapi.json`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'openapi.json'
+      - 'api-reference/**'
+      - '.github/workflows/pages.yml'
+  # Lets a maintainer re-publish after changing the Pages settings, and lets a
+  # fork prove the deployment before a pull request is merged.
+  workflow_dispatch:
+
+# Nothing here needs the default token, so it starts empty and the one job
+# that needs permissions asks for exactly the three below. Deployment needs
+# `pages: write` to create the release and `id-token: write` to authenticate
+# it with the OIDC token; reading the repo is all `checkout` needs.
+permissions: {}
+
+jobs:
+  deploy:
+    name: Deploy the static API reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The spec is copied, never regenerated. Regenerating it would need
+      # `npm ci` plus a build, and the page would then show whatever the
+      # branch produced rather than the contract that was reviewed.
+      # `src/__tests__/openapi-contract.test.ts` is what keeps the committed
+      # file equal to the live route schemas.
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp api-reference/index.html _site/index.html
+          cp openapi.json _site/openapi.json
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v3

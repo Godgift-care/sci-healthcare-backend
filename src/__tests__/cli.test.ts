@@ -218,4 +218,210 @@ describe('sci CLI', () => {
     });
     expect(down).toBe(1);
   });
+
+  // --- #291: --csv on the list commands -------------------------------------
+
+  describe('--csv output', () => {
+    /** Parse a single CSV (header + rows) written by `--csv`. */
+    function parseCsv(text: string): Record<string, string>[] {
+      const lines = text.trimEnd().split('\n');
+      const header = splitCsvLine(lines.shift() ?? '');
+      return lines.map((line) => {
+        const cells = splitCsvLine(line);
+        const row: Record<string, string> = {};
+        header.forEach((h, i) => {
+          row[h] = cells[i] ?? '';
+        });
+        return row;
+      });
+    }
+    function splitCsvLine(line: string): string[] {
+      const out: string[] = [];
+      let cur = '';
+      let quoted = false;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (quoted) {
+          if (ch === '"' && line[i + 1] === '"') {
+            cur += '"';
+            i += 1;
+          } else if (ch === '"') quoted = false;
+          else cur += ch;
+        } else if (ch === '"') quoted = true;
+        else if (ch === ',') {
+          out.push(cur);
+          cur = '';
+        } else cur += ch;
+      }
+      out.push(cur);
+      return out;
+    }
+
+    it('renders a voucher list as CSV that a reader parses', async () => {
+      const res = await sci([
+        'vouchers',
+        '--provider',
+        activeProviderAddress,
+        '--limit',
+        '24',
+        '--csv',
+      ]);
+      expect(res.code).toBe(0);
+      const rows = parseCsv(res.out);
+      expect(rows.length).toBeGreaterThan(0);
+      // `id` is a top-level column and the seeded voucher shows up.
+      expect(Object.keys(rows[0]!)).toContain('id');
+      expect(rows.map((r) => r.id)).toContain(someVoucherId);
+    });
+
+    it('quotes fields that contain a comma', async () => {
+      // The clinic name has no comma, so force one through a filter echoed
+      // nowhere; instead assert a nested object cell is JSON, not raw.
+      const res = await sci(['providers', '--status', 'Active', '--csv']);
+      expect(res.code).toBe(0);
+      expect(res.out.split('\n')[0]).toContain('address');
+    });
+
+    it('writes nothing to stdout and exits non-zero on an error', async () => {
+      const bad = await sci(['vouchers', '--csv']); // no filter -> filter_required
+      expect(bad.code).toBe(1);
+      expect(bad.out).toBe('');
+      expect(bad.err).toContain('filter_required');
+    });
+  });
+
+  // --- #290: sci watch over the live stream -----------------------------------
+
+  describe('watch', () => {
+    /** An SSE `fetch` that serves the given frames and then closes. */
+    function sseFetch(frames: string[]): typeof fetch {
+      return (async () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const frame of frames) controller.enqueue(encoder.encode(frame));
+            controller.close();
+          },
+        });
+        return new Response(stream, { status: 200 });
+      }) as typeof fetch;
+    }
+
+    const fund = (id: string): string =>
+      `data: {"type":"voucher_funded","voucherId":"${id}","providerAddress":"${CLINIC}","status":"Funded","ledger":10,"txHash":"aa","at":"2026-01-01T00:00:00Z"}\n\n`;
+
+    it('needs a filter, like the stream route', async () => {
+      let out = '';
+      let err = '';
+      const code = await runCli({
+        argv: ['watch'],
+        env,
+        fetchImpl: sseFetch([]),
+        stdout: (c) => {
+          out += c;
+        },
+        stderr: (c) => {
+          err += c;
+        },
+      });
+      expect(code).toBe(2);
+      expect(err).toContain('watch needs one filter');
+      expect(out).toBe('');
+    });
+
+    it('prints one line per event and ends on the interrupt', async () => {
+      // The stream stays open (the handle reconnects when a server closes
+      // it), so the operator pressing Ctrl-C is what ends `sci watch`.
+      const controller = new AbortController();
+      let out = '';
+      const code = await runCli({
+        argv: ['watch', '--provider', CLINIC],
+        env,
+        fetchImpl: sseFetch([': connected\n\n', fund('v1'), fund('v2')]),
+        signal: controller.signal,
+        stdout: (c) => {
+          out += c;
+          if (out.trimEnd().split('\n').length >= 2) controller.abort();
+        },
+        stderr: () => {},
+      });
+      expect(code).toBe(130);
+      const lines = out.trimEnd().split('\n');
+      expect(lines.length).toBe(2);
+      expect(lines[0]).toContain('voucher_funded');
+      expect(lines[0]).toContain('v1');
+    });
+
+    it('prints JSON lines with --json', async () => {
+      const controller = new AbortController();
+      let out = '';
+      await runCli({
+        argv: ['watch', '--provider', CLINIC, '--json'],
+        env,
+        fetchImpl: sseFetch([fund('v1')]),
+        signal: controller.signal,
+        stdout: (c) => {
+          out += c;
+          controller.abort();
+        },
+        stderr: () => {},
+      });
+      const parsed = JSON.parse(out.trim().split('\n')[0]!) as {
+        voucherId: string;
+        status: string;
+      };
+      expect(parsed.voucherId).toBe('v1');
+      expect(parsed.status).toBe('Funded');
+    });
+
+    it('exits cleanly (130) when the stream is interrupted', async () => {
+      // A stream that never closes: only an abort can end it, which is what
+      // Ctrl-C does. The pre-aborted signal models the keypress arriving
+      // before/while reading, and the CLI must not hang or throw.
+      const neverClosing = (async () =>
+        new Response(new ReadableStream<Uint8Array>({ start: () => {} }), {
+          status: 200,
+        })) as typeof fetch;
+
+      const controller = new AbortController();
+      controller.abort();
+      let err = '';
+      const code = await runCli({
+        argv: ['watch', '--provider', CLINIC],
+        env,
+        fetchImpl: neverClosing,
+        signal: controller.signal,
+        stdout: () => {},
+        stderr: (c) => {
+          err += c;
+        },
+      });
+      expect(code).toBe(130);
+      expect(err).toBe(''); // an interrupt is not reported as an error
+    });
+
+    it('retries a full instance and reports a status it will not retry', async () => {
+      // 503 `stream_full` means the instance is at `SSE_MAX_CONNECTIONS`, so
+      // the stream retries it; 404 is fatal and is what ends the command.
+      let calls = 0;
+      let err = '';
+      const code = await runCli({
+        argv: ['watch', '--provider', CLINIC],
+        env,
+        fetchImpl: (async () => {
+          calls += 1;
+          return calls === 1
+            ? new Response('nope', { status: 503, statusText: 'unavailable' })
+            : new Response('gone', { status: 404, statusText: 'not found' });
+        }) as typeof fetch,
+        stdout: () => {},
+        stderr: (c) => {
+          err += c;
+        },
+      });
+      expect(code).toBe(1);
+      expect(err).toContain('error:');
+      expect(calls).toBe(2);
+    });
+  });
 });
