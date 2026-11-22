@@ -17,7 +17,12 @@ import { recordFailure } from './failed.js';
 import { IndexerLease } from './lease.js';
 import { collectEvents } from './paging.js';
 import { withSpan } from '../tracing.js';
-import { readVoucherFromChain, readVoucherOptionsFromChain, type VoucherOptionsReader, type VoucherReader } from './reconcile.js';
+import {
+  readVoucherFromChain,
+  readVoucherOptionsFromChain,
+  type VoucherOptionsReader,
+  type VoucherReader,
+} from './reconcile.js';
 import { pruneContractEvents, purgeExpiredOperationalData } from '../lib/retention.js';
 import type { rpc } from '@stellar/stellar-sdk';
 import {

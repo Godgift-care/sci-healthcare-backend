@@ -1,12 +1,5 @@
 import type { Db } from './types.js';
-import {
-  asAddress,
-  asAmount,
-  asId,
-  asNumber,
-  asTimestamp,
-  type DecodedEvent,
-} from '../events.js';
+import { asAddress, asAmount, asId, asNumber, asTimestamp, type DecodedEvent } from '../events.js';
 
 /**
  * A sponsor moved money in or out of the matching desk (#317).
