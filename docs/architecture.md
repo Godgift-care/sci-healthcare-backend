@@ -5,6 +5,24 @@ response from the API. Read this before changing anything under
 `src/stellar/`; the procedures that pair with it live in
 [RUNBOOK.md](RUNBOOK.md).
 
+## Decisions
+
+This document describes the mechanisms. When one of them looks like it should
+have been done the other way, the reasoning is in an architecture decision
+record, and the ones that pair with the sections below are:
+
+| Record | Decides | Appears in |
+| --- | --- | --- |
+| [0001](adr/0001-i128-amounts-as-decimal-strings.md) | i128 amounts are decimal strings, never numbers | §4 Apply, the `amountKey` sort |
+| [0002](adr/0002-keyset-pagination-not-offset.md) | List routes paginate by keyset cursor | the API box, `src/lib/cursor.ts` |
+| [0003](adr/0003-single-writer-lease.md) | One indexer at a time, by database lease | §5 Advance the cursor, The cursor and the lease |
+| [0004](adr/0004-database-is-a-projection.md) | The database is a projection; nothing here writes to the chain | the whole pipeline, Failure modes |
+| [0005](adr/0005-sqlite-committed-postgres-deployed.md) | SQLite committed, Postgres deployed, migrations gated | the read model box, CI's `test` and `migrations` jobs |
+
+The index and the template are in [adr/README.md](adr/README.md). A change
+that contradicts one of these records needs a new record superseding it, not a
+silent edit — `src/__tests__/adr-docs.test.ts` keeps this table honest.
+
 ## The pipeline
 
 ```mermaid

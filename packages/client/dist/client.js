@@ -199,11 +199,113 @@ export class Client {
     stream(filters, handlers = {}, options = {}) {
         return subscribe(this.baseUrl, this.defaultHeaders, this.fetchImpl, filters, handlers, options);
     }
+    /**
+     * The same subscription as an async iterator, for `for await` and for
+     * `sci watch` (#290): one event per frame.
+     *
+     * It wraps `stream()` rather than reading the socket again, so the resume,
+     * heartbeat and backoff rules live in one place. Iteration ends when the
+     * handle ends — a fatal status, `close()`, or the `signal` aborting — so a
+     * stream the server closed is followed by a reconnect, not a quiet finish.
+     * A recoverable drop yields nothing at all: the handle is still retrying it.
+     *
+     * Breaking out of the loop closes the handle before `next()` returns.
+     */
+    async *streamEvents(filters, options = {}) {
+        const queue = [];
+        let wake = null;
+        const notify = () => {
+            const resume = wake;
+            wake = null;
+            if (resume !== null)
+                resume();
+        };
+        // `stream()` validates the filter synchronously, so a bad request rejects
+        // the first `next()` like any other failing async iterator.
+        const handle = this.stream(filters, {
+            onEvent: (event) => {
+                queue.push({ kind: 'event', event });
+                notify();
+            },
+            onError: (error, info) => {
+                if (!info.fatal)
+                    return;
+                queue.push({ kind: 'error', error });
+                notify();
+            },
+        }, options);
+        void handle.done.then(notify, notify);
+        try {
+            while (!handle.closed || queue.length > 0) {
+                const next = queue.shift();
+                if (next === undefined) {
+                    await new Promise((resolve) => {
+                        wake = resolve;
+                    });
+                    continue;
+                }
+                if (next.kind === 'error')
+                    throw next.error;
+                yield next.event;
+            }
+        }
+        finally {
+            handle.close();
+        }
+    }
+    /**
+     * Every voucher across all pages (#286). One request per page, and only
+     * when the previous page has been fully consumed: breaking out of the
+     * loop makes no further requests.
+     */
+    vouchersIterate(params) {
+        return iteratePages((p) => this.vouchers(p), (res) => res.vouchers, (res) => res.nextCursor, params);
+    }
+    /** Every clinic across all pages (#286), same paging semantics. */
+    providersIterate(params) {
+        return iteratePages((p) => this.providers(p), (res) => res.providers, (res) => res.nextCursor, params);
+    }
+    /** Every receipt across all pages (#286), same paging semantics. */
+    receiptsIterate(params) {
+        return iteratePages((p) => this.receipts(p), (res) => res.receipts, (res) => res.nextCursor, params);
+    }
+    /**
+     * Every service in the catalogue (#286). `GET /services` is a single
+     * uncursored page, so this is one request and a full pass over it.
+     */
+    async *servicesIterate() {
+        const res = await this.services();
+        for (const service of res.services)
+            yield service;
+    }
     async rawGet(path, params) {
         return this.request(path, params);
     }
 }
 export function createClient(options) {
     return new Client(options);
+}
+/**
+ * The cursor-loop behind the `*Iterate` methods (#286).
+ *
+ * The next page is requested only after the previous one has been yielded
+ * in full, which is what makes `break` cheap: the generator suspends at the
+ * `yield`, so leaving the loop never fires the following request.
+ */
+async function* iteratePages(fetchPage, rowsOf, cursorOf, params) {
+    let cursor = params?.cursor;
+    for (;;) {
+        const page = { ...params };
+        if (cursor !== undefined)
+            page.cursor = cursor;
+        else
+            delete page.cursor;
+        const res = await fetchPage(page);
+        for (const row of rowsOf(res))
+            yield row;
+        cursor = cursorOf(res) ?? undefined;
+        if (cursor === undefined)
+            return;
+    }
 }
 //# sourceMappingURL=client.js.map
