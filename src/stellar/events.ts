@@ -21,6 +21,10 @@ export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   // The clinic set its outstanding-voucher cap (registry `set_capacity`).
   capacity_changed: ['provider'],
   service_upserted: ['provider', 'code'],
+  // The clinic scheduled a new price with notice (contracts
+  // `schedule_service_price`, #315). `price` and `effective_at` are data
+  // fields; the (provider, code) pair it applies to is in the topic.
+  service_price_scheduled: ['provider', 'code'],
   service_removed: ['provider'],
   attester_added: ['attester'],
   attester_removed: ['attester'],

@@ -268,6 +268,105 @@ describe('service_upserted projection', () => {
   });
 });
 
+describe('service_price_scheduled projection (#315)', () => {
+  // Every fixture event here closes at `LEDGER_CLOSED_AT` (1790812800), so a
+  // schedule at that instant has come due and one a week later is still
+  // pending.
+  const DUE_AT = 1_790_812_800n;
+  const PENDING_AT = 1_791_417_600n;
+
+  const serviceRow = () => prisma.service.findUniqueOrThrow({ where: { id: `${CLINIC}:101` } });
+
+  async function registerClinic(): Promise<void> {
+    await apply(
+      rawEvent(
+        'provider_registered',
+        100,
+        { name: 'Katibangcuo Health Post', country: 'CF', registered_at: 1_759_276_800n },
+        [addr(CLINIC)],
+      ),
+    );
+  }
+
+  async function upsert(
+    ledger: number,
+    price: bigint,
+    label = 'Outpatient consult',
+  ): Promise<void> {
+    await apply(rawEvent('service_upserted', ledger, { label, price }, [addr(CLINIC), u32(101)]));
+  }
+
+  async function schedule(ledger: number, price: bigint, effectiveAt: bigint): Promise<void> {
+    await apply(
+      rawEvent('service_price_scheduled', ledger, { price, effective_at: effectiveAt }, [
+        addr(CLINIC),
+        u32(101),
+      ]),
+    );
+  }
+
+  it('stores the schedule without touching the current price', async () => {
+    await registerClinic();
+    await upsert(102, 30_000_000n);
+    await schedule(103, 45_000_000n, PENDING_AT);
+
+    const row = await serviceRow();
+    expect(row).toMatchObject({ price: '30000000', upcomingPrice: '45000000' });
+    expect(row.upcomingFrom?.toISOString()).toBe('2026-10-08T00:00:00.000Z');
+    // Nothing has changed on chain yet — a schedule is not a price change, so
+    // it does not start a history row of its own.
+    expect(await prisma.servicePriceChange.count()).toBe(1);
+  });
+
+  it('keeps a still-pending schedule through a later upsert', async () => {
+    await registerClinic();
+    await upsert(102, 30_000_000n);
+    await schedule(103, 45_000_000n, PENDING_AT);
+    await upsert(104, 30_000_000n, 'OPD consult');
+
+    const row = await serviceRow();
+    expect(row).toMatchObject({
+      label: 'OPD consult',
+      price: '30000000',
+      upcomingPrice: '45000000',
+    });
+    expect(row.upcomingFrom?.toISOString()).toBe('2026-10-08T00:00:00.000Z');
+    expect(await prisma.servicePriceChange.count()).toBe(1);
+  });
+
+  it('consumes a schedule that has come due before writing the upsert', async () => {
+    await registerClinic();
+    await upsert(102, 30_000_000n);
+    await schedule(103, 45_000_000n, DUE_AT);
+    await upsert(104, 25_000_000n);
+
+    // `upsert_service` reads through `apply_due_price` first, so 45000000 was
+    // already the current price when the clinic lowered it again. The
+    // projection has to agree or the old schedule would resurrect itself.
+    const row = await serviceRow();
+    expect(row).toMatchObject({ price: '25000000', upcomingPrice: null });
+    expect(row.upcomingFrom).toBeNull();
+
+    const history = await prisma.servicePriceChange.findMany({ orderBy: { ledger: 'asc' } });
+    expect(history.map((h) => h.price)).toEqual(['30000000', '25000000']);
+  });
+
+  it('indexes a schedule for an unknown service and a service with no schedule', async () => {
+    // Nothing to point at: the row does not exist yet.
+    await schedule(101, 45_000_000n, PENDING_AT);
+    expect(await prisma.service.count()).toBe(0);
+
+    // Indexing continues normally afterwards, and a service that never had a
+    // schedule — which is every service on a deployment predating the event —
+    // reads with both columns null.
+    await registerClinic();
+    await upsert(104, 30_000_000n);
+    const row = await serviceRow();
+    expect(row).toMatchObject({ price: '30000000', upcomingPrice: null });
+    expect(row.upcomingFrom).toBeNull();
+  });
+});
+
 describe('service_removed projection', () => {
   it('deactivates the service row instead of deleting it', async () => {
     await apply(

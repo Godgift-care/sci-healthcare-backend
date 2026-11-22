@@ -183,6 +183,8 @@ describe('error responses for every route (#296)', () => {
     }
     expect(wrong).toEqual([]);
     expect(routeDeclared.sort()).toEqual([
+      'GET /providers/{address}/services 404',
+      'GET /providers/{address}/services 404',
       'GET /providers/{address}/stats 404',
       'GET /providers/{address}/stats 404',
     ]);

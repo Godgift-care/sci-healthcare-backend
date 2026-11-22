@@ -26,6 +26,29 @@ npm run typecheck
 npm test
 ```
 
+### Lockfile changes
+
+Every CI job and the Docker image install with `npm ci` under Node 22, so
+`package-lock.json` has to be a file that npm 10 can read and that agrees with
+`package.json`. Both halves are checked by the `Lockfile` workflow
+(`.github/workflows/lockfile.yml`), which runs only when that file changes, in
+seconds, and prints the commands below when it fails.
+
+An npm installed by hand — or a newer npm left in `PATH` — writes a lockfile
+npm 10 will not install, and the failure surfaces as resolution errors in
+every other job. Fix it by throwing that lockfile away and regenerating it with
+the version CI uses:
+
+```bash
+nvm use 22                      # .nvmrc pins Node 22; check with `npm --version`
+git checkout package-lock.json
+npm install                     # any dependency change you were making, with npm 10
+git add package-lock.json && git commit
+```
+
+If `npm --version` does not print `10.x` after `nvm use 22`, the wrong npm is
+first in `PATH` and the regeneration will produce the same bad file.
+
 ### Seeding local data
 
 A fresh database is empty until the indexer catches up, which makes UI work
@@ -169,7 +192,10 @@ test(events): cover an event with no data fields
 ```
 
 - `npm run typecheck` and `npm test` must pass.
-- New endpoints need a test and a README entry.
+- New endpoints need a test and an entry in
+  [docs/api-reference.md](docs/api-reference.md), plus the regenerated
+  `openapi.json` and client (`npm run openapi:update && npm run build`).
+  `src/__tests__/docs-links.test.ts` keeps the README and the docs pages linked.
 - Endpoints that return user data must require a specific filter. An unfiltered
   dump invites scraping and will not be merged.
 

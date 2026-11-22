@@ -503,7 +503,7 @@ describe('the SQL a sparse page generates (#321)', () => {
     await get('/providers?fields=address,services');
     expect(readsTable('Service'), 'service catalogue').toBe(true);
     expect([...columnsRead('Service')].sort()).toEqual(
-      ['code', 'id', 'label', 'price', 'providerAddress'].sort(),
+      ['code', 'id', 'label', 'price', 'providerAddress', 'upcomingFrom', 'upcomingPrice'].sort(),
     );
   });
 

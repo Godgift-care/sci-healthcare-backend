@@ -82,6 +82,16 @@ model Service {
   price    String  // i128 as decimal string; JS numbers cannot hold these // pg:decimal
   active   Boolean @default(true)
 
+  /// Price scheduled with `schedule_service_price`, or null when nothing is
+  /// pending. The contract holds it as `pending_price` and swaps it into
+  /// `price` on the first read at or after `upcomingFrom`, emitting no event
+  /// when it does — so this row mirrors that and `applyDuePrice()` decides
+  /// which of the two is the price in effect.
+  upcomingPrice String?
+  /// When `upcomingPrice` takes effect, from the event's `effective_at`.
+  /// Null exactly when `upcomingPrice` is.
+  upcomingFrom  DateTime?
+
   provider        Provider @relation(fields: [providerAddress], references: [address])
   providerAddress String
 

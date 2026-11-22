@@ -10,6 +10,14 @@ export type Service = {
   price: string;
   priceDisplay: string;
   active?: boolean;
+  /**
+   * Price scheduled with notice, or null when nothing is pending — and null
+   * once the schedule has taken effect, because by then it is `price`
+   * (issue #315). Absent from a response served by an older deployment.
+   */
+  upcomingPrice?: string | null;
+  /** ISO instant `upcomingPrice` takes effect; null with no pending schedule. */
+  upcomingFrom?: string | Date | null;
 };
 
 export type ProviderLocation = {
@@ -110,6 +118,9 @@ export type ServiceClinic = {
   country: string;
   price: string;
   priceDisplay: string;
+  /** Pending schedule for this clinic's price, when one exists (#315). */
+  upcomingPrice?: string | null;
+  upcomingFrom?: string | Date | null;
 };
 
 /**
@@ -428,6 +439,25 @@ export type ApiErrorEnvelope = {
 export function isApiErrorCode(code: string): code is ApiErrorCode {
   return (API_ERROR_CODES as readonly string[]).includes(code);
 }
+
+/**
+ * Filters for `GET /providers/:address/services` (issue #314).
+ *
+ * `active` is absent by default, which returns the whole catalogue including
+ * the services the clinic has delisted.
+ */
+export type ClinicServicesParams = {
+  active?: boolean;
+  sort?: 'price' | 'code';
+  order?: 'asc' | 'desc';
+};
+
+export type ClinicServicesResponse = {
+  providerAddress: string;
+  name: string;
+  total: number;
+  services: Service[];
+};
 
 export type ListProvidersParams = {
   status?: 'Pending' | 'Active' | 'Suspended';
