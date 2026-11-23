@@ -50,6 +50,23 @@ function trimTrailingSlashes(value) {
         end--;
     return value.slice(0, end);
 }
+/**
+ * The first page of a list asks for its count (#247).
+ *
+ * The client has always returned `total`, and making the aggregate query
+ * opt-in on the route would otherwise break every caller that reads it. A
+ * cursor page does not ask: the count is the size of the whole filtered set,
+ * unchanged by paging, and `total` stays absent there, as the response type
+ * says.
+ */
+function firstPageCount(params) {
+    if (params === undefined)
+        return { count: true };
+    const query = { ...params };
+    if (query.cursor === undefined && query.count === undefined)
+        query.count = true;
+    return query;
+}
 export class Client {
     baseUrl;
     fetchImpl;
@@ -126,7 +143,7 @@ export class Client {
         return this.request('/stats/daily', { days });
     }
     async providers(params) {
-        return this.request('/providers', params);
+        return this.request('/providers', firstPageCount(params));
     }
     async provider(address) {
         return this.request(`/providers/${encodeURIComponent(address)}`);
@@ -152,13 +169,13 @@ export class Client {
         return this.request('/countries');
     }
     async services() {
-        return this.request('/services');
+        return this.request('/services', { count: true });
     }
     async service(code) {
         return this.request(`/services/${code}`);
     }
     async vouchers(params) {
-        return this.request('/vouchers', params);
+        return this.request('/vouchers', firstPageCount(params));
     }
     async voucher(id) {
         return this.request(`/vouchers/${encodeURIComponent(id)}`);
@@ -189,7 +206,7 @@ export class Client {
         return res.text();
     }
     async receipts(params) {
-        return this.request('/receipts', params);
+        return this.request('/receipts', firstPageCount(params));
     }
     async receipt(voucherId) {
         return this.request(`/receipts/${encodeURIComponent(voucherId)}`);

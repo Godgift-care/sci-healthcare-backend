@@ -187,7 +187,7 @@ describe('GET /vouchers sparse fieldsets (#166)', () => {
   });
 
   it('still paginates metadata alongside sparse rows', async () => {
-    const { status, body } = await get(`${base}&fields=id&limit=10`);
+    const { status, body } = await get(`${base}&fields=id&limit=10&count=true`);
     expect(status).toBe(200);
     expect(body.total).toBe(1);
     expect(body.vouchers[0]).toEqual({ id: '1' });

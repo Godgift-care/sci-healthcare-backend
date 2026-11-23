@@ -4,7 +4,14 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
 import { isValidRef } from '../lib/beneficiary.js';
-import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
+import {
+  countParam,
+  cursorParam,
+  decodeCursor,
+  encodeCursor,
+  limitParam,
+  nextPageLink,
+} from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
 import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
 import { providerSummaries, type ProviderSummary } from '../lib/providers.js';
@@ -20,6 +27,7 @@ const listQuery = z
     limit: limitParam,
     offset: z.coerce.number().int().min(0).default(0),
     fields: z.string().max(512).optional(),
+    count: countParam,
   })
   .refine((data) => Boolean(data.beneficiaryRef) !== Boolean(data.provider), {
     message: 'Provide exactly one of: beneficiaryRef, provider',
@@ -146,12 +154,12 @@ export function receiptRoutes(app: FastifyInstance): void {
    * knows the patient's identifier and key can construct it — the endpoint
    * cannot be walked to enumerate patients.
    */
-  app.get('/receipts', async (req) => {
+  app.get('/receipts', async (req, reply) => {
     const parsed = listQuery.safeParse(req.query);
     if (!parsed.success) {
       throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
     }
-    const { beneficiaryRef, provider, cursor, limit, offset, fields } = parsed.data;
+    const { beneficiaryRef, provider, cursor, limit, offset, fields, count } = parsed.data;
 
     const fieldSet = parseFields(fields, RECEIPT_FIELDS, 'GET /receipts');
     const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
@@ -201,7 +209,12 @@ export function receiptRoutes(app: FastifyInstance): void {
       ]);
       const last = page[page.length - 1];
       const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : null;
+      const link = nextPageLink(req.url, nextCursor);
+      if (link) reply.header('link', link);
+      // #247: the count uses the same filters as the page, without the cursor.
+      const total = count ? await prisma.receipt.count({ where: baseWhere }) : undefined;
       return {
+        ...(total === undefined ? {} : { total }),
         limit,
         nextCursor,
         receipts: project(page.map((r) => formatReceipt(r, labels, clinics))),
@@ -216,7 +229,8 @@ export function receiptRoutes(app: FastifyInstance): void {
         take: limit + 1,
         skip: offset,
       }) as unknown as Promise<ListRow[]>,
-      prisma.receipt.count({ where: baseWhere }),
+      // #247: skipped entirely unless `?count=true` asked for it.
+      count ? prisma.receipt.count({ where: baseWhere }) : Promise.resolve(undefined),
       prisma.receipt.findMany({
         where: baseWhere,
         select: { amount: true },
@@ -231,10 +245,12 @@ export function receiptRoutes(app: FastifyInstance): void {
     ]);
     const last = page[page.length - 1];
     const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : undefined;
+    const link = nextPageLink(req.url, nextCursor);
+    if (link) reply.header('link', link);
     const totalSpend = spend.reduce((acc, r) => acc + BigInt(r.amount), 0n).toString();
 
     return {
-      total,
+      ...(total === undefined ? {} : { total }),
       limit,
       offset,
       nextCursor,
