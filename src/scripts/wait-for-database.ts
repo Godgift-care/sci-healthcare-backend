@@ -5,7 +5,7 @@ async function main(): Promise<void> {
   await disconnect();
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : String(err));
+main().catch(() => {
+  console.error('Database availability check failed');
   process.exit(1);
 });
