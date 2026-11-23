@@ -302,6 +302,20 @@
         }
       }
     },
+    "/v1/indexer": {
+      "get": {
+        "summary": "Public indexer status",
+        "tags": [
+          "health"
+        ],
+        "description": "Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/stats": {
       "get": {
         "summary": "Aggregate dashboard counters",
@@ -4651,6 +4665,20 @@
               }
             },
             "description": "Degraded, and `checks` says why: a database error string instead of `ok`, `failedEvents` above 0, `webhooks.state: backlog`, an `indexer` of `lagging`, `gap` or `paused`, or an `rpc` error. This is the route’s own diagnosis, not the shared error envelope, because a failed check is an answer rather than a rejected request."
+          }
+        }
+      }
+    },
+    "/indexer": {
+      "get": {
+        "summary": "Public indexer status",
+        "tags": [
+          "health"
+        ],
+        "description": "Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
           }
         }
       }

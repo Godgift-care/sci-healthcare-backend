@@ -180,7 +180,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events, the webhook outbox backlog and per-endpoint circuit breakers.",
         "responses": {
           "200": {
             "description": "Every readiness check passed; safe to route traffic here. The body is the same in both statuses, so an operator can read the diagnosis from a `503` without a second request.",
@@ -298,6 +298,20 @@
               }
             },
             "description": "Degraded, and `checks` says why: a database error string instead of `ok`, `failedEvents` above 0, `webhooks.state: backlog`, an `indexer` of `lagging`, `gap` or `paused`, or an `rpc` error. This is the route’s own diagnosis, not the shared error envelope, because a failed check is an answer rather than a rejected request."
+          }
+        }
+      }
+    },
+    "/v1/indexer": {
+      "get": {
+        "summary": "Public indexer status",
+        "tags": [
+          "health"
+        ],
+        "description": "Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
           }
         }
       }
@@ -449,24 +463,52 @@
                       "type": "object",
                       "properties": {
                         "funded": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "claimed": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "attested": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "settled": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -476,6 +518,9 @@
                         "settled"
                       ],
                       "additionalProperties": false
+                    },
+                    "suppressed": {
+                      "type": "boolean"
                     },
                     "medianHours": {
                       "type": "object",
@@ -526,6 +571,7 @@
                     "country",
                     "clinic",
                     "counts",
+                    "suppressed",
                     "medianHours"
                   ],
                   "additionalProperties": false
@@ -825,6 +871,8 @@
                       "status": "Active",
                       "registeredAt": "2026-01-08T10:00:00.000Z",
                       "metadata": null,
+                      "metadataStatus": null,
+                      "metadataError": null,
                       "capacity": null,
                       "openVouchers": 2,
                       "services": [
@@ -979,6 +1027,8 @@
                   "status": "Active",
                   "registeredAt": "2026-01-08T10:00:00.000Z",
                   "metadata": null,
+                  "metadataStatus": null,
+                  "metadataError": null,
                   "capacity": null,
                   "openVouchers": 2,
                   "services": [
@@ -4497,7 +4547,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events, the webhook outbox backlog and per-endpoint circuit breakers.",
         "responses": {
           "200": {
             "description": "Every readiness check passed; safe to route traffic here. The body is the same in both statuses, so an operator can read the diagnosis from a `503` without a second request.",
@@ -4615,6 +4665,20 @@
               }
             },
             "description": "Degraded, and `checks` says why: a database error string instead of `ok`, `failedEvents` above 0, `webhooks.state: backlog`, an `indexer` of `lagging`, `gap` or `paused`, or an `rpc` error. This is the route’s own diagnosis, not the shared error envelope, because a failed check is an answer rather than a rejected request."
+          }
+        }
+      }
+    },
+    "/indexer": {
+      "get": {
+        "summary": "Public indexer status",
+        "tags": [
+          "health"
+        ],
+        "description": "Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
           }
         }
       }
@@ -4766,24 +4830,52 @@
                       "type": "object",
                       "properties": {
                         "funded": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "claimed": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "attested": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "settled": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -4793,6 +4885,9 @@
                         "settled"
                       ],
                       "additionalProperties": false
+                    },
+                    "suppressed": {
+                      "type": "boolean"
                     },
                     "medianHours": {
                       "type": "object",
@@ -4843,6 +4938,7 @@
                     "country",
                     "clinic",
                     "counts",
+                    "suppressed",
                     "medianHours"
                   ],
                   "additionalProperties": false
@@ -5142,6 +5238,8 @@
                       "status": "Active",
                       "registeredAt": "2026-01-08T10:00:00.000Z",
                       "metadata": null,
+                      "metadataStatus": null,
+                      "metadataError": null,
                       "capacity": null,
                       "openVouchers": 2,
                       "services": [
@@ -5296,6 +5394,8 @@
                   "status": "Active",
                   "registeredAt": "2026-01-08T10:00:00.000Z",
                   "metadata": null,
+                  "metadataStatus": null,
+                  "metadataError": null,
                   "capacity": null,
                   "openVouchers": 2,
                   "services": [
