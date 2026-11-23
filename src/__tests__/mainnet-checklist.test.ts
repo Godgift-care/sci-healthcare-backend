@@ -40,11 +40,23 @@ function srcFile(path: string): string {
   return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 }
 
+const voucherSources = [
+  'detail',
+  'events',
+  'export',
+  'index',
+  'list',
+  'query',
+  'schema',
+  'serialiser',
+]
+  .map((name) => srcFile(`routes/vouchers/${name}.ts`))
+  .join('\n');
+
 const routesSource = [
   'health',
   'providers',
   'services',
-  'vouchers',
   'receipts',
   'feed',
   'governance',
@@ -52,7 +64,7 @@ const routesSource = [
   'stream',
 ]
   .map((name) => srcFile(`routes/${name}.ts`))
-  .concat(srcFile('app.ts'))
+  .concat(voucherSources, srcFile('app.ts'))
   .join('\n');
 
 /** Where a variable is read: the schema, or the modules that bypass it. */

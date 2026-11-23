@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-10-16 (`78b48d4` shipped `src/lib/cursor.js` and the cursor branches)
-**Code:** `src/lib/cursor.ts`, `src/routes/vouchers.ts`, `src/routes/providers.ts`, `src/routes/receipts.ts`
+**Code:** `src/lib/cursor.ts`, `src/routes/vouchers/list.ts`, `src/routes/providers.ts`, `src/routes/receipts.ts`
 
 ## Context
 
