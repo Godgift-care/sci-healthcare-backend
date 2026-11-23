@@ -4715,13 +4715,13 @@
         "tags": [
           "stream"
         ],
-        "description": "Streams voucher state transitions as the indexer commits them. Requires exactly one of `voucher` or `provider`. Each `data:` frame is one JSON object with `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at`; it never contains a beneficiary reference. Comment lines are heartbeats.",
+        "description": "Streams voucher state transitions as the indexer commits them. Requires exactly one of `voucher` or `provider`. Each frame carries the on-chain event id in an `id:` line; send it back as the `Last-Event-ID` header on reconnect to replay up to 500 later events in order before going live. If that cursor is too old to replay, the server sends one `event: reset` frame with `{\"type\":\"reset\",\"reason\":...}` and the client must refetch. Each `data:` frame is one JSON object with `id`, `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at`; it never contains a beneficiary reference. Comment lines are heartbeats.",
         "responses": {
           "200": {
-            "description": "A server-sent event stream: one `data:` frame per committed voucher state change matching the filter, comment lines as heartbeats. A frame is `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at` — the same facts the JSON routes expose for that transition, and never a beneficiary reference. There is no delivery guarantee and no replay: a client that reconnects catches up from the JSON routes. The example shows a first connect, one frame and a heartbeat.",
+            "description": "A server-sent event stream: one frame per committed voucher state change matching the filter, comment lines as heartbeats. A frame carries the on-chain event id in an `id:` line and a JSON object with `id`, `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at` — the same facts the JSON routes expose for that transition, and never a beneficiary reference. Send the last `id:` back as `Last-Event-ID` to replay up to 500 later events in order before going live; if the cursor is too old, one `event: reset` frame says to refetch. The example shows a first connect, one frame and a heartbeat.",
             "content": {
               "text/event-stream": {
-                "example": ": connected\n\ndata: {\"type\":\"voucher_settled\",\"voucherId\":\"9100000000002\",\"providerAddress\":\"GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU\",\"status\":\"Settled\",\"ledger\":5612039,\"txHash\":\"3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f\",\"at\":\"2026-11-18T22:31:04.000Z\"}\n\n: heartbeat\n\n"
+                "example": ": connected\n\nid: 0000000005612039-0000000001\ndata: {\"id\":\"0000000005612039-0000000001\",\"type\":\"voucher_settled\",\"voucherId\":\"9100000000002\",\"providerAddress\":\"GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU\",\"status\":\"Settled\",\"ledger\":5612039,\"txHash\":\"3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f\",\"at\":\"2026-11-18T22:31:04.000Z\"}\n\n: heartbeat\n\n"
               }
             }
           },
@@ -9495,13 +9495,13 @@
         "tags": [
           "stream"
         ],
-        "description": "Streams voucher state transitions as the indexer commits them. Requires exactly one of `voucher` or `provider`. Each `data:` frame is one JSON object with `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at`; it never contains a beneficiary reference. Comment lines are heartbeats.",
+        "description": "Streams voucher state transitions as the indexer commits them. Requires exactly one of `voucher` or `provider`. Each frame carries the on-chain event id in an `id:` line; send it back as the `Last-Event-ID` header on reconnect to replay up to 500 later events in order before going live. If that cursor is too old to replay, the server sends one `event: reset` frame with `{\"type\":\"reset\",\"reason\":...}` and the client must refetch. Each `data:` frame is one JSON object with `id`, `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at`; it never contains a beneficiary reference. Comment lines are heartbeats.",
         "responses": {
           "200": {
-            "description": "A server-sent event stream: one `data:` frame per committed voucher state change matching the filter, comment lines as heartbeats. A frame is `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at` — the same facts the JSON routes expose for that transition, and never a beneficiary reference. There is no delivery guarantee and no replay: a client that reconnects catches up from the JSON routes. The example shows a first connect, one frame and a heartbeat.",
+            "description": "A server-sent event stream: one frame per committed voucher state change matching the filter, comment lines as heartbeats. A frame carries the on-chain event id in an `id:` line and a JSON object with `id`, `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at` — the same facts the JSON routes expose for that transition, and never a beneficiary reference. Send the last `id:` back as `Last-Event-ID` to replay up to 500 later events in order before going live; if the cursor is too old, one `event: reset` frame says to refetch. The example shows a first connect, one frame and a heartbeat.",
             "content": {
               "text/event-stream": {
-                "example": ": connected\n\ndata: {\"type\":\"voucher_settled\",\"voucherId\":\"9100000000002\",\"providerAddress\":\"GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU\",\"status\":\"Settled\",\"ledger\":5612039,\"txHash\":\"3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f\",\"at\":\"2026-11-18T22:31:04.000Z\"}\n\n: heartbeat\n\n"
+                "example": ": connected\n\nid: 0000000005612039-0000000001\ndata: {\"id\":\"0000000005612039-0000000001\",\"type\":\"voucher_settled\",\"voucherId\":\"9100000000002\",\"providerAddress\":\"GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU\",\"status\":\"Settled\",\"ledger\":5612039,\"txHash\":\"3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f\",\"at\":\"2026-11-18T22:31:04.000Z\"}\n\n: heartbeat\n\n"
               }
             }
           },

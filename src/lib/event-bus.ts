@@ -6,11 +6,11 @@ import { streamConnections } from './metrics.js';
  * The indexer commits a batch of events and then publishes what it committed;
  * `GET /stream` subscribes here and forwards each signal to the clients
  * watching that voucher or clinic. It is deliberately a plain in-process bus
- * rather than a queue: there is no delivery guarantee, no replay and no
- * subscriber state, so a stream that was not connected when the ledger closed
- * simply misses that update and the client catches up from the JSON routes.
- * Adding a broker would cost an operator and change nothing the client can
- * rely on, because the chain stays the source of truth.
+ * rather than a queue: there is no delivery guarantee and no subscriber state,
+ * so a stream that was not connected when the ledger closed misses the live
+ * hand-off. The route fills that gap from the `ContractEvent` log on a
+ * reconnect (`Last-Event-ID`), and the chain stays the source of truth.
+ * Adding a broker would cost an operator and buy nothing that replay does not.
  *
  * Two consequences worth stating plainly:
  *
@@ -32,6 +32,11 @@ import { streamConnections } from './metrics.js';
  * the one place that leaks it.
  */
 export type VoucherSignal = {
+  /**
+   * The on-chain contract event id, sent as the SSE `id:` field. A client
+   * resumes with it as `Last-Event-ID` after a dropped connection.
+   */
+  id: string;
   /** Contract event name, e.g. `voucher_settled`. */
   type: string;
   voucherId: string;
