@@ -283,7 +283,7 @@ const CONTRACTS = {
     present: ['price', 'priceDisplay', 'ledger', 'changedAt'],
     absent: [],
   },
-  CountryStats: { present: ['code', 'clinicCount'], absent: [] },
+  CountryStats: { present: ['code', 'name', 'clinicCount'], absent: [] },
   CountriesResponse: { present: ['countries'], absent: [] },
   ServicesResponse: { present: ['total', 'services'], absent: [] },
   ServiceCatalogueItem: {

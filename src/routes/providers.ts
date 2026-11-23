@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
+import { negotiateLanguage } from '../lib/i18n.js';
 import { isPostgres } from '../lib/database.js';
 import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
@@ -603,16 +604,27 @@ export function providerRoutes(app: FastifyInstance): void {
     };
   });
 
-  app.get('/countries', async () => {
+  app.get('/countries', async (req) => {
+    const query = req.query as { lang?: string };
+    const language = query.lang
+      ? negotiateLanguage(query.lang)
+      : negotiateLanguage(req.headers['accept-language']);
+
     const grouped = await prisma.provider.groupBy({
       by: ['country'],
       where: { status: 'Active' },
       _count: { _all: true },
     });
 
+    const displayNames = new Intl.DisplayNames([language], { type: 'region' });
+
     return {
       countries: grouped
-        .map((g) => ({ code: g.country, clinicCount: g._count._all }))
+        .map((g) => ({
+          code: g.country,
+          name: displayNames.of(g.country) ?? g.country,
+          clinicCount: g._count._all,
+        }))
         .sort((a, b) => a.code.localeCompare(b.code)),
     };
   });
