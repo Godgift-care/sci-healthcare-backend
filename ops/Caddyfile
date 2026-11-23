@@ -1,4 +1,4 @@
-# Caddy's site config for the self-hosted stack (docker-compose.prod.yml).
+# Caddy's site config for the self-hosted stack (deployments/docker-compose.prod.yml).
 #
 # {$SITE_ADDRESS} is Caddy's own environment substitution, filled from the
 # variable the compose file passes to the container.

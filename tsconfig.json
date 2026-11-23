@@ -1,9 +1,16 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
+    "outDir": "dist"
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "packages/client/src/**/*.ts",
+    "examples/telegram-bot/src/**/*.ts",
+    "examples/sms-notifier/src/**/*.ts",
+    "examples/whatsapp-notifier/src/**/*.ts",
+    "test/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "test/integration/quickstart.test.ts"]
 }

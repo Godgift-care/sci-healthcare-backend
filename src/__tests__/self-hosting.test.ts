@@ -15,7 +15,10 @@ import { describe, expect, it } from 'vitest';
  * importing `src/env.ts` validates `process.env` at module scope.
  */
 
-const compose = readFileSync(new URL('../../docker-compose.prod.yml', import.meta.url), 'utf8');
+const compose = readFileSync(
+  new URL('../../deployments/docker-compose.prod.yml', import.meta.url),
+  'utf8',
+);
 const template = readFileSync(new URL('../../.env.prod.example', import.meta.url), 'utf8');
 const gitignore = readFileSync(new URL('../../.gitignore', import.meta.url), 'utf8');
 const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
@@ -185,7 +188,7 @@ describe('docker-compose.prod.yml', () => {
   it('points the proxy at the app and the app at a file it cannot write (#300)', () => {
     const caddy = serviceBlock('caddy');
     expect(guideCaddyfile()).toMatch(/reverse_proxy api:8080/);
-    expect(caddy).toMatch(/\.\/ops\/Caddyfile:\/etc\/caddy\/Caddyfile:ro/);
+    expect(caddy).toMatch(/(\.\/|\.\.\/)ops\/Caddyfile:\/etc\/caddy\/Caddyfile:ro/);
     expect(caddy).toMatch(/caddy-data:\/data/);
   });
 

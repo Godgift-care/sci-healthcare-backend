@@ -172,7 +172,7 @@ A new, empty database needs nothing special.
 ### Self-hosting on a VPS
 
 [docs/self-hosting.md](docs/self-hosting.md) runs the same service on one
-server with `docker-compose.prod.yml`: Postgres, a one-shot migration service,
+server with `deployments/docker-compose.prod.yml`: Postgres, a one-shot migration service,
 the API, and Caddy for TLS. Use it when the indexer must not sleep — the
 `docker-compose.yml` in this repo is the local dev stack, and Render's free
 tier spins the process down after ~15 minutes idle.

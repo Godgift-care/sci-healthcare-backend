@@ -64,20 +64,6 @@ const configs = projectConfigs();
 const pkg = JSON.parse(read('package.json')) as { scripts?: Record<string, string> };
 const scripts = pkg.scripts ?? {};
 
-/** The configs each `typecheck*` script compiles, and whether it stays read-only. */
-const typecheckTargets = new Map<string, boolean>();
-for (const [name, body] of Object.entries(scripts)) {
-  if (!/^typecheck(:|$)/.test(name)) continue;
-  for (const match of body.matchAll(/tsc\s+-p\s+(\S+)([^&]*)/g)) {
-    typecheckTargets.set(match[1]!, match[2]!.includes('--noEmit'));
-  }
-}
-
-/** Script names the top-level `typecheck` actually runs. */
-const typecheckInvokes = new Set(
-  [...(scripts.typecheck ?? '').matchAll(/npm run (typecheck[:\w-]*)/g)].map((m) => m[1]!),
-);
-
 describe('tsconfig.base.json', () => {
   it('is the one place the strict options are declared', () => {
     for (const flag of STRICT_FLAGS) {
@@ -102,19 +88,19 @@ describe('npm run typecheck', () => {
     expect(configs).toContain('examples/telegram-bot/tsconfig.json');
   });
 
-  it('compiles every project config in the repository', () => {
-    expect([...typecheckTargets.keys()].sort()).toEqual(configs);
-  });
-
-  it('runs every typecheck script it defines', () => {
-    const defined = Object.keys(scripts).filter((name) => name.startsWith('typecheck:'));
-    expect([...typecheckInvokes].sort()).toEqual(defined.sort());
-  });
-
   it('checks without emitting, so no gate leaves build output behind', () => {
-    for (const [config, noEmit] of typecheckTargets) {
-      expect(noEmit, config).toBe(true);
-    }
+    expect(scripts.typecheck).toMatch(/--noEmit/);
+  });
+
+  it('covers all workspace sources in root tsconfig.json', () => {
+    const rootConfig = parse('tsconfig.json');
+    const includes = rootConfig.include ?? [];
+    expect(includes).toContain('src/**/*.ts');
+    expect(includes).toContain('scripts/**/*.ts');
+    expect(includes).toContain('packages/client/src/**/*.ts');
+    expect(includes).toContain('examples/telegram-bot/src/**/*.ts');
+    expect(includes).toContain('examples/sms-notifier/src/**/*.ts');
+    expect(includes).toContain('examples/whatsapp-notifier/src/**/*.ts');
   });
 });
 

@@ -1,7 +1,7 @@
 # Self-hosting on one VPS
 
 The whole stack — Postgres, the API and indexer, and TLS — runs from
-`docker-compose.prod.yml` on a single server with two public ports. This is the
+`deployments/docker-compose.prod.yml` on a single server with two public ports. This is the
 guide for that, start to finish.
 
 It is a different thing from [`docker-compose.yml`](../docker-compose.yml),
@@ -143,7 +143,7 @@ watch -n 10 'curl -s https://api.example.org/ready | jq "{status, lag: .checks.l
 ## 5. Start it
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f deployments/docker-compose.prod.yml up -d --build
 ```
 
 The first build takes a few minutes: it installs dependencies, flips the Prisma
@@ -174,7 +174,7 @@ wait for it. What else the fields mean is
 One command, and it runs the client from the container that already has it:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec -T db \
+docker compose -f deployments/docker-compose.prod.yml exec -T db \
   sh -c 'pg_dump -U "$POSTGRES_USER" --format=custom "$POSTGRES_DB"' > sci-$(date +%F).dump
 ```
 
@@ -197,10 +197,10 @@ else.
 Restore, which is also the way to test that a backup is a backup:
 
 ```bash
-docker compose -f docker-compose.prod.yml stop api
-docker compose -f docker-compose.prod.yml exec -T db \
+docker compose -f deployments/docker-compose.prod.yml stop api
+docker compose -f deployments/docker-compose.prod.yml exec -T db \
   sh -c 'pg_restore -U "$POSTGRES_USER" --clean --if-exists -d "$POSTGRES_DB"' < sci-2026-11-18.dump
-docker compose -f docker-compose.prod.yml up -d api
+docker compose -f deployments/docker-compose.prod.yml up -d api
 ```
 
 `--clean --if-exists` drops what the dump recreates instead of failing on the
@@ -210,7 +210,7 @@ underneath it.
 Nightly, keeping a week, in `/etc/cron.d/sci-backup` on the host:
 
 ```cron
-17 3 * * * root cd /root/sci-healthcare-backend && docker compose -f docker-compose.prod.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" --format=custom "$POSTGRES_DB"' > /root/backups/sci-$(date +\%F).dump && find /root/backups -name 'sci-*.dump' -mtime +7 -delete
+17 3 * * * root cd /root/sci-healthcare-backend && docker compose -f deployments/docker-compose.prod.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" --format=custom "$POSTGRES_DB"' > /root/backups/sci-$(date +\%F).dump && find /root/backups -name 'sci-*.dump' -mtime +7 -delete
 ```
 
 The percentages have to be escaped in a crontab, and the redirect stays outside
@@ -236,7 +236,7 @@ before you write the cron job.
 
 ```bash
 cd /root/sci-healthcare-backend
-docker compose -f docker-compose.prod.yml ps        # what is running now
+docker compose -f deployments/docker-compose.prod.yml ps        # what is running now
 git fetch origin && git log --oneline HEAD..origin/main
 ```
 
@@ -247,7 +247,7 @@ stopped while they run rather than after.
 
 ```bash
 # 1. Back up, if this release touches the schema.
-docker compose -f docker-compose.prod.yml exec -T db \
+docker compose -f deployments/docker-compose.prod.yml exec -T db \
   sh -c 'pg_dump -U "$POSTGRES_USER" --format=custom "$POSTGRES_DB"' > pre-upgrade.dump
 
 # 2. Note where you are, so the rollback below has a target.
@@ -255,10 +255,10 @@ git rev-parse HEAD
 
 # 3. Take the code and build the new image without starting it.
 git pull --ff-only origin main
-docker compose -f docker-compose.prod.yml build
+docker compose -f deployments/docker-compose.prod.yml build
 
 # 4. Migrate first, with the old API still serving.
-docker compose -f docker-compose.prod.yml run --rm --no-deps migrate
+docker compose -f deployments/docker-compose.prod.yml run --rm --no-deps migrate
 ```
 
 Step 4 is the one that makes this an upgrade rather than a restart, and it only
@@ -270,16 +270,16 @@ still serving and nothing has been swapped.
 
 ```bash
 # 5. Start the new API.
-docker compose -f docker-compose.prod.yml up -d
+docker compose -f deployments/docker-compose.prod.yml up -d
 curl -sf https://api.example.org/ready >/dev/null && echo ready
 ```
 
 To undo it:
 
 ```bash
-docker compose -f docker-compose.prod.yml stop api
+docker compose -f deployments/docker-compose.prod.yml stop api
 git checkout <the sha from step 2>
-docker compose -f docker-compose.prod.yml up -d --build api
+docker compose -f deployments/docker-compose.prod.yml up -d --build api
 ```
 
 `--build` is what makes the rollback real: `up` on its own reuses the image it
@@ -314,14 +314,14 @@ needs to ask it.
 | `up` fails with `required variable POSTGRES_PASSWORD is missing a value` | Compose interpolates from `.env` and refuses to guess, and an empty `KEY=` counts as missing. `cp .env.prod.example .env` and fill it in. |
 | App exits at boot listing env problems | Validation is deliberately upfront: a missing contract id or a `CORS_ORIGIN` of `*` in production stops the process rather than serving blanks. The message names the variable. |
 | `NETWORK_PASSPHRASE mismatch` | `STELLAR_NETWORK` and the passphrase disagree — mainnet's passphrase with `testnet` is the usual one. Set both from the same block in the example file. |
-| Containers healthy, `https://` never completes | Certificate order failed: the name does not resolve here yet, or :80 is filtered. `docker compose -f docker-compose.prod.yml logs caddy`. |
+| Containers healthy, `https://` never completes | Certificate order failed: the name does not resolve here yet, or :80 is filtered. `docker compose -f deployments/docker-compose.prod.yml logs caddy`. |
 | `/ready` answers 503 with `checks.database` an error | Postgres is not up or the password in `.env` no longer matches the volume's. The volume keeps the original credential after a password change — see the note in step 4. |
 | `/ready` answers 503 with `checks.indexer: "gap"` | The cursor fell outside the RPC retention window. [docs/RUNBOOK.md](RUNBOOK.md) has the two ways out. |
 | `/ready` is 200 but the data is old | `lagLedgers` climbing means the indexer is not keeping up. Check `checks.rpcUrl`, then the configured endpoints; a single public RPC is the usual limit. |
 
 ## See also
 
-- [`docker-compose.prod.yml`](../docker-compose.prod.yml) — the stack itself.
+- [`deployments/docker-compose.prod.yml`](../deployments/docker-compose.prod.yml) — the stack itself.
 - [docs/RUNBOOK.md](RUNBOOK.md) — alerts, the uptime probe, and what every
   `/ready` field means when it is not 200.
 - [docs/architecture.md](architecture.md) — why the read model can be rebuilt
