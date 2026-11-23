@@ -493,6 +493,7 @@ export class Indexer {
       const providerAddress = p.providerAddress ?? providerById.get(p.voucherId);
       if (!providerAddress) continue;
       signals.push({
+        id: p.id,
         type: p.type,
         voucherId: p.voucherId,
         providerAddress,

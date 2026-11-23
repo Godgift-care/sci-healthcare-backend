@@ -229,9 +229,10 @@ class Client {
      * `provider` is required, matching the route, and the returned `close()`
      * stops reconnecting for good.
      *
-     * The server frames no SSE `id:` today, so a drop loses whatever happened
-     * while disconnected; re-read the JSON routes after `onReconnect` to be
-     * certain of current state.
+     * Each frame carries the on-chain event id, resent as `Last-Event-ID` on a
+     * reconnect so the server replays what was missed. If that cursor is too old
+     * for the replay window, `onReset` fires and the JSON routes should be
+     * re-read.
      */
     stream(filters, handlers = {}, options = {}) {
         return (0, stream_js_1.subscribe)(this.baseUrl, this.defaultHeaders, this.fetchImpl, filters, handlers, options);

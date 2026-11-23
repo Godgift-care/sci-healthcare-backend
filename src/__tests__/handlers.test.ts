@@ -321,6 +321,7 @@ describe('stellar handler modules', () => {
       );
       const signal = voucherSignal(event, 'Funded', CLINIC);
       expect(signal).toEqual({
+        id: event.id,
         type: 'voucher_created',
         voucherId: '42',
         status: 'Funded',

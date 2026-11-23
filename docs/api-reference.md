@@ -125,11 +125,19 @@ on-chain registry data; no receipt response gains a beneficiary reference.
 
 `GET /stream?voucher=<id>` or `GET /stream?provider=<address>` holds the
 connection open and forwards each voucher transition as the indexer commits it:
-one `data:` frame per event, containing `type`, `voucherId`,
+one `data:` frame per event, containing `id`, `type`, `voucherId`,
 `providerAddress`, `status`, `ledger`, `txHash` and `at`. Exactly one filter is
 required — an unfiltered feed of care-state transitions would be a way to watch
 a clinic's patient volume in real time — and a frame never carries a beneficiary
 reference, only what the JSON routes already expose for the same transition.
+Each frame also carries the on-chain event id in an SSE `id:` line. Send the last
+one you received as `Last-Event-ID` when you reconnect: the server replays the
+events committed after it, in ledger order, before going live, and drops any
+overlap with the live hand-off by id. At most 500 events are replayed. If the
+cursor is no longer in the event log, belongs to another voucher or clinic, or
+has more than 500 events behind it, the server sends one `event: reset` frame
+whose data is `{"type":"reset","reason":...}` instead; refetch the JSON routes
+and reconnect with no cursor.
 Nothing is read from the database to serve the stream, so it cannot become a
 second way to walk the read model: it only reports what just happened.
 
