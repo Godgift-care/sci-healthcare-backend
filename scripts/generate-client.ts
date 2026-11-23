@@ -21,7 +21,10 @@ async function main() {
   await app.close();
 
   const pathCount = Object.keys(spec.paths || {}).length;
-  console.log(`Extracted OpenAPI ${spec.openapi} with ${pathCount} paths`);
+  // `swagger()` is typed by the plugin as the document it hands back, which
+  // leaves the version out; it is always present at runtime.
+  const openapiVersion = 'openapi' in spec ? String(spec.openapi) : 'unknown';
+  console.log(`Extracted OpenAPI ${openapiVersion} with ${pathCount} paths`);
 
   if (pathCount === 0) {
     throw new Error('OpenAPI specification contains no paths');

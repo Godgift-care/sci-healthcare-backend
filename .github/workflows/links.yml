@@ -1,0 +1,101 @@
+name: Docs links
+
+# Link check for the Markdown docs (#301). There are two steps and they are
+# deliberately not equally severe:
+#
+#   * Internal links - files, sections and anchors inside this repository -
+#     fail the pull request. They are the ones an author can break by renaming
+#     or deleting something, and they never break for a reason outside the
+#     diff, so a red light here is always actionable by the person who pushed.
+#   * External links are checked, retried, and written to the run summary
+#     without failing it. A third-party page moving on, or the free-tier API
+#     in the README taking 90 seconds to wake from a spin-down, is information
+#     worth reporting and not worth blocking a merge on.
+#
+# Settings live in lychee.toml at the repository root, which is also the file
+# lychee reads for a local run, so `lychee --config lychee.toml --scheme file
+# $(git ls-files '*.md')` reproduces the fatal step exactly.
+
+on:
+  pull_request:
+    branches: [main]
+    # The checker itself and its config count as "touching the links", because
+    # a change to either can change what the next pull request is held to.
+    paths:
+      - '**/*.md'
+      - 'lychee.toml'
+      - '.github/workflows/links.yml'
+  schedule:
+    # Weekly, Monday 04:39 UTC. Mondays are taken at 03:26 by CodeQL, and :00
+    # is the busiest slot on GitHub's scheduler.
+    - cron: '39 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: links-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    name: Check Markdown links
+    runs-on: ubuntu-latest
+    env:
+      # lychee picks this up itself to lift the api.github.com rate limit,
+      # which otherwise turns every github.com link in the docs into a false
+      # failure on a shared-IP runner. The job has no write permission to
+      # spend, so the token cannot do anything but read.
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Same shape as the osv-scanner step in security.yml: an exact release,
+      # verified against the checksum that release publishes, and no floating
+      # download URL that can rot or be swapped between runs.
+      - name: Install lychee (pinned version, checksum verified)
+        run: |
+          set -euo pipefail
+          asset=lychee-x86_64-unknown-linux-musl.tar.gz
+          curl -sSfL -o "$RUNNER_TEMP/$asset" \
+            "https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/$asset"
+          echo "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5  $RUNNER_TEMP/$asset" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP"
+          bin="$RUNNER_TEMP/lychee-x86_64-unknown-linux-musl/lychee"
+          chmod +x "$bin"
+          "$bin" --version
+          echo "LYCHEE=$bin" >> "$GITHUB_ENV"
+
+      - name: Collect the Markdown files
+        # Tracked files only, so a stray scratch note in a working tree or an
+        # ignored build directory can never be what breaks the run.
+        run: git ls-files '*.md' > "$RUNNER_TEMP/markdown.txt"
+
+      - name: Check internal links (fatal)
+        run: |
+          set -euo pipefail
+          "$LYCHEE" --config lychee.toml \
+            --files-from "$RUNNER_TEMP/markdown.txt" \
+            --scheme file --no-progress --format detailed
+
+      - name: Check external links (retried and reported, not fatal)
+        # The step is allowed to go red so the run log says so honestly; the
+        # job does not. See the two-step rationale at the top of this file.
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          report="$RUNNER_TEMP/external.md"
+          status=0
+          "$LYCHEE" --config lychee.toml \
+            --files-from "$RUNNER_TEMP/markdown.txt" \
+            --scheme http --scheme https \
+            --no-progress --format markdown --output "$report" || status=$?
+          cat "$report"
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::An external link still failed after lychee's retries (exit $status); see the run summary. This does not block the merge."
+          fi
+          exit "$status"
