@@ -560,6 +560,9 @@ describe('GET /stats/funnel', () => {
       },
     });
 
+    // Seed 8 vouchers so all stage counts (funded=8, claimed=7, attested=6,
+    // settled=5) are at or above the STATS_MIN_CELL=5 threshold and no
+    // suppression occurs in the existing counts/medians assertions.
     await prisma.voucher.createMany({
       data: [
         { id: 'funnel-funded', status: 'Funded', claimedAt: null, attestedAt: null },
@@ -587,6 +590,24 @@ describe('GET /stats/funnel', () => {
           claimedAt: hoursAfterCreation(8),
           attestedAt: hoursAfterCreation(11),
         },
+        {
+          id: 'funnel-settled-c',
+          status: 'Settled',
+          claimedAt: hoursAfterCreation(10),
+          attestedAt: hoursAfterCreation(13),
+        },
+        {
+          id: 'funnel-settled-d',
+          status: 'Settled',
+          claimedAt: hoursAfterCreation(12),
+          attestedAt: hoursAfterCreation(15),
+        },
+        {
+          id: 'funnel-settled-e',
+          status: 'Settled',
+          claimedAt: hoursAfterCreation(14),
+          attestedAt: hoursAfterCreation(17),
+        },
       ].map((voucher) => ({
         ...voucher,
         funder: FUNDER,
@@ -603,6 +624,9 @@ describe('GET /stats/funnel', () => {
       data: [
         { voucherId: 'funnel-settled-a', settledAt: hoursAfterCreation(17) },
         { voucherId: 'funnel-settled-b', settledAt: hoursAfterCreation(15) },
+        { voucherId: 'funnel-settled-c', settledAt: hoursAfterCreation(19) },
+        { voucherId: 'funnel-settled-d', settledAt: hoursAfterCreation(22) },
+        { voucherId: 'funnel-settled-e', settledAt: hoursAfterCreation(25) },
       ].map((receipt) => ({
         ...receipt,
         beneficiaryRef: REF,
@@ -614,9 +638,13 @@ describe('GET /stats/funnel', () => {
   });
 
   it('returns stage counts and fixed-time medians filtered by country or clinic', async () => {
+    // funded=8, claimed=7, attested=6, settled=5 — all above STATS_MIN_CELL=5.
+    // medians: fundedToClaimed=[2,4,6,8,10,12,14]→8, claimedToAttested=[3,5,3,3,3,3]→3,
+    //          attestedToSettled=[6,4,6,7,8]→6
     const expected = {
-      counts: { funded: 5, claimed: 4, attested: 3, settled: 2 },
-      medianHours: { fundedToClaimed: 5, claimedToAttested: 3, attestedToSettled: 5 },
+      counts: { funded: 8, claimed: 7, attested: 6, settled: 5 },
+      suppressed: false,
+      medianHours: { fundedToClaimed: 8, claimedToAttested: 3, attestedToSettled: 6 },
     };
 
     const byCountry = await get('/stats/funnel?country=zz');
@@ -628,6 +656,9 @@ describe('GET /stats/funnel', () => {
     expect(byClinic.body).toMatchObject({ country: null, clinic: funnelClinic, ...expected });
 
     const combined = await get(`/stats/funnel?country=NG&clinic=${funnelClinic}`);
+    // Country NG has no matching providers: all counts are 0, which is not
+    // sensitive and is never suppressed.
+    expect(combined.body.suppressed).toBe(false);
     expect(combined.body.counts).toEqual({ funded: 0, claimed: 0, attested: 0, settled: 0 });
     expect(combined.body.medianHours).toEqual({
       fundedToClaimed: null,
@@ -636,10 +667,155 @@ describe('GET /stats/funnel', () => {
     });
   });
 
+  it('suppresses stage counts below STATS_MIN_CELL on scoped queries', async () => {
+    // The existing funnel clinic has funded=8, claimed=7, attested=6, settled=5.
+    // A second tiny clinic with only 2 settled vouchers should have them suppressed.
+    const tinyClinic = `G${'T'.repeat(55)}`;
+    await prisma.provider.create({
+      data: {
+        address: tinyClinic,
+        name: 'Tiny Clinic',
+        country: 'ZZ',
+        status: 'Active',
+        registeredAt: createdAt,
+      },
+    });
+    await prisma.voucher.createMany({
+      data: ['tiny-a', 'tiny-b'].map((id) => ({
+        id,
+        status: 'Settled',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: tinyClinic,
+        serviceCode: 101,
+        amount: '1000000',
+        createdAt,
+        claimedAt: hoursAfterCreation(1),
+        attestedAt: hoursAfterCreation(2),
+        expiresAt: new Date(createdAt.getTime() + DAY),
+      })),
+    });
+    await prisma.receipt.createMany({
+      data: ['tiny-a', 'tiny-b'].map((voucherId) => ({
+        voucherId,
+        beneficiaryRef: REF,
+        providerAddress: tinyClinic,
+        serviceCode: 101,
+        amount: '1000000',
+        settledAt: hoursAfterCreation(3),
+      })),
+    });
+
+    const { status, body } = await get(`/stats/funnel?clinic=${tinyClinic}`);
+    expect(status).toBe(200);
+    expect(body.suppressed).toBe(true);
+    // 2 vouchers funded/claimed/attested — below threshold of 5 → all null.
+    expect(body.counts.funded).toBeNull();
+    expect(body.counts.settled).toBeNull();
+  });
+
+  it('never suppresses the global aggregate (unscoped query)', async () => {
+    // The global /stats/funnel has no country or clinic filter, so STATS_MIN_CELL
+    // does not apply regardless of how small the total counts are.
+    const tinyClinic2 = `G${'U'.repeat(55)}`;
+    await prisma.provider.create({
+      data: {
+        address: tinyClinic2,
+        name: 'Tiny2',
+        country: 'XY',
+        status: 'Active',
+        registeredAt: createdAt,
+      },
+    });
+    await prisma.voucher.create({
+      data: {
+        id: 'tiny2-a',
+        status: 'Funded',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: tinyClinic2,
+        serviceCode: 101,
+        amount: '1000000',
+        createdAt,
+        claimedAt: null,
+        attestedAt: null,
+        expiresAt: new Date(createdAt.getTime() + DAY),
+      },
+    });
+
+    const { status, body } = await get('/stats/funnel');
+    expect(status).toBe(200);
+    expect(body.suppressed).toBe(false);
+    // All counts are concrete numbers, never null.
+    expect(typeof body.counts.funded).toBe('number');
+  });
+
   it('rejects a country filter that is not a two-letter code', async () => {
     const { status, body } = await get('/stats/funnel?country=ZZZ');
     expect(status).toBe(400);
     expect(body.error).toBe('bad_request');
+  });
+});
+
+describe('GET /countries', () => {
+  // Helper: create n Active providers for a country, using unique addresses.
+  const addClinics = (country: string, n: number, prefix: string) =>
+    prisma.provider.createMany({
+      data: Array.from({ length: n }, (_, i) => ({
+        address: `${prefix}${i}`.padEnd(56, '0').slice(0, 56),
+        name: `${country} Clinic ${i}`,
+        country,
+        status: 'Active' as const,
+        registeredAt: new Date('2026-01-01T00:00:00Z'),
+      })),
+    });
+
+  it('returns clinic counts sorted by country code', async () => {
+    // seed() creates 1 Active NG and 1 Active TZ provider. Add enough in each
+    // to bring both above STATS_MIN_CELL=5, plus a fresh KE block.
+    await addClinics('NG', 10, 'PNX'); // NG: 1 (seeded) + 10 = 11
+    await addClinics('TZ', 10, 'PTX'); // TZ: 1 (seeded) + 10 = 11
+    await addClinics('KE', 7, 'PKX'); // KE: 0 Active (seeded is Pending) + 7 = 7
+
+    const { status, body } = await get('/countries');
+    expect(status).toBe(200);
+    const countries: { code: string; clinicCount: number | null }[] = body.countries;
+    expect(countries.find((c) => c.code === 'NG')?.clinicCount).toBe(11);
+    expect(countries.find((c) => c.code === 'KE')?.clinicCount).toBe(7);
+    expect(countries.find((c) => c.code === 'TZ')?.clinicCount).toBe(11);
+    // Response is sorted alphabetically.
+    const codes = countries.map((c) => c.code);
+    expect(codes).toEqual([...codes].sort());
+  });
+
+  it('suppresses clinicCount when below STATS_MIN_CELL', async () => {
+    // seed() creates 1 Active NG and 1 Active TZ — both below threshold.
+    // Bring NG and TZ above threshold so they don't add extra primary
+    // suppressions and skew the complementary-suppression logic.
+    await addClinics('NG', 10, 'PNY'); // NG: 1 + 10 = 11
+    await addClinics('TZ', 10, 'PTY'); // TZ: 1 + 10 = 11
+    // AA: 2 clinics → below threshold → primary suppression.
+    await addClinics('AA', 2, 'PAA');
+    // BB: 10 clinics → not suppressed.
+    await addClinics('BB', 10, 'PBB');
+    // CC: 8 clinics → not suppressed on its own, but it is the smallest
+    // revealed entry and will receive complementary suppression.
+    await addClinics('CC', 8, 'PCC');
+
+    const { status, body } = await get('/countries');
+    expect(status).toBe(200);
+    const aa = body.countries.find((c: { code: string }) => c.code === 'AA');
+    expect(aa.clinicCount).toBeNull();
+    expect(aa.suppressed).toBe(true);
+    // Complementary suppression: exactly 1 primary suppression and ≥3 entries →
+    // the next-smallest revealed entry (CC=8) is also suppressed.
+    const cc = body.countries.find((c: { code: string }) => c.code === 'CC');
+    expect(cc.clinicCount).toBeNull();
+    expect(cc.suppressed).toBe(true);
+    // The larger entry remains revealed.
+    const bb = body.countries.find((c: { code: string }) => c.code === 'BB');
+    expect(bb.clinicCount).toBe(10);
+    expect(bb.suppressed).toBe(false);
   });
 });
 

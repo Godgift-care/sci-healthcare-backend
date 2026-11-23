@@ -96,7 +96,8 @@ export type ProviderHistory = {
 export type CountryStats = {
   code: string;
   name: string;
-  clinicCount: number;
+  clinicCount: number | null;
+  suppressed: boolean;
 };
 
 /** One entry of `GET /services`: every clinic price for one service code. */

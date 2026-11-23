@@ -28,6 +28,11 @@ describe('negotiateLanguage', () => {
     expect(negotiateLanguage('pt')).toBe('pt');
     expect(negotiateLanguage('pt-BR')).toBe('pt');
     expect(negotiateLanguage('PT-PT')).toBe('pt');
+    expect(negotiateLanguage('ha')).toBe('ha');
+    expect(negotiateLanguage('yo-NG')).toBe('yo');
+    expect(negotiateLanguage('ig')).toBe('ig');
+    expect(negotiateLanguage('ar-SA')).toBe('ar');
+    expect(negotiateLanguage('AR')).toBe('ar');
   });
 
   it('falls back to English when nothing supported is offered', () => {
@@ -86,9 +91,9 @@ describe('errorMessage', () => {
     );
   });
 
-  it('exposes English as the default language and supports en, fr, sw and pt', () => {
+  it('exposes English as the default language and supports en, fr, sw, pt, ha, yo, ig and ar', () => {
     expect(DEFAULT_LANGUAGE).toBe('en');
-    expect([...SUPPORTED_LANGUAGES]).toEqual(['en', 'fr', 'sw', 'pt']);
+    expect([...SUPPORTED_LANGUAGES]).toEqual(['en', 'fr', 'sw', 'pt', 'ha', 'yo', 'ig', 'ar']);
   });
 
   it('translates a catalogued code for Portuguese', () => {
@@ -99,6 +104,36 @@ describe('errorMessage', () => {
     expect(errorMessage('invalid_query', 'pt', 'Invalid query parameters')).toBe(
       'Parâmetros de consulta inválidos',
     );
+  });
+
+  it('translates a catalogued code for Hausa, Yoruba, Igbo and Arabic', () => {
+    expect(errorMessage('voucher_not_found', 'ha', 'Voucher not found')).toBe(
+      'Takardar izini ba ta samu ba',
+    );
+    expect(errorMessage('voucher_not_found', 'yo', 'Voucher not found')).toBe(
+      'Àmì ìdánilójú kò sí',
+    );
+    expect(errorMessage('voucher_not_found', 'ig', 'Voucher not found')).toBe(
+      'Akwụkwọ nkwenye adịghị',
+    );
+    expect(errorMessage('voucher_not_found', 'ar', 'Voucher not found')).toBe('القسيمة غير موجودة');
+  });
+
+  it('wraps LTR placeholder values in bidi isolates for Arabic', () => {
+    // LRI (U+2066) and PDI (U+2069) wrap method/url so RTL text renders correctly.
+    const result = errorMessage('route_not_found', 'ar', 'Route GET /x not found', {
+      method: 'GET',
+      url: '/x',
+    });
+    expect(result).toBe('المسار ⁦GET⁩ ⁦/x⁩ غير موجود');
+  });
+
+  it('does not add bidi marks for non-RTL languages', () => {
+    const result = errorMessage('route_not_found', 'ha', 'Route GET /x not found', {
+      method: 'GET',
+      url: '/x',
+    });
+    expect(result).toBe('Hanya GET /x ba ta samu ba');
   });
 });
 

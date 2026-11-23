@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from '../app.js';
@@ -109,7 +109,13 @@ describe('aggregate routes compute once per ledger (#320)', () => {
   type FunnelBody = {
     country: string | null;
     clinic: string | null;
-    counts: { funded: number; claimed: number; attested: number; settled: number };
+    counts: {
+      funded: number | null;
+      claimed: number | null;
+      attested: number | null;
+      settled: number | null;
+    };
+    suppressed: boolean;
     medianHours: {
       fundedToClaimed: number | null;
       claimedToAttested: number | null;
@@ -215,12 +221,14 @@ describe('aggregate routes compute once per ledger (#320)', () => {
 
     expect(await operationsFor('/stats/funnel')).toBe(1);
 
-    // What the cached answer says is what the scan said.
+    // What the cached answer says is what the scan said. The global (unscoped)
+    // aggregate is never suppressed, so suppressed is false and counts are exact.
     const body = await get<FunnelBody>('/stats/funnel');
     expect(body).toEqual({
       country: null,
       clinic: null,
       counts: { funded: 2, claimed: 2, attested: 1, settled: 1 },
+      suppressed: false,
       medianHours: { fundedToClaimed: 4, claimedToAttested: 1, attestedToSettled: 1 },
     });
   });
@@ -233,8 +241,11 @@ describe('aggregate routes compute once per ledger (#320)', () => {
 
     const byClinic = await get<FunnelBody>(`/stats/funnel?clinic=${FUNNEL_CLINIC}`);
     expect(byClinic.clinic).toBe(FUNNEL_CLINIC);
-    expect(byClinic.counts.funded).toBe(2);
-    expect(byClinic.counts.settled).toBe(1);
+    // 2 funded vouchers are below STATS_MIN_CELL=5, so counts are suppressed on
+    // scoped queries. What matters here is that the cache correctly isolates the
+    // clinic scope from the global and country caches (not the count value).
+    expect(byClinic.suppressed).toBe(true);
+    expect(byClinic.counts.funded).toBeNull();
   });
 
   it('runs no read-model query on a second /stats/services, at any limit', async () => {
@@ -287,5 +298,13 @@ describe('aggregate routes compute once per ledger (#320)', () => {
     // Same for the funnel: the new voucher is funded, so it is counted.
     await prisma.indexerState.update({ where: { id: 1 }, data: { lastLedger: 1_002 } });
     expect((await get<FunnelBody>('/stats/funnel')).counts.funded).toBe(3);
+  });
+
+  afterAll(async () => {
+    await prisma.receipt.deleteMany();
+    await prisma.voucher.deleteMany();
+    await prisma.service.deleteMany();
+    await prisma.provider.deleteMany();
+    await prisma.indexerState.deleteMany();
   });
 });

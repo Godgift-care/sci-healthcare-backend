@@ -120,6 +120,14 @@ const envShape = z.object({
    * answers 503 and the client retries later.
    */
   SSE_MAX_CONNECTIONS: z.coerce.number().int().positive().default(64),
+  /**
+   * Minimum voucher count per reporting cell for public aggregate routes
+   * (`GET /countries`, `GET /stats/funnel?country=` and `?clinic=`).
+   * Cells below this threshold are suppressed (returned as null) to prevent
+   * re-identification of individuals in small cohorts (#256).
+   * Set to 0 to disable suppression (testing or unrestricted deployments).
+   */
+  STATS_MIN_CELL: z.coerce.number().int().nonnegative().default(5),
 });
 
 /**
