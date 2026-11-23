@@ -43,7 +43,7 @@ import { providerRoutes } from './routes/providers.js';
 import { receiptRoutes } from './routes/receipts.js';
 import { serviceRoutes } from './routes/services.js';
 import { streamRoutes } from './routes/stream.js';
-import { voucherRoutes } from './routes/vouchers.js';
+import { voucherRoutes } from './routes/vouchers/index.js';
 import { DEFAULT_RATE_LIMIT } from './lib/rate-limits.js';
 
 /** Update annually — the test fails when this date is less than 30 days away. */

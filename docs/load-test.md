@@ -87,7 +87,7 @@ Same filter (`status=Settled`, 500 matching rows), differing only in `sort`:
 - **`sort=amount` is ~10× slower than its index-ordered twin** (216 vs
   2,151 req/s; p50 45 ms vs 4 ms) at only 500 matching rows, because the
   route loads every matching voucher and sorts in memory on each request
-  (`src/routes/vouchers.ts`). The gap grows with match-set size — filed as
+  (`src/routes/vouchers/query.ts`). The gap grows with match-set size — filed as
   [#96](https://github.com/Godgift-care/sci-healthcare-backend/issues/96).
 - No connection errors, timeouts, 5xx, or 3xx anywhere in any scenario. The
   read paths themselves are stable under saturation; the mixed scenario
