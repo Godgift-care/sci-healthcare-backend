@@ -931,6 +931,103 @@ describe('GET /providers', () => {
   });
 });
 
+describe('GET /providers sorting and service filter (#237, #238)', () => {
+  it('lists only clinics that currently offer a service code', async () => {
+    const general = await get('/providers?serviceCode=101');
+    expect(general.status).toBe(200);
+    expect(general.body.providers.map((p: { address: string }) => p.address)).toEqual([
+      CLINIC,
+      SECOND_CLINIC,
+    ]);
+
+    // 303 is delisted at CLINIC, so it is not an offering there.
+    const paused = await get('/providers?serviceCode=303');
+    expect(paused.body.total).toBe(0);
+  });
+
+  it('combines the service filter with status and country', async () => {
+    const { body } = await get('/providers?serviceCode=101&status=Active&country=NG');
+    expect(body.providers.map((p: { address: string }) => p.address)).toEqual([CLINIC]);
+
+    const wrongCountry = await get('/providers?serviceCode=101&country=KE');
+    expect(wrongCountry.body.providers).toEqual([]);
+  });
+
+  it('sorts by name, country and registration, in both directions', async () => {
+    const namesAsc = await get('/providers?sort=name');
+    expect(namesAsc.body.providers.map((p: { name: string }) => p.name)).toEqual([
+      'Ikeja General Clinic',
+      'Kisumu Health Post',
+      'Mwanza Mission Hospital',
+    ]);
+
+    const namesDesc = await get('/providers?sort=name&order=desc');
+    expect(namesDesc.body.providers.map((p: { name: string }) => p.name)).toEqual([
+      'Mwanza Mission Hospital',
+      'Kisumu Health Post',
+      'Ikeja General Clinic',
+    ]);
+
+    // The historical default, newest registration first.
+    const registered = await get('/providers?sort=registered');
+    expect(registered.body.providers.map((p: { address: string }) => p.address)).toEqual([
+      PENDING_CLINIC,
+      CLINIC,
+      SECOND_CLINIC,
+    ]);
+
+    const countries = await get('/providers?sort=country&order=desc');
+    expect(countries.body.providers.map((p: { country: string }) => p.country)).toEqual([
+      'TZ',
+      'NG',
+      'KE',
+    ]);
+  });
+
+  it('pages every sort without gaps or repeats', async () => {
+    for (const sort of ['name', 'country', 'registered']) {
+      const seen: string[] = [];
+      let cursor: string | null | undefined;
+      do {
+        const suffix = cursor ? `&cursor=${cursor}` : '';
+        const { body } = await get(`/providers?sort=${sort}&limit=1${suffix}`);
+        seen.push(body.providers[0].address);
+        cursor = body.nextCursor;
+      } while (cursor);
+
+      expect(new Set(seen).size, `${sort} must not repeat a clinic`).toBe(seen.length);
+      expect(seen, `${sort} must visit every clinic`).toHaveLength(3);
+    }
+  });
+
+  it('rejects a cursor issued for another ordering', async () => {
+    const first = await get('/providers?sort=name&limit=1');
+    const cursor = first.body.nextCursor as string;
+    expect(cursor).toBeTruthy();
+
+    const sameSort = await get(`/providers?sort=name&cursor=${cursor}`);
+    expect(sameSort.status).toBe(200);
+
+    const otherSort = await get(`/providers?sort=country&cursor=${cursor}`);
+    expect(otherSort.status).toBe(400);
+    expect(otherSort.body.error).toBe('invalid_cursor');
+
+    const otherOrder = await get(`/providers?sort=name&order=desc&cursor=${cursor}`);
+    expect(otherOrder.status).toBe(400);
+    expect(otherOrder.body.error).toBe('invalid_cursor');
+  });
+
+  it('rejects an unknown sort or service code', async () => {
+    const sort = await get('/providers?sort=price');
+    expect(sort.status).toBe(400);
+    expect(sort.body.error).toBe('invalid_query');
+
+    const code = await get('/providers?serviceCode=not-a-code');
+    expect(code.status).toBe(400);
+    expect(code.body.error).toBe('invalid_query');
+  });
+});
+
 describe('GET /providers capacity and openVouchers (#316)', () => {
   const CAP_CLINIC = `G${'C'.repeat(55)}`;
   const createdAt = new Date('2026-01-01T00:00:00Z');
@@ -2755,6 +2852,135 @@ describe('scheduled price changes in the API (#315)', () => {
     const { body } = await get(`/providers/${CLINIC}/services`);
     expect(body.services[0].upcomingPrice).toBeNull();
     expect(body.services[0].upcomingFrom).toBeNull();
+  });
+});
+
+describe('GET /services filters and sorting (#239, #240)', () => {
+  const SORT_CLINIC = `G${'E'.repeat(55)}`;
+  const BIG_CLINIC = `G${'F'.repeat(55)}`;
+
+  async function seedCatalogueClinic(
+    address: string,
+    name: string,
+    services: { id: string; code: number; label: string; price: string }[],
+  ) {
+    await prisma.provider.create({
+      data: {
+        address,
+        name,
+        country: 'ZZ',
+        status: 'Active',
+        registeredAt: new Date('2026-01-01T00:00:00Z'),
+        services: { create: services },
+      },
+    });
+  }
+
+  it('searches labels case-insensitively', async () => {
+    const lower = await get('/services?q=malaria');
+    expect(lower.status).toBe(200);
+    expect(lower.body.services.map((s: { code: number }) => s.code)).toEqual([202]);
+    expect(lower.body.services[0].labels).toEqual(['Malaria rapid test']);
+
+    const upper = await get('/services?q=MALARIA');
+    expect(upper.body.services.map((s: { code: number }) => s.code)).toEqual([202]);
+
+    const none = await get('/services?q=no-such-service');
+    expect(none.body.total).toBe(0);
+  });
+
+  it('compares prices exactly above 2^53', async () => {
+    await seedCatalogueClinic(BIG_CLINIC, 'Precision Clinic', [
+      {
+        id: `${BIG_CLINIC}:901`,
+        code: 901,
+        label: 'Precision procedure one',
+        price: '9007199254740993', // 2^53 + 1
+      },
+      {
+        id: `${BIG_CLINIC}:902`,
+        code: 902,
+        label: 'Precision procedure two',
+        price: '9007199254740992', // 2^53
+      },
+    ]);
+
+    const atOrAbove = await get('/services?q=precision&minPrice=9007199254740993');
+    expect(atOrAbove.body.services.map((s: { code: number }) => s.code)).toEqual([901]);
+
+    // A float parse would round 2^53+1 down to 2^53 and include both.
+    const atOrBelow = await get('/services?q=precision&maxPrice=9007199254740992');
+    expect(atOrBelow.body.services.map((s: { code: number }) => s.code)).toEqual([902]);
+
+    const between = await get(
+      '/services?q=precision&minPrice=9007199254740992&maxPrice=9007199254740993',
+    );
+    expect(between.body.services.map((s: { code: number }) => s.code)).toEqual([901, 902]);
+  });
+
+  it('filters by price range without losing the rest of the catalogue', async () => {
+    // 202 costs 10,000,000–15,000,000, so a 16,000,000 budget covers it while
+    // 101 (30,000,000–40,000,000) is out of range.
+    const { body } = await get('/services?minPrice=12000000&maxPrice=16000000');
+    expect(body.services.map((s: { code: number }) => s.code)).toEqual([202]);
+    expect(body.total).toBe(1);
+  });
+
+  it('sorts by price numerically, not by the string', async () => {
+    await seedCatalogueClinic(SORT_CLINIC, 'Sorting Clinic', [
+      { id: `${SORT_CLINIC}:811`, code: 811, label: 'Sorting nine', price: '9' },
+      { id: `${SORT_CLINIC}:812`, code: 812, label: 'Sorting ten', price: '10' },
+      { id: `${SORT_CLINIC}:813`, code: 813, label: 'Sorting hundred', price: '100' },
+    ]);
+
+    const ascending = await get('/services?q=sorting&sort=price');
+    expect(ascending.body.services.map((s: { minPrice: string }) => s.minPrice)).toEqual([
+      '9',
+      '10',
+      '100',
+    ]);
+
+    const descending = await get('/services?q=sorting&sort=price&order=desc');
+    expect(descending.body.services.map((s: { minPrice: string }) => s.minPrice)).toEqual([
+      '100',
+      '10',
+      '9',
+    ]);
+  });
+
+  it('sorts by label and code, in both directions', async () => {
+    await seedCatalogueClinic(SORT_CLINIC, 'Sorting Clinic', [
+      { id: `${SORT_CLINIC}:811`, code: 811, label: 'Sorting nine', price: '9' },
+      { id: `${SORT_CLINIC}:812`, code: 812, label: 'Sorting ten', price: '10' },
+      { id: `${SORT_CLINIC}:813`, code: 813, label: 'Sorting hundred', price: '100' },
+    ]);
+
+    const labels = await get('/services?q=sorting&sort=label');
+    expect(labels.body.services.map((s: { labels: string[] }) => s.labels[0])).toEqual([
+      'Sorting hundred',
+      'Sorting nine',
+      'Sorting ten',
+    ]);
+
+    const codes = await get('/services?q=sorting&sort=code&order=desc');
+    expect(codes.body.services.map((s: { code: number }) => s.code)).toEqual([813, 812, 811]);
+  });
+
+  it('rejects malformed search and price parameters', async () => {
+    for (const query of [
+      'q=',
+      `q=${'a'.repeat(65)}`,
+      'minPrice=abc',
+      'maxPrice=-1',
+      'minPrice=1000000000000000000000000000000000000000',
+      'minPrice=10&maxPrice=9',
+      'sort=name',
+      'order=sideways',
+    ]) {
+      const { status, body } = await get(`/services?${query}`);
+      expect(status, query).toBe(400);
+      expect(body.error).toBe('invalid_query');
+    }
   });
 });
 

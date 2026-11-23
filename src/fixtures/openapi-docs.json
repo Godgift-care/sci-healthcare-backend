@@ -636,7 +636,7 @@
   },
   "GET /providers": {
     "ok": {
-      "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
+      "description": "A page of clinics with their active services. Filter by `status`, `country`, `q` or `serviceCode` (only clinics with that service active); sort by `name`, `registered` (default, newest first) or `country`, with `order=asc|desc`. `nextCursor` encodes the ordering and answers `400 invalid_cursor` if used with another one; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
       "example": {
         "total": 13,
         "limit": 1,
@@ -1299,7 +1299,7 @@
   },
   "GET /services": {
     "ok": {
-      "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge.",
+      "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge. Filter with `q` (label contains, case-insensitive, 1-64 chars), `minPrice` and `maxPrice` (base-unit decimal strings compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sort by `code` (default), `price` (cheapest clinic first) or `label`, with `order=asc|desc`; ties order by code.",
       "example": {
         "total": 7,
         "services": [
@@ -1384,6 +1384,23 @@
       }
     },
     "errors": {
+      "400": {
+        "description": "`error: invalid_query` for a `q` outside 1-64 characters, a malformed or over-i128 price, `minPrice` greater than `maxPrice`, or an unknown `sort`/`order`.",
+        "example": {
+          "error": "invalid_query",
+          "message": "Invalid query parameters",
+          "details": [
+            {
+              "origin": "string",
+              "code": "too_small",
+              "minimum": 1,
+              "inclusive": true,
+              "path": ["q"],
+              "message": "Too small: expected string to have >=1 characters"
+            }
+          ]
+        }
+      },
       "429": {
         "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
         "example": {

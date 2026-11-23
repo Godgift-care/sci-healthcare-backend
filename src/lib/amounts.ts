@@ -47,6 +47,29 @@ export function amountKey(base: string): string {
   return base.padStart(AMOUNT_KEY_WIDTH, '0');
 }
 
+/** The largest value an i128 can hold, the bound on every on-chain amount. */
+const MAX_I128 = 170141183460469231731687303715884105727n;
+
+/** Whether `value` is a non-negative base-unit amount, at most an i128 in size. */
+export function isBaseUnitAmount(value: string): boolean {
+  return /^\d{1,39}$/.test(value) && BigInt(value) <= MAX_I128;
+}
+
+/**
+ * Numeric order of two base-unit amounts.
+ *
+ * Prices and voucher amounts are i128 decimal strings, so they must be
+ * compared as BigInt: `"900000000"` is smaller than `"30000000000"` even
+ * though it sorts after it as a string, and `Number` loses precision above
+ * 2^53. Returns the usual negative / zero / positive ordering.
+ */
+export function compareBaseUnits(a: string, b: string): number {
+  const av = BigInt(a);
+  const bv = BigInt(b);
+  if (av === bv) return 0;
+  return av < bv ? -1 : 1;
+}
+
 /** Basis-point fee, matching the contract's integer truncation exactly. */
 export function feeFor(amountBase: string, feeBps: number): string {
   return ((BigInt(amountBase) * BigInt(feeBps)) / 10_000n).toString();

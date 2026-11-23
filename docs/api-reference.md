@@ -62,7 +62,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /stats` | Protocol counters for the dashboard |
 | `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day (`days` 1–365, max 365) |
 | `GET /stats/funnel` | Voucher counts and median hours between funded, claimed, attested and settled stages; optionally filter by `country` or clinic address |
-| `GET /providers` | Verified clinics, filterable by `status`, `country`, `q`; each carries the clinic's cached off-chain `metadata` (`null` until fetched) |
+| `GET /providers` | Clinics filterable by `status`, `country`, `q` and `serviceCode`, and sortable by `name`, `registered` or `country`; each carries the clinic's cached off-chain `metadata` (`null` until fetched) |
 | `GET /providers/:address` | One clinic and its service catalogue, plus its cached off-chain `metadata` |
 | `GET /providers/:address/stats` | A clinic's vouchers by status, total settled value, and median claim/attestation times |
 | `GET /providers/:address/history` | Every status transition for a clinic, oldest first |
@@ -75,7 +75,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /vouchers/:id/events` | Every contract event for a voucher, oldest first, with transaction hashes |
 | `GET /receipts?beneficiaryRef=` | A patient's settled care history |
 | `GET /countries` | Countries with at least one active clinic and their clinic counts |
-| `GET /services` | Active services grouped by code: labels, clinic count, min/max/median price |
+| `GET /services` | Active services grouped by code: labels, clinic count, min/max/median price; text search, price range, and price/label/code sorting |
 | `GET /services/:code` | Active clinics offering a service code with their prices, cheapest first |
 | `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status`, sorted by `sort`/`order` |
 | `GET /vouchers/due` | Vouchers needing action soon (expiring, refundable or settleable) within `within`, e.g. `72h` |
@@ -372,6 +372,16 @@ The fetch is fenced in: http(s) only, a 5s timeout, a 64KB cap counted off the s
   unknown filter value is `400 invalid_query`. The response is cacheable like the
   other read routes, and the unversioned route is an alias.
 
+- **`GET /v1/providers` filters and ordering.** `serviceCode=101` lists only
+  clinics with that service active, so a paused or delisted code is not an
+  offering; it combines with `status`, `country` and `q`. `sort=name`,
+  `registered` (the default, newest first) or `country`, with `order=asc|desc`
+  (`asc` is the default for `name` and `country`, `desc` for `registered`). The
+  ordering is encoded in `nextCursor`; passing that cursor to another sort or
+  order answers `400 invalid_cursor` rather than paging a different column and
+  skipping rows. Each ordering tie-breaks on the clinic address, so paging has
+  no gaps or repeats.
+
 ### 3. Medical Services Catalog
 - **`GET /v1/services`**: List all medical services offered across active providers.
   ```bash
@@ -419,6 +429,17 @@ The fetch is fenced in: http(s) only, a 5s timeout, a 64KB cap counted off the s
   pair appears on every service entry of `GET /providers`, `GET /providers/:address`,
   `GET /providers/:address/services` and the `?include=provider` embeds, and
   `GET /services` prices its min/max/median band with the schedule already applied.
+
+- **`GET /v1/services` search, price range and ordering.** `q` keeps services
+  with a label containing it, case-insensitively, 1–64 characters. `minPrice`
+  and `maxPrice` are base-unit decimal strings and are compared with `BigInt`,
+  never as JavaScript numbers, so values above 2^53 stay exact. A service is in
+  range when its clinic price band overlaps the request: `maxPrice` acts as a
+  budget (some clinic charges at or below it) and `minPrice` as a floor (some
+  clinic charges at or above it). `sort=code` (the default), `price` (cheapest
+  clinic first) or `label`, with `order=asc` (the default) or `desc`; price and
+  label ties order by code. Malformed or reversed price bounds and unknown sort
+  values are `400 invalid_query`.
 
 ### 4. Vouchers & Protocol Statistics
 - **`GET /v1/vouchers`**: Filter vouchers by funder, provider, beneficiary reference, or status.
