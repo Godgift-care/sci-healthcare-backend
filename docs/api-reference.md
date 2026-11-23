@@ -242,6 +242,12 @@ composed or sent, and refuse a payload that carries a beneficiary reference.
 
 Both provider responses carry a `metadata` object: the clinic's off-chain document (hours, phone, location), fetched once by the indexer, validated, and cached in the read model rather than re-fetched by every client. `metadata` is `null` until a document has been fetched. The pointer is a URI a clinic publishes on chain (contracts #10), so the document follows the schema below; anything else is ignored with the reason logged.
 
+Beside it, `metadataStatus` reports the fetch state — `pending` after a pointer is announced, `ok` once a document is cached, `failed` when the last attempt was rejected — and `metadataError` carries a short code such as `unsupported_scheme`, `timeout`, `http_error`, `too_large`, `invalid_json` or `invalid_document`. The code is never the remote body, so a clinic can show it without leaking content it does not control. Both are `null` for a clinic that never published a pointer.
+
+Pointers may be `http(s)` URLs or content-addressed `ipfs://<cid>` URIs. An IPFS pointer is resolved through `IPFS_GATEWAY_URL` (default `https://ipfs.io/ipfs`), with the CID and any path appended; the timeout and 64 KB cap apply unchanged. An unsupported scheme or malformed URL is recorded as `failed` with `unsupported_scheme`/`invalid_url` and is not retried until the clinic announces a new pointer; every other failure is retried after `PROVIDER_METADATA_TTL_MS` (default one day), with the stored `ETag` sent as `If-None-Match` so an unchanged document costs one `304`.
+
+The document's JSON Schema is published at [`docs/provider-metadata.schema.json`](provider-metadata.schema.json) and served at **`GET /schemas/provider-metadata.json`**, so a clinic can validate a file before publishing it.
+
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | string | Optional; ≤200 chars |
@@ -251,7 +257,7 @@ Both provider responses carry a `metadata` object: the clinic's off-chain docume
 | `phone` | string | Optional; ≤50 chars |
 | `languages` | string[] | Optional; ≤20 entries |
 
-The fetch is fenced in: http(s) only, a 5s timeout, a 64KB cap counted off the stream (a declared `content-length` is checked first, not trusted), JSON only. A document that is invalid, oversized, unreachable or non-JSON is ignored with the reason logged and never fails the cycle; a failed refresh keeps the previously cached document.
+The fetch is fenced in: http(s) or an `ipfs://` CID through the configured gateway, a 5s timeout, a 64KB cap counted off the stream (a declared `content-length` is checked first, not trusted), JSON only. A document that is invalid, oversized, unreachable or non-JSON is ignored with the reason logged and never fails the cycle; a failed refresh keeps the previously cached document.
 - **`GET /v1/providers`**: List registered clinics with active services, filtered by status, country, or name search.
   ```bash
   curl "http://localhost:8080/v1/providers?status=Active&country=NG&limit=10"
@@ -266,6 +272,8 @@ The fetch is fenced in: http(s) only, a 5s timeout, a 64KB cap counted off the s
         "country": "NG",
         "status": "Active",
         "registeredAt": "2026-09-01T08:00:00.000Z",
+        "metadataStatus": "ok",
+        "metadataError": null,
         "metadata": {
           "name": "Ikeja General Clinic",
           "address": "12 Allen Avenue, Ikeja, Lagos",
@@ -291,6 +299,8 @@ The fetch is fenced in: http(s) only, a 5s timeout, a 64KB cap counted off the s
     "name": "Ikeja General Clinic",
     "country": "NG",
     "status": "Active",
+    "metadataStatus": "ok",
+    "metadataError": null,
     "metadata": {
       "name": "Ikeja General Clinic",
       "address": "12 Allen Avenue, Ikeja, Lagos",

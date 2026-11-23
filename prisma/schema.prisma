@@ -55,6 +55,18 @@ model Provider {
   /// basis of the daily refresh. Stamped on rejection too, so a dead URI
   /// is retried once a day rather than on every cycle.
   metadataFetchedAt DateTime?
+  /// The fetch state served to the clinic (#271): `pending` after a URI is
+  /// announced, `ok` once a document is cached, `failed` when the last
+  /// attempt was rejected. Null when the clinic published no URI.
+  metadataStatus String?
+  /// A short code for the last rejection — `unsupported_scheme`, `timeout`,
+  /// `invalid_document` and the like — never the remote body or a raw error
+  /// message (#271). Cleared by a successful fetch.
+  metadataError  String?
+  /// The validator the host sent with the cached document, replayed as
+  /// `If-None-Match` so an unchanged document costs one conditional request
+  /// (#270). Null when the host sends no ETag.
+  metadataEtag   String?
 
   /// The clinic's `max_outstanding` voucher cap, indexed from the registry's
   /// `capacity_changed` event. `0` means unlimited (the contract's own

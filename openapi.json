@@ -825,6 +825,8 @@
                       "status": "Active",
                       "registeredAt": "2026-01-08T10:00:00.000Z",
                       "metadata": null,
+                      "metadataStatus": null,
+                      "metadataError": null,
                       "capacity": null,
                       "openVouchers": 2,
                       "services": [
@@ -979,6 +981,8 @@
                   "status": "Active",
                   "registeredAt": "2026-01-08T10:00:00.000Z",
                   "metadata": null,
+                  "metadataStatus": null,
+                  "metadataError": null,
                   "capacity": null,
                   "openVouchers": 2,
                   "services": [
@@ -5142,6 +5146,8 @@
                       "status": "Active",
                       "registeredAt": "2026-01-08T10:00:00.000Z",
                       "metadata": null,
+                      "metadataStatus": null,
+                      "metadataError": null,
                       "capacity": null,
                       "openVouchers": 2,
                       "services": [
@@ -5296,6 +5302,8 @@
                   "status": "Active",
                   "registeredAt": "2026-01-08T10:00:00.000Z",
                   "metadata": null,
+                  "metadataStatus": null,
+                  "metadataError": null,
                   "capacity": null,
                   "openVouchers": 2,
                   "services": [

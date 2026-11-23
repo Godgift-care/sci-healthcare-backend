@@ -33,6 +33,7 @@ import { allowedMethods, routePatterns, type RoutePattern } from './lib/method-a
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
 import { httpDuration, httpRequests, registry } from './lib/metrics.js';
 import { openapiDocsTransform } from './lib/openapi.js';
+import { providerMetadataJsonSchema } from './lib/provider-metadata.js';
 import { APP_VERSION } from './lib/version.js';
 import { attesterRoutes } from './routes/attesters.js';
 import { feedRoutes } from './routes/feed.js';
@@ -312,6 +313,15 @@ export async function buildApp(
 
   app.get('/openapi.json', { schema: { hide: true } }, () => {
     return app.swagger();
+  });
+
+  // The published JSON Schema for the off-chain document (#272), so a clinic
+  // can validate its file before publishing the pointer. Hidden from the
+  // OpenAPI document like the other non-data routes; `docs/api-reference.md`
+  // documents it for humans.
+  app.get('/schemas/provider-metadata.json', { schema: { hide: true } }, (_req, reply) => {
+    reply.header('cache-control', 'public, max-age=86400');
+    return providerMetadataJsonSchema;
   });
 
   // Labelled by route pattern, not URL, so ids in paths cannot blow up the

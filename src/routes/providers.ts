@@ -17,7 +17,11 @@ import {
 import { ApiError } from '../lib/errors.js';
 import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
-import { providerMetadataOf } from '../lib/provider-metadata.js';
+import {
+  providerMetadataErrorOf,
+  providerMetadataOf,
+  storedMetadataStatus,
+} from '../lib/provider-metadata.js';
 import { serialiseProviderDetail, openVoucherCounts } from '../lib/providers.js';
 import { formatServicePrice, type ScheduledPriceRow } from '../lib/services.js';
 
@@ -52,6 +56,11 @@ const PROVIDER_FIELDS = [
   // field, so a clinic card asking only for hours and a phone number
   // does not also download every service price.
   'metadata',
+  // The fetch state beside it (#271): `pending`, `ok` or `failed`, and a
+  // short error code the clinic can act on. Requestable like any other
+  // field, so a status banner does not download the document.
+  'metadataStatus',
+  'metadataError',
   // Clinic capacity read model (#316): the cap indexed from the registry and
   // the live count of open (Funded + Claimed) vouchers, so a funder can see
   // a clinic is full before funding it.
@@ -136,6 +145,9 @@ type DirectoryRow = {
   status: string;
   registeredAt: Date;
   metadata: string | null;
+  /** Absent on a page whose fieldset left the metadata status out (#271). */
+  metadataStatus?: string | null;
+  metadataError?: string | null;
   /** Absent on a page whose fieldset left `capacity` out (#321). */
   capacity?: number | null;
   /** Absent on a page whose fieldset left `services` out (#321). */
@@ -154,6 +166,10 @@ function formatProvider(p: DirectoryRow, openVouchers: number, now: Date) {
     // (#159); null until one was fetched, so clients treat it as
     // optional rather than a second request they must make.
     metadata: providerMetadataOf(p),
+    // #271: the last fetch state and its short error code, so a clinic can
+    // see a broken link on its own page instead of silently serving nothing.
+    metadataStatus: storedMetadataStatus(p.metadataStatus ?? null),
+    metadataError: providerMetadataErrorOf({ metadataError: p.metadataError ?? null }),
     // #316: the cap indexed from the registry (`0` means unlimited, null
     // when the clinic has never set one) and the vouchers open against it.
     capacity: p.capacity ?? null,

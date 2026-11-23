@@ -61,6 +61,17 @@ export type Provider = {
    */
   location?: ProviderLocation | null;
   metadata?: ProviderMetadata | null;
+  /**
+   * The metadata fetch state (#271): `pending` after a pointer is announced,
+   * `ok` once a document is cached, `failed` when the last attempt was
+   * rejected. Null when the clinic never published a pointer.
+   */
+  metadataStatus?: 'pending' | 'ok' | 'failed' | null;
+  /**
+   * A short code for the last rejection — never the remote body — or null
+   * when the last fetch succeeded or none has run.
+   */
+  metadataError?: string | null;
 };
 
 export type ServicePriceChange = {
