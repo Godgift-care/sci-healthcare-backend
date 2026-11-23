@@ -8,6 +8,8 @@ import {
   eventsApplied,
   eventsSkipped,
   indexerLagLedgers,
+  indexerReconcileDuration,
+  indexerReconcileOpenMismatches,
   markIndexerSuccess,
   recordEventLatency,
 } from '../lib/metrics.js';
@@ -17,7 +19,14 @@ import { recordFailure } from './failed.js';
 import { IndexerLease } from './lease.js';
 import { collectEvents } from './paging.js';
 import { withSpan } from '../tracing.js';
-import { readVoucherFromChain, type VoucherReader } from './reconcile.js';
+import {
+  readVoucherFromChain,
+  readVoucherOptionsFromChain,
+  reconcile,
+  type ReconcileOptions,
+  type ReconcileResult,
+  type VoucherReader,
+} from './reconcile.js';
 import { pruneContractEvents, purgeExpiredOperationalData } from '../lib/retention.js';
 import type { rpc } from '@stellar/stellar-sdk';
 import {
@@ -186,6 +195,10 @@ export type IndexerOptions = {
   rpcServer?: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
   /** Batch page size passed to collectEvents (default: 200). */
   pageSize?: number;
+  /** Interval for scheduled reconciliation; defaults to RECONCILE_INTERVAL_MS. */
+  reconcileIntervalMs?: number;
+  /** Reconciliation runner, overridable for tests. */
+  reconciliationRunner?: (options: ReconcileOptions) => Promise<ReconcileResult>;
 };
 
 export class Indexer {
@@ -208,6 +221,11 @@ export class Indexer {
   private lastMetadataCheckAt = 0;
   /** Wall-clock ms of the last operational data retention check (#142). */
   private lastRetentionCheckAt = 0;
+  /** Wall-clock ms of the last scheduled reconciliation attempt. */
+  private lastReconcileAt = Date.now();
+  /** Last non-terminal voucher visited by the bounded reconciliation pass. */
+  private lastReconcileVoucherId: string | undefined;
+  private reconciling = false;
   private readonly lease: IndexerLease;
   private readonly shutdownTimeoutMs: number;
   private readonly voucherReader: VoucherReader;
@@ -215,6 +233,8 @@ export class Indexer {
   private readonly repairedVouchers = new Set<string>();
   private readonly rpcServer: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
   private readonly pageSize: number;
+  private readonly reconcileIntervalMs: number;
+  private readonly reconciliationRunner: (options: ReconcileOptions) => Promise<ReconcileResult>;
 
   constructor(
     private readonly log: FastifyBaseLogger,
@@ -225,6 +245,8 @@ export class Indexer {
     this.voucherReader = opts.voucherReader ?? readVoucherFromChain;
     this.rpcServer = opts.rpcServer ?? server;
     this.pageSize = opts.pageSize ?? 200;
+    this.reconcileIntervalMs = opts.reconcileIntervalMs ?? env.RECONCILE_INTERVAL_MS ?? 0;
+    this.reconciliationRunner = opts.reconciliationRunner ?? reconcile;
   }
 
   async start(): Promise<void> {
@@ -366,6 +388,7 @@ export class Indexer {
       }
       if (this.holdsLease) {
         await this.tick();
+        await this.reconcileIfDue();
       } else {
         // Standing by is not a failure. Nothing was attempted against the
         // RPC, so an earlier streak must not keep this instance backing
@@ -438,7 +461,7 @@ export class Indexer {
 
   /** Exposed for tests and for a manual catch-up endpoint. */
   async tick(): Promise<number> {
-    if (this.running) return 0;
+    if (this.running || this.reconciling) return 0;
     this.running = true;
     try {
       const applied = await withSpan('indexer.cycle', async (span) => {
@@ -453,6 +476,49 @@ export class Indexer {
       return 0;
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * Runs one bounded reconciliation pass after an indexing cycle, only while
+   * this process holds the lease. Keeping it inside the cycle prevents the
+   * scheduled pass from overlapping either a poll or shutdown.
+   */
+  private async reconcileIfDue(): Promise<void> {
+    if (
+      this.stopped ||
+      this.reconcileIntervalMs <= 0 ||
+      Date.now() - this.lastReconcileAt < this.reconcileIntervalMs
+    ) {
+      return;
+    }
+
+    this.lastReconcileAt = Date.now();
+    this.reconciling = true;
+    const startedAt = Date.now();
+    try {
+      const result = await this.reconciliationRunner({
+        read: this.voucherReader,
+        readOptions: readVoucherOptionsFromChain,
+        sample: 25,
+        limit: 100,
+        ...(this.lastReconcileVoucherId ? { afterId: this.lastReconcileVoucherId } : {}),
+        log: this.log,
+      });
+      this.lastReconcileVoucherId = result.lastVoucherId ?? undefined;
+      indexerReconcileOpenMismatches.set(result.openMismatches);
+      this.log.info(
+        {
+          ...result,
+          durationMs: Date.now() - startedAt,
+        },
+        'scheduled reconciliation completed',
+      );
+    } catch (err) {
+      this.log.warn({ err }, 'scheduled reconciliation failed');
+    } finally {
+      indexerReconcileDuration.observe((Date.now() - startedAt) / 1000);
+      this.reconciling = false;
     }
   }
 

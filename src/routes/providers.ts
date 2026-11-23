@@ -32,7 +32,7 @@ type ProviderSort = (typeof PROVIDER_SORTS)[number];
 type SortDirection = 'asc' | 'desc';
 
 const listQuery = z.object({
-  status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
+  status: z.enum(['Pending', 'Active', 'Suspended', 'Retired']).optional(),
   country: z.string().length(2).optional(),
   q: z.string().min(1).max(64).optional(),
   // A clinic is listed only when it has this service active: a code the
@@ -52,6 +52,7 @@ const PROVIDER_FIELDS = [
   'name',
   'country',
   'status',
+  'statusReason',
   'registeredAt',
   // The cached off-chain document (#159): requestable like any other
   // field, so a clinic card asking only for hours and a phone number
@@ -144,6 +145,7 @@ type DirectoryRow = {
   name: string;
   country: string;
   status: string;
+  statusReason?: number | null;
   registeredAt: Date;
   metadata: string | null;
   /** Absent on a page whose fieldset left the metadata status out (#271). */
@@ -162,6 +164,7 @@ function formatProvider(p: DirectoryRow, openVouchers: number, now: Date) {
     name: p.name,
     country: p.country,
     status: p.status,
+    statusReason: p.statusReason ?? null,
     registeredAt: p.registeredAt,
     // The cached, validated document the clinic published off chain
     // (#159); null until one was fetched, so clients treat it as
@@ -669,6 +672,7 @@ export function providerRoutes(app: FastifyInstance): void {
       address,
       history: changes.map((c) => ({
         status: c.status,
+        reasonCode: c.reasonCode,
         ledger: c.ledger,
         changedAt: c.changedAt,
       })),

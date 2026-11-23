@@ -190,7 +190,7 @@ export function asTimestamp(input: unknown): Date {
 }
 
 /** Contract enum discriminants, mapped to the names used in the API. */
-export const PROVIDER_STATUS = ['Pending', 'Active', 'Suspended'] as const;
+export const PROVIDER_STATUS = ['Pending', 'Active', 'Suspended', 'Retired'] as const;
 
 export function providerStatusName(input: unknown): string {
   if (typeof input === 'string') return input;

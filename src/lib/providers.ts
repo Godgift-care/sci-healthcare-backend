@@ -54,6 +54,7 @@ export type ProviderDetail = {
   name: string;
   country: string;
   status: string;
+  statusReason: number | null;
   registeredAt: Date;
   metadata: ProviderMetadata | null;
   /**
@@ -114,6 +115,7 @@ export function serialiseProviderDetail(
     name: string;
     country: string;
     status: string;
+    statusReason: number | null;
     registeredAt: Date;
     metadata: string | null;
     metadataUri: string | null;
@@ -134,6 +136,7 @@ export function serialiseProviderDetail(
     name: p.name,
     country: p.country,
     status: p.status,
+    statusReason: p.statusReason,
     registeredAt: p.registeredAt,
     metadata: providerMetadataOf(p),
     metadataStatus: providerMetadataStatusOf(p),

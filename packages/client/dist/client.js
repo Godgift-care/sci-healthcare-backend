@@ -194,6 +194,9 @@ export class Client {
     async governance() {
         return this.request('/governance');
     }
+    async deployments() {
+        return this.request('/deployments');
+    }
     /**
      * Subscribes to `GET /stream` for one voucher or one clinic.
      *

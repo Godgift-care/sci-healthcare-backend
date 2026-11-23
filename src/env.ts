@@ -115,6 +115,11 @@ const envShape = z.object({
 
   INDEXER_START_LEDGER: z.coerce.number().int().nonnegative().default(0),
   INDEXER_POLL_MS: z.coerce.number().int().positive().default(5000),
+  /** Periodic chain reconciliation; unset disables automatic passes. */
+  RECONCILE_INTERVAL_MS: z.preprocess(
+    blankToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
   /** Ceiling for the indexer's exponential backoff after RPC failures. */
   INDEXER_BACKOFF_MAX_MS: z.coerce.number().int().positive().default(60_000),
   /**

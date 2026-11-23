@@ -83,6 +83,8 @@ export type ReconcileResult = {
   errors: number;
   /** Mismatch rows still open after the run. */
   openMismatches: number;
+  /** Last non-terminal voucher id visited, for bounded scheduled paging. */
+  lastVoucherId?: string | null;
 };
 
 export type ReconcileOptions = {
@@ -98,6 +100,10 @@ export type ReconcileOptions = {
   readOptions?: VoucherOptionsReader;
   /** Terminal vouchers to spot-check as well. */
   sample?: number;
+  /** Maximum non-terminal vouchers to inspect in this pass; omitted for a full run. */
+  limit?: number;
+  /** Resume a bounded pass after this id, wrapping to the first row as needed. */
+  afterId?: string;
   /** Rewrite differing rows from chain state. */
   fix?: boolean;
   log?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
@@ -324,13 +330,37 @@ export async function reconcile({
   read,
   readOptions,
   sample = 25,
+  limit,
+  afterId,
   fix = false,
   log = SILENT,
 }: ReconcileOptions): Promise<ReconcileResult> {
-  const nonTerminal = await prisma.voucher.findMany({
-    where: { status: { notIn: [...TERMINAL_STATUSES] } },
-    orderBy: { id: 'asc' },
-  });
+  const nonTerminalWhere = { status: { notIn: [...TERMINAL_STATUSES] } };
+  let nonTerminal: Voucher[];
+  if (limit === undefined) {
+    nonTerminal = await prisma.voucher.findMany({
+      where: nonTerminalWhere,
+      orderBy: { id: 'asc' },
+    });
+  } else {
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new RangeError('Reconcile limit must be a positive integer');
+    }
+    const firstPage = await prisma.voucher.findMany({
+      where: { ...nonTerminalWhere, ...(afterId ? { id: { gt: afterId } } : {}) },
+      orderBy: { id: 'asc' },
+      take: limit,
+    });
+    const wrappedPage =
+      afterId && firstPage.length < limit
+        ? await prisma.voucher.findMany({
+            where: { ...nonTerminalWhere, id: { lte: afterId } },
+            orderBy: { id: 'asc' },
+            take: limit - firstPage.length,
+          })
+        : [];
+    nonTerminal = [...firstPage, ...wrappedPage];
+  }
   // Least recently touched first, so repeated runs rotate through the
   // settled history instead of re-reading the same few rows.
   const terminal =
@@ -350,6 +380,7 @@ export async function reconcile({
     fixed: 0,
     errors: 0,
     openMismatches: 0,
+    ...(limit === undefined ? {} : { lastVoucherId: nonTerminal.at(-1)?.id ?? null }),
   };
 
   for (const row of [...nonTerminal, ...terminal]) {

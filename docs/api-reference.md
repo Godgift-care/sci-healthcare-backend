@@ -62,8 +62,8 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /stats` | Protocol counters for the dashboard |
 | `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day (`days` 1–365, max 365) |
 | `GET /stats/funnel` | Voucher counts and median hours between funded, claimed, attested and settled stages; optionally filter by `country` or clinic address |
-| `GET /providers` | Clinics filterable by `status`, `country`, `q` and `serviceCode`, and sortable by `name`, `registered` or `country`; each carries the clinic's cached off-chain `metadata` (`null` until fetched) |
-| `GET /providers/:address` | One clinic and its service catalogue, plus its cached off-chain `metadata` |
+| `GET /providers` | Clinics filterable by `status` (`Pending`, `Active`, `Suspended` or `Retired`), `country`, `q` and `serviceCode`, and sortable by `name`, `registered` or `country`; includes `statusReason` and cached off-chain `metadata` |
+| `GET /providers/:address` | One clinic and its service catalogue, plus its `statusReason` and cached off-chain `metadata` |
 | `GET /providers/:address/stats` | A clinic's vouchers by status, total settled value, and median claim/attestation times |
 | `GET /providers/:address/history` | Every status transition for a clinic, oldest first |
 | `GET /providers/:address/services` | A clinic's price list on its own, cheapest first; `active`, `sort` and `order` filters |
@@ -84,6 +84,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /receipts?beneficiaryRef=` / `?provider=` | A patient's settled care history, or a clinic's receipts |
 | `GET /receipts/:voucherId` | One receipt, for a shareable receipt page |
 | `GET /governance` | Current and pending admin per contract, plus the handover history |
+| `GET /deployments` | Current and historical contract ids with their ledger ranges, ordered by type then starting ledger |
 | `GET /stream` | Live voucher state transitions as the indexer commits them (server-sent events) |
 | `GET /feed.xml` | The latest settled vouchers and newly verified clinics as an Atom 1.0 feed, for feed readers; 20 entries at most, and no patient references |
 

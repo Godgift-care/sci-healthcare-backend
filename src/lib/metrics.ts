@@ -53,6 +53,20 @@ export const indexerEventLatency = new Histogram({
   registers: [registry],
 });
 
+export const indexerReconcileDuration = new Histogram({
+  name: 'indexer_reconcile_duration_seconds',
+  help: 'Duration of scheduled read-model reconciliation passes',
+  buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+  registers: [registry],
+});
+
+export const indexerReconcileOpenMismatches = new Gauge({
+  name: 'indexer_reconcile_open_mismatches',
+  help: 'Open voucher mismatches found by the most recent reconciliation pass',
+  registers: [registry],
+});
+indexerReconcileOpenMismatches.set(0);
+
 export function recordEventLatency(ledgerClosedAt: Date, now: number = Date.now()): void {
   const seconds = Math.max(0, (now - ledgerClosedAt.getTime()) / 1000);
   indexerEventLatency.observe(seconds);

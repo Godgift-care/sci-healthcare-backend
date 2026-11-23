@@ -217,7 +217,26 @@ describe('coercions', () => {
     expect(providerStatusName(0)).toBe('Pending');
     expect(providerStatusName(1)).toBe('Active');
     expect(providerStatusName(2)).toBe('Suspended');
+    expect(providerStatusName(3)).toBe('Retired');
     expect(providerStatusName(99)).toBe('Unknown');
+  });
+
+  it('decodes status reason codes while preserving older events without one', () => {
+    const withReason = decodeEvent(
+      raw(
+        [sym('provider_status_changed'), Address.fromString(CLINIC).toScVal()],
+        nativeToScVal({ status: nativeToScVal(3, { type: 'u32' }), reason_code: 5 }),
+      ),
+    );
+    const older = decodeEvent(
+      raw(
+        [sym('provider_status_changed'), Address.fromString(CLINIC).toScVal()],
+        nativeToScVal({ status: nativeToScVal(2, { type: 'u32' }) }),
+      ),
+    );
+
+    expect(withReason?.fields.reason_code).toBe(5n);
+    expect(older?.fields.reason_code).toBeUndefined();
   });
 
   it('reads Soroban booleans', () => {
