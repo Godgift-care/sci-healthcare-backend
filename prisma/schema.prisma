@@ -425,8 +425,15 @@ model WebhookDelivery {
   id            String    @id
   url           String
   event         String
-  voucherId     String
-  status        String
+  /// The voucher the event is about; null for registry and service events.
+  voucherId     String?
+  /// Resulting status: voucher status, or provider status for registry events.
+  /// Null for `service.price_changed`, which has no status.
+  status        String?
+  /// The provider the event is about, for registry and service events.
+  provider      String?
+  /// Service code, for `service.price_changed` (exactly one event kind).
+  serviceCode   Int?
   txHash        String?
   ledger        Int
   payload       String

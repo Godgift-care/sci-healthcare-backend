@@ -10,7 +10,12 @@ writes a row to a delivery outbox in the same transaction, then posts it from a
 separate loop — a slow or unreachable endpoint therefore never stalls the
 indexer. Failed deliveries retry with exponential backoff (five seconds
 doubling, capped at ten minutes) and are given up on after six attempts or a
-permanent 4xx response.
+permanent 4xx response. An endpoint that keeps failing is paused by a
+per-endpoint circuit breaker rather than retried for every event (#265).
+
+Events are emitted for voucher transitions and, since #266, for clinic and
+service changes: `provider.registered`, `provider.status_changed` and
+`service.price_changed`.
 
 ## Delivery sequence
 
@@ -70,6 +75,103 @@ With six attempts the largest delay ever reached is 80 s, so the ten-minute
 cap only matters for callers that raise `WEBHOOK_MAX_ATTEMPTS`. A permanent
 response (any 4xx other than 408 and 429) skips the remaining attempts and
 abandons the row on the spot: a 404 will not become a 204 by waiting.
+
+## Endpoint circuit breaker
+
+Numbers from `src/lib/webhooks.ts`: `WEBHOOK_BREAKER_FAILURE_THRESHOLD = 5`
+consecutive failed deliveries, then `WEBHOOK_BREAKER_COOLDOWN_MS = 30000`
+(thirty seconds) before one probe is allowed through.
+
+While an endpoint's breaker is **open**, its deliveries are not retried:
+the dispatcher does not even select them, their `attempts` counter is left
+alone, and the rows stay queued. Other configured endpoints keep delivering
+normally — the held rows never consume the 50-row batch. After the cooldown
+the breaker is **half-open**: exactly one probe, the oldest held row, is
+sent. If it succeeds the breaker closes and the remaining held rows go out
+in their original order, oldest first. If the probe fails the breaker opens
+again for another cooldown.
+
+Only network errors, 5xx, 408 and 429 count as breaker failures — they mean
+the endpoint is not answering. A permanent 4xx proves the endpoint is up and
+only abandons that one delivery. The breaker is in-memory: a restart starts
+closed, which is correct for a process that has not yet observed a failure.
+
+`/ready` reports every endpoint the dispatcher has seen in
+`checks.webhooks.breakers`, each as `{ endpoint, state, consecutiveFailures,
+openedAt }` where `state` is `closed`, `open` or `half-open` and `endpoint`
+is the origin and path with any query string removed. A tripped breaker is
+reported but does not make the instance unready: the deliveries are held,
+not lost. The same state is on `/metrics` as `webhook_circuit_state`
+(0 closed, 1 half-open, 2 open) and
+`webhook_circuit_consecutive_failures`, both labelled by `endpoint`.
+
+## Registry and service events
+
+In addition to the voucher events above, three registry events are delivered
+with the same signature, outbox, retry and breaker behaviour (#266):
+
+```json
+{
+  "event": "provider.registered",
+  "provider": "G...",
+  "status": "Pending",
+  "txHash": "deadbeef...",
+  "ledger": 123456
+}
+```
+
+```json
+{
+  "event": "provider.status_changed",
+  "provider": "G...",
+  "status": "Suspended",
+  "txHash": "deadbeef...",
+  "ledger": 123456
+}
+```
+
+```json
+{
+  "event": "service.price_changed",
+  "provider": "G...",
+  "serviceCode": 101,
+  "price": "30000000",
+  "txHash": "deadbeef...",
+  "ledger": 123456
+}
+```
+
+`price` is the exact base-unit amount as a decimal string, the same form the
+API returns, never a float. A first listing counts as a price change. A
+`provider.status_changed` is sent only when the status actually differs from
+the indexed row, so replaying an event does not notify twice. Voucher payloads
+are unchanged by this: a receiver that only understands voucher events sees
+exactly the body it saw before.
+
+## Testing an endpoint
+
+```sh
+npm run webhooks:ping -- --url https://clinic.example/webhooks
+# or, with the secret supplied explicitly
+npm run webhooks:ping -- --url https://clinic.example/webhooks --secret "$WEBHOOK_SECRET"
+```
+
+`--secret` defaults to `WEBHOOK_SECRET`. The command sends
+`{"event":"ping","sentAt":"..."}` with the same raw-body HMAC-SHA256 in
+`x-sci-signature` as a real delivery, prints the HTTP status and latency, and
+exits non-zero when the answer is not 2xx or the request fails. Usage errors
+exit 2. The production script runs the compiled `dist/` entry point; use
+`npm run webhooks:ping:dev` to run it from source without a build.
+
+## Tracing
+
+When tracing is configured (`OTEL_EXPORTER_OTLP_ENDPOINT` set), every delivery
+attempt is a `webhook.deliver` span with the `webhook.event`,
+`webhook.endpoint` (origin and path, query string removed) and
+`webhook.attempt` attributes, and the request carries a W3C `traceparent`
+header so a receiver can join the delivery to the indexer cycle or request
+that produced it (#268). The payload is never copied into a span attribute,
+and with tracing off no span is exported and no `traceparent` header is sent.
 
 ## What a receiver must assume
 

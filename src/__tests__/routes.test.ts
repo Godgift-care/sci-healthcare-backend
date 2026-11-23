@@ -10,6 +10,7 @@ import { encodeCursor } from '../lib/cursor.js';
 import { backfillDailyStats } from '../lib/daily-stats.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { webhookCircuit } from '../lib/webhooks.js';
 import { resetStatsCache } from '../routes/health.js';
 import { server } from '../stellar/client.js';
 
@@ -763,6 +764,28 @@ describe('GET /ready', () => {
       reconcile: 'ok',
       reconcileMismatches: 0,
     });
+  });
+
+  it('reports per-endpoint circuit breaker state, redacted (#265)', async () => {
+    await seedCursor(1000);
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 1000 } as never);
+    webhookCircuit.recordFailure('https://clinic.example.test/webhooks?token=secret');
+
+    try {
+      const { status, body } = await get('/ready');
+      // A single failure is not yet a tripped breaker, and reporting one
+      // must not take a healthy instance out of rotation either way.
+      expect(status).toBe(200);
+      expect(body.checks.webhooks.breakers).toContainEqual({
+        endpoint: 'https://clinic.example.test/webhooks',
+        state: 'closed',
+        consecutiveFailures: 1,
+        openedAt: null,
+      });
+      expect(JSON.stringify(body)).not.toContain('token=secret');
+    } finally {
+      webhookCircuit.reset();
+    }
   });
 
   it('reports reconciliation drift without taking the instance out of rotation', async () => {

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { SpanStatusCode } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
@@ -5,6 +7,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../db.js';
+import { WebhookDispatcher, WEBHOOK_SIGNATURE_HEADER } from '../lib/webhooks.js';
 import { server } from '../stellar/client.js';
 import { Indexer } from '../stellar/indexer.js';
 import { collectEvents } from '../stellar/paging.js';
@@ -155,6 +158,100 @@ describe('withSpan', () => {
     expect(parent).toBeDefined();
     // OTel SDK 2.x exposes the parent as `parentSpanContext`.
     expect(child?.parentSpanContext?.spanId).toBe(parent?.spanContext().spanId);
+  });
+
+  /** One due outbox row for the tracing cases below. */
+  async function queueWebhookDelivery(url: string): Promise<void> {
+    await prisma.webhookDelivery.deleteMany();
+    const payload = JSON.stringify({
+      event: 'voucher_settled',
+      voucherId: '9',
+      status: 'Settled',
+      ledger: 5,
+    });
+    await prisma.webhookDelivery.create({
+      data: {
+        id: randomUUID(),
+        url,
+        event: 'voucher_settled',
+        voucherId: '9',
+        status: 'Settled',
+        ledger: 5,
+        payload,
+        nextAttemptAt: new Date(),
+      },
+    });
+  }
+
+  it('traces a webhook delivery and forwards a W3C traceparent (#268)', async () => {
+    const previous = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4318';
+    try {
+      // A query string in WEBHOOK_URLS may be a token; the span must not
+      // carry it, and the payload must never be an attribute.
+      const url = 'https://clinic.example.test/hooks?token=super-secret';
+      await queueWebhookDelivery(url);
+
+      let sent: RequestInit | undefined;
+      const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+        sent = init;
+        return new Response(null, { status: 204 });
+      }) as unknown as typeof fetch;
+
+      const dispatcher = new WebhookDispatcher(fakeLog(), {
+        secret: 'trace-test-secret',
+        fetchImpl,
+        intervalMs: 60_000,
+      });
+      expect(await dispatcher.deliverPending()).toBe(1);
+
+      const span = exporter.getFinishedSpans().find((s) => s.name === 'webhook.deliver');
+      expect(span).toBeDefined();
+      expect(span?.attributes['webhook.event']).toBe('voucher_settled');
+      expect(span?.attributes['webhook.endpoint']).toBe('https://clinic.example.test/hooks');
+      expect(span?.attributes['webhook.attempt']).toBe(1);
+      expect(JSON.stringify(span?.attributes)).not.toContain('super-secret');
+      expect(JSON.stringify(span?.attributes)).not.toContain('"ledger"');
+
+      const headers = sent?.headers as Record<string, string>;
+      const traceparent = headers.traceparent;
+      expect(traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/);
+      expect(traceparent).toContain(span!.spanContext().traceId);
+      expect(traceparent).toContain(span!.spanContext().spanId);
+      // The signature header is still present alongside it.
+      expect(headers[WEBHOOK_SIGNATURE_HEADER]).toMatch(/^[0-9a-f]{64}$/);
+    } finally {
+      if (previous === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = previous;
+    }
+  });
+
+  it('creates no span and sends no traceparent when tracing is not configured (#268)', async () => {
+    const previous = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    try {
+      await queueWebhookDelivery('https://clinic.example.test/hooks');
+      let sent: RequestInit | undefined;
+      const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+        sent = init;
+        return new Response(null, { status: 204 });
+      }) as unknown as typeof fetch;
+
+      const dispatcher = new WebhookDispatcher(fakeLog(), {
+        secret: 'trace-test-secret',
+        fetchImpl,
+        intervalMs: 60_000,
+      });
+      expect(await dispatcher.deliverPending()).toBe(1);
+
+      expect(exporter.getFinishedSpans().filter((s) => s.name === 'webhook.deliver')).toHaveLength(
+        0,
+      );
+      expect((sent?.headers as Record<string, string>).traceparent).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = previous;
+    }
   });
 
   it('produces real spans for one indexer cycle: cycle, RPC calls and the projection transaction', async () => {
