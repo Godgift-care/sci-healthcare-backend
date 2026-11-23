@@ -1,6 +1,13 @@
 import { prisma } from '../db.js';
 import { formatServicePrice, type ScheduledPriceRow } from './services.js';
-import { providerMetadataOf, type ProviderMetadata } from './provider-metadata.js';
+import {
+  providerMetadataErrorOf,
+  providerMetadataOf,
+  providerMetadataStatusOf,
+  type MetadataErrorCode,
+  type MetadataStatus,
+  type ProviderMetadata,
+} from './provider-metadata.js';
 
 /**
  * What a receipt needs in order to name the clinic that issued it. An
@@ -50,6 +57,17 @@ export type ProviderDetail = {
   registeredAt: Date;
   metadata: ProviderMetadata | null;
   /**
+   * The metadata fetch state (#271): `pending` after a pointer is announced,
+   * `ok` once a document is cached, `failed` when the last attempt was
+   * rejected. Null when the clinic never published a pointer.
+   */
+  metadataStatus: MetadataStatus | null;
+  /**
+   * A short code for the last rejection (#271) — never the remote body — or
+   * null when the last fetch succeeded or none has run.
+   */
+  metadataError: MetadataErrorCode | null;
+  /**
    * The clinic's `max_outstanding` cap from the registry (`0` means
    * unlimited), or null until a `capacity_changed` event is observed.
    */
@@ -98,6 +116,9 @@ export function serialiseProviderDetail(
     status: string;
     registeredAt: Date;
     metadata: string | null;
+    metadataUri: string | null;
+    metadataStatus: string | null;
+    metadataError: string | null;
     capacity: number | null;
     services: readonly (ScheduledPriceRow & {
       code: number;
@@ -115,6 +136,8 @@ export function serialiseProviderDetail(
     status: p.status,
     registeredAt: p.registeredAt,
     metadata: providerMetadataOf(p),
+    metadataStatus: providerMetadataStatusOf(p),
+    metadataError: providerMetadataErrorOf(p),
     capacity: p.capacity,
     openVouchers,
     services: [...p.services]

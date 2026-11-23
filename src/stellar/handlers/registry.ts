@@ -64,6 +64,8 @@ export async function onProviderRegistered(
       registeredAt: asTimestamp(d.registered_at),
       deploymentId,
       ...storedMetadataUri(d.metadata_uri, options?.log),
+      // #271: a pointer that has not been fetched yet is visibly pending.
+      ...(metadataUriOf(d.metadata_uri) !== null ? { metadataStatus: 'pending' } : {}),
     },
     update: { name: String(d.name), country: String(d.country) },
   });
@@ -99,7 +101,14 @@ export async function onProviderRegistered(
         address,
         OR: [{ metadataUri: { not: uri } }, { metadataUri: null }],
       },
-      data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
+      data: {
+        metadataUri: uri,
+        metadata: null,
+        metadataFetchedAt: null,
+        metadataStatus: 'pending',
+        metadataError: null,
+        metadataEtag: null,
+      },
     });
   }
 }
@@ -126,7 +135,14 @@ export async function onProviderMetadataChanged(db: Db, e: DecodedEvent): Promis
       : { OR: [{ metadataUri: { not: uri } }, { metadataUri: null }] };
   await db.provider.updateMany({
     where: { address, ...differs },
-    data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
+    data: {
+      metadataUri: uri,
+      metadata: null,
+      metadataFetchedAt: null,
+      metadataStatus: uri === null ? null : 'pending',
+      metadataError: null,
+      metadataEtag: null,
+    },
   });
 }
 

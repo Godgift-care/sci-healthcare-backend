@@ -256,6 +256,8 @@ const CONTRACTS = {
       'capacity',
       'openVouchers',
       'metadata',
+      'metadataStatus',
+      'metadataError',
       'services',
     ],
     // The routes publish coordinates inside `metadata` only; the top-level

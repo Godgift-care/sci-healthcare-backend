@@ -97,6 +97,22 @@ const envShape = z.object({
    */
   DEPLOYMENTS: z.string().optional(),
 
+  /**
+   * Base URL of the IPFS gateway used to resolve `ipfs://<cid>` metadata
+   * pointers (#269). The CID and any path are appended to it; only http(s)
+   * gateways are accepted. Content-addressed documents cannot be changed
+   * silently, which is why clinics are encouraged to publish them.
+   */
+  IPFS_GATEWAY_URL: z.string().url().default('https://ipfs.io/ipfs'),
+  /**
+   * How long a cached provider metadata document is trusted before it is
+   * fetched again (#270). Opening hours and phone numbers change without a
+   * transaction, so the refresh pass re-requests each document after this
+   * window, conditionally with its ETag so an unchanged document costs a
+   * 304 rather than a body.
+   */
+  PROVIDER_METADATA_TTL_MS: z.coerce.number().int().positive().default(86_400_000),
+
   INDEXER_START_LEDGER: z.coerce.number().int().nonnegative().default(0),
   INDEXER_POLL_MS: z.coerce.number().int().positive().default(5000),
   /** Ceiling for the indexer's exponential backoff after RPC failures. */
