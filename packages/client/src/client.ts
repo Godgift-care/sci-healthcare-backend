@@ -107,6 +107,24 @@ function trimTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
+/**
+ * The first page of a list asks for its count (#247).
+ *
+ * The client has always returned `total`, and making the aggregate query
+ * opt-in on the route would otherwise break every caller that reads it. A
+ * cursor page does not ask: the count is the size of the whole filtered set,
+ * unchanged by paging, and `total` stays absent there, as the response type
+ * says.
+ */
+function firstPageCount<T extends { cursor?: string; count?: boolean }>(
+  params: T | undefined,
+): (T & { count?: boolean }) | undefined {
+  if (params === undefined) return { count: true } as T & { count?: boolean };
+  const query = { ...params };
+  if (query.cursor === undefined && query.count === undefined) query.count = true;
+  return query;
+}
+
 export class Client {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -202,7 +220,10 @@ export class Client {
   }
 
   async providers(params?: ListProvidersParams): Promise<ProvidersResponse> {
-    return this.request<ProvidersResponse>('/providers', params as Record<string, unknown>);
+    return this.request<ProvidersResponse>(
+      '/providers',
+      firstPageCount(params) as Record<string, unknown>,
+    );
   }
 
   async provider(address: string): Promise<Provider> {
@@ -242,7 +263,7 @@ export class Client {
   }
 
   async services(): Promise<ServicesResponse> {
-    return this.request<ServicesResponse>('/services');
+    return this.request<ServicesResponse>('/services', { count: true });
   }
 
   async service(code: number): Promise<ServiceClinics> {
@@ -250,7 +271,10 @@ export class Client {
   }
 
   async vouchers(params?: ListVouchersParams): Promise<VouchersResponse> {
-    return this.request<VouchersResponse>('/vouchers', params as Record<string, unknown>);
+    return this.request<VouchersResponse>(
+      '/vouchers',
+      firstPageCount(params) as Record<string, unknown>,
+    );
   }
 
   async voucher(id: string): Promise<VoucherDetail> {
@@ -287,7 +311,10 @@ export class Client {
   }
 
   async receipts(params: ListReceiptsParams): Promise<ReceiptsResponse> {
-    return this.request<ReceiptsResponse>('/receipts', params as Record<string, unknown>);
+    return this.request<ReceiptsResponse>(
+      '/receipts',
+      firstPageCount(params) as Record<string, unknown>,
+    );
   }
 
   async receipt(voucherId: string): Promise<Receipt> {

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
@@ -23,6 +24,54 @@ const funnelQuery = z.object({
     .optional(),
   clinic: z.string().min(1).max(56).optional(),
 });
+
+/** The precision `GET /stats/disputes` uses for its rate string. */
+const DISPUTE_RATE_PRECISION = 4;
+
+/** A status that can only have been reached after attestation. */
+const ATTESTED_STATUSES = ['Attested', 'Settled', 'Disputed'] as const;
+
+const disputeResponse = z.object({
+  count: z.number().int().nonnegative().describe('Vouchers that were ever disputed.'),
+  attestedVouchers: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Vouchers that reached attestation, the denominator of the rate.'),
+  rate: z
+    .string()
+    .describe(
+      `Disputes divided by attested vouchers, fixed to ${DISPUTE_RATE_PRECISION} decimal places.`,
+    ),
+  byReason: z
+    .record(z.string(), z.number().int().nonnegative())
+    .describe('Disputed vouchers keyed by the contract reason code.'),
+  byOutcome: z
+    .record(z.string(), z.number().int().nonnegative())
+    .describe('Resolved disputes keyed by Funder or Provider, plus unresolved disputes.'),
+  medianResolutionHours: z
+    .number()
+    .nonnegative()
+    .nullable()
+    .describe(
+      'Median hours from attestation (or creation when never attested) to dispute resolution; null when none resolved.',
+    ),
+});
+
+/**
+ * A ratio as a fixed-precision decimal string, without ever dividing in
+ * floating point. Both engines see the same string, and a zero denominator
+ * is "0.0000" rather than NaN.
+ */
+function fixedRate(numerator: number, denominator: number): string {
+  const scale = 10n ** BigInt(DISPUTE_RATE_PRECISION);
+  if (denominator === 0) return `0.${'0'.repeat(DISPUTE_RATE_PRECISION)}`;
+  // Round half up at the last fixed digit; integer arithmetic keeps it exact.
+  const scaled = (BigInt(numerator) * scale + BigInt(denominator) / 2n) / BigInt(denominator);
+  const whole = scaled / scale;
+  const fraction = (scaled % scale).toString().padStart(DISPUTE_RATE_PRECISION, '0');
+  return `${whole}.${fraction}`;
+}
 
 const funnelResponse = z.object({
   country: z.string().nullable(),
@@ -157,6 +206,79 @@ const funnelMemo = ledgerMemo<Awaited<ReturnType<typeof funnelStats>>>();
  */
 export function resetStatsCache(): void {
   clearLedgerMemos();
+}
+
+/**
+ * Dispute counts, rate, breakdowns and resolution time (#245).
+ *
+ * A voucher counts as disputed when the contract moved it to `Disputed` or
+ * when a reason code was recorded; the status alone would stop counting it
+ * once a resolution moved it on to `Settled` or `Refunded`. Attested is the
+ * denominator the issue asks for: a voucher can only be disputed after
+ * attestation, so dividing by every funded voucher would understate the
+ * rate. `attestedAt` is the normal signal; a row whose projection predates
+ * it but whose status is past attestation still counts.
+ */
+async function disputeStats() {
+  const disputed: Prisma.VoucherWhereInput = {
+    OR: [{ status: 'Disputed' }, { disputeReason: { not: null } }],
+  };
+  const attested: Prisma.VoucherWhereInput = {
+    OR: [{ attestedAt: { not: null } }, { status: { in: [...ATTESTED_STATUSES] } }],
+  };
+
+  const [count, attestedVouchers, reasons, outcomes, resolved] = await Promise.all([
+    prisma.voucher.count({ where: disputed }),
+    prisma.voucher.count({ where: attested }),
+    prisma.voucher.groupBy({
+      by: ['disputeReason'],
+      where: { disputeReason: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.voucher.groupBy({
+      by: ['disputeOutcome'],
+      where: { disputeOutcome: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.voucher.findMany({
+      where: { disputeResolvedAt: { not: null } },
+      select: { createdAt: true, attestedAt: true, disputeResolvedAt: true },
+    }),
+  ]);
+
+  const byReason: Record<string, number> = {};
+  for (const row of reasons) {
+    if (row.disputeReason === null) continue;
+    byReason[String(row.disputeReason)] = row._count._all;
+  }
+
+  const byOutcome: Record<string, number> = { Funder: 0, Provider: 0 };
+  let resolvedCount = 0;
+  for (const row of outcomes) {
+    if (row.disputeOutcome === null) continue;
+    byOutcome[row.disputeOutcome] = row._count._all;
+    resolvedCount += row._count._all;
+  }
+  // A disputed voucher with no resolution yet is neither outcome; show it so
+  // Funder + Provider is not silently less than `count`.
+  byOutcome.Unresolved = Math.max(0, count - resolvedCount);
+
+  const resolutionHours = resolved.flatMap((row) => {
+    const end = row.disputeResolvedAt;
+    if (!end) return [];
+    const start = row.attestedAt ?? row.createdAt;
+    const hours = (end.getTime() - start.getTime()) / 3_600_000;
+    return hours >= 0 ? [hours] : [];
+  });
+
+  return {
+    count,
+    attestedVouchers,
+    rate: fixedRate(count, attestedVouchers),
+    byReason,
+    byOutcome,
+    medianResolutionHours: medianHours(resolutionHours),
+  };
 }
 
 /**
@@ -503,6 +625,26 @@ export function healthRoutes(app: FastifyInstance): void {
       statsMemo.remember('', currentLedger, result);
       return result;
     },
+  );
+
+  /**
+   * Dispute rate and how disputes end (#245).
+   *
+   * The count, the rate against attested vouchers, reason and outcome
+   * breakdowns, and the median time to resolution. Counts are exact integers
+   * and the rate is a fixed-precision string, so nothing here depends on the
+   * database engine's numeric formatting.
+   */
+  app.get(
+    '/stats/disputes',
+    {
+      schema: {
+        tags: ['health'],
+        summary: 'Dispute counts, rate, breakdowns and median resolution time',
+        response: { 200: disputeResponse },
+      },
+    },
+    async () => disputeStats(),
   );
 
   /** Voucher stages and median time between them, optionally scoped to a country or clinic. */

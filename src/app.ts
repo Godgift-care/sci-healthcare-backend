@@ -204,7 +204,9 @@ export async function buildApp(
   await app.register(cors, {
     origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()),
     methods: ['GET'],
-    exposedHeaders: ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
+    // `Link` carries the RFC 8288 `rel="next"` page on list routes (#248), so
+    // browser clients must be able to read it.
+    exposedHeaders: ['Link', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
   });
 
   await app.register(compress);
@@ -377,7 +379,14 @@ export async function buildApp(
   await app.register(async (legacy) => {
     legacy.addHook('onSend', async (req, reply, payload) => {
       reply.header('deprecation', 'true');
-      reply.header('link', `<${v1Path(req.url)}>; rel="successor-version"`);
+      // A list route may already have set `rel="next"` (#248); keep it and
+      // append the alias's successor link instead of replacing the page link.
+      const successor = `<${v1Path(req.url)}>; rel="successor-version"`;
+      const existing = reply.getHeader('link');
+      reply.header(
+        'link',
+        existing === undefined ? successor : `${String(existing)}, ${successor}`,
+      );
       return payload;
     });
     await registerRoutes(legacy);

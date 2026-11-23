@@ -9,11 +9,13 @@ import { env } from '../env.js';
 import { negotiateLanguage } from '../lib/i18n.js';
 import { isPostgres } from '../lib/database.js';
 import {
+  countParam,
   cursorParam,
   decodeCursor,
   decodeSortCursor,
   encodeSortCursor,
   limitParam,
+  nextPageLink,
 } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
 import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
@@ -44,6 +46,7 @@ const listQuery = z.object({
   limit: limitParam,
   offset: z.coerce.number().int().min(0).default(0),
   fields: z.string().max(512).optional(),
+  count: countParam,
 });
 
 /** Top-level keys the provider list items emit: the allow-list for `?fields=` (#166). */
@@ -341,12 +344,13 @@ export function providerRoutes(app: FastifyInstance): void {
       },
       config: { rateLimit: LIST_ROUTE_RATE_LIMIT },
     },
-    async (req) => {
+    async (req, reply) => {
       const parsed = listQuery.safeParse(req.query);
       if (!parsed.success) {
         throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
       }
-      const { status, country, q, serviceCode, sort, cursor, limit, offset, fields } = parsed.data;
+      const { status, country, q, serviceCode, sort, cursor, limit, offset, fields, count } =
+        parsed.data;
       const order = directionOf(sort, parsed.data.order);
       const filter = {
         ...(status ? { status } : {}),
@@ -408,7 +412,16 @@ export function providerRoutes(app: FastifyInstance): void {
           hasNext && last
             ? encodeSortCursor(sortKeyOf(last, sort), last.address, sort, order)
             : null;
-        return { limit, nextCursor, providers: project(await formatPage(page)) };
+        const link = nextPageLink(req.url, nextCursor);
+        if (link) reply.header('link', link);
+        // #247: the count is over the same filters, without the cursor.
+        const total = count ? await prisma.provider.count({ where: filter }) : undefined;
+        return {
+          ...(total === undefined ? {} : { total }),
+          limit,
+          nextCursor,
+          providers: project(await formatPage(page)),
+        };
       }
 
       const [rows, total] = await Promise.all([
@@ -419,7 +432,8 @@ export function providerRoutes(app: FastifyInstance): void {
           take: limit + 1,
           skip: offset,
         }) as unknown as Promise<DirectoryRow[]>,
-        prisma.provider.count({ where: filter }),
+        // #247: skipped entirely unless `?count=true` asked for it.
+        count ? prisma.provider.count({ where: filter }) : Promise.resolve(undefined),
       ]);
 
       const hasNext = rows.length > limit;
@@ -429,8 +443,16 @@ export function providerRoutes(app: FastifyInstance): void {
         hasNext && last
           ? encodeSortCursor(sortKeyOf(last, sort), last.address, sort, order)
           : undefined;
+      const link = nextPageLink(req.url, nextCursor);
+      if (link) reply.header('link', link);
 
-      return { total, limit, offset, nextCursor, providers: project(await formatPage(page)) };
+      return {
+        ...(total === undefined ? {} : { total }),
+        limit,
+        offset,
+        nextCursor,
+        providers: project(await formatPage(page)),
+      };
     },
   );
 
