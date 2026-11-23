@@ -33,6 +33,7 @@ Every variable the service reads. The Zod schema in `src/env.ts` is the source o
 | `DEPLOYMENTS` | No | — | `[{"type":"registry","contractId":"C...","fromLedger":123}]` | Optional JSON array of previous contract deployments for redeployment support |
 | `INDEXER_START_LEDGER` | No | `0` | `4465529` | Ledger to index from; `0` means start at the current tip and skip prior history |
 | `INDEXER_POLL_MS` | No | `5000` | `5000` | Milliseconds between indexer polls once caught up |
+| `INDEXER_PAGE_SIZE` | No | `200` | `200` | Maximum contract events requested per RPC page; valid range is 1–1000 |
 | `INDEXER_BACKOFF_MAX_MS` | No | `60000` | `60000` | Ceiling for the backoff applied after RPC failures |
 | `SHUTDOWN_TIMEOUT_MS` | No | `15000` | `15000` | How long SIGTERM/SIGINT waits for the indexer cycle in flight before the process hard-exits |
 | `SSE_HEARTBEAT_MS` | No | `15000` | `15000` | Idle interval between `: heartbeat` comments on `GET /stream` |

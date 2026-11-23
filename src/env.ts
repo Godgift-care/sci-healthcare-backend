@@ -115,6 +115,7 @@ const envShape = z.object({
 
   INDEXER_START_LEDGER: z.coerce.number().int().nonnegative().default(0),
   INDEXER_POLL_MS: z.coerce.number().int().positive().default(5000),
+  INDEXER_PAGE_SIZE: z.coerce.number().int().min(1).max(1000).default(200),
   /** Ceiling for the indexer's exponential backoff after RPC failures. */
   INDEXER_BACKOFF_MAX_MS: z.coerce.number().int().positive().default(60_000),
   /**
