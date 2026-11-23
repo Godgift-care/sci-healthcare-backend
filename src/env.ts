@@ -66,6 +66,7 @@ const envShape = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_POOL_SIZE: z.coerce.number().int().positive().optional(),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  DATABASE_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   // Prune ContractEvent rows older than this many days, for settled/refunded
   // vouchers only (#275). 0 or unset keeps the full log forever.
   EVENT_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(0),
@@ -81,6 +82,10 @@ const envShape = z.object({
    * next. One blip is not an outage, so the default waits for a small streak.
    */
   SOROBAN_RPC_MAX_FAILURES: z.coerce.number().int().positive().default(3),
+  INDEXER_ARCHIVE_RPC_URL: z.preprocess(
+    blankToUndefined,
+    z.string().refine(isValidHttpUrl).optional(),
+  ),
   NETWORK_PASSPHRASE: z.string().min(1),
 
   REGISTRY_CONTRACT_ID: z.string().length(56),

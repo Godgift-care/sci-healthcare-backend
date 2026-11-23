@@ -392,6 +392,17 @@ export type ReadyStatus = {
   checks: ReadinessChecks;
 };
 
+/** Public indexer cursor and retention/gap status (`GET /indexer`). */
+export type IndexerStatus = {
+  lastLedger: number;
+  latestLedger: number;
+  lagLedgers: number;
+  paused: boolean;
+  gap: boolean;
+  gapOldestLedger: number | null;
+  updatedAt: string | null;
+};
+
 export type ApiErrorDetail = {
   code?: string;
   message?: string;

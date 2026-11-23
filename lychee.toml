@@ -1,0 +1,28 @@
+# Link checking for the Markdown docs (#301).
+#
+# Both steps of .github/workflows/links.yml pass this file with `--config`, so
+# a contributor running the same binary locally gets the same verdict:
+#
+#   lychee --config lychee.toml --scheme file $(git ls-files '*.md')
+#
+# The scheme filter deliberately stays on the command line and out of here: it
+# is the only thing that separates the two steps, one of which is fatal and one
+# of which is not.
+
+# A renamed heading breaks `docs/RUNBOOK.md#uptime-monitoring` exactly as a
+# renamed file does, and these docs cross-link by section constantly. Every
+# anchor in the repository resolves today, so this is free regression cover
+# rather than a debt being taken on.
+include_fragments = "anchor-only"
+
+# External flakiness is retried before it is called broken, and a cold free
+# tier is slow rather than gone. These cover the reported (non-fatal) step,
+# where the point of the run is an accurate report, not an exit code.
+max_retries = 3
+retry_wait_time = 2
+timeout = 15
+
+# lychee's own default, plus 429. A rate limit is an answer, not a dead link;
+# counting one as an error would put noise in the weekly report and train
+# everyone to ignore it.
+accept = ["100..=103", "200..=299", "429"]

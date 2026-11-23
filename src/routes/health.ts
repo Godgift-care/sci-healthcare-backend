@@ -431,6 +431,38 @@ export function healthRoutes(app: FastifyInstance): void {
     },
   );
 
+  /**
+   * Public indexer status. This is a single database snapshot plus one latest-
+   * ledger RPC read, not a readiness dependency probe.
+   */
+  app.get(
+    '/indexer',
+    {
+      schema: {
+        tags: ['health'],
+        summary: 'Public indexer status',
+        description:
+          'Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.',
+      },
+    },
+    async () => {
+      const [state, latest] = await Promise.all([
+        prisma.indexerState.findUnique({ where: { id: 1 } }),
+        server.getLatestLedger(),
+      ]);
+      const lastLedger = state?.lastLedger ?? 0;
+      return {
+        lastLedger,
+        latestLedger: latest.sequence,
+        lagLedgers: latest.sequence - lastLedger,
+        paused: state?.paused ?? false,
+        gap: state?.gap ?? false,
+        gapOldestLedger: state?.gapOldestLedger ?? null,
+        updatedAt: state?.updatedAt.toISOString() ?? null,
+      };
+    },
+  );
+
   app.get(
     '/stats',
     {

@@ -623,7 +623,12 @@ export class Indexer {
 
           await tx.indexerState.update({
             where: { id: 1 },
-            data: { lastLedger: advanceTo },
+            data: {
+              lastLedger: advanceTo,
+              ...(advanceTo >= health.oldestLedger
+                ? { gap: false, gapOldestLedger: null, gapCursorLedger: null }
+                : {}),
+            },
           });
         },
         // Sized for a busy range on a remote database, not the 5s default.

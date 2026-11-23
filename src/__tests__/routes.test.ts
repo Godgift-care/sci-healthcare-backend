@@ -887,6 +887,76 @@ describe('GET /version', () => {
   });
 });
 
+describe('GET /indexer', () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await prisma.indexerState.update({
+      where: { id: 1 },
+      data: {
+        paused: false,
+        gap: false,
+        gapOldestLedger: null,
+        gapCursorLedger: null,
+      },
+    });
+  });
+
+  it('returns running status and one latest-ledger value', async () => {
+    await prisma.indexerState.upsert({
+      where: { id: 1 },
+      create: { id: 1, lastLedger: 100, updatedAt: new Date('2026-10-01T00:00:00Z') },
+      update: {
+        lastLedger: 100,
+        paused: false,
+        gap: false,
+        gapOldestLedger: null,
+        updatedAt: new Date('2026-10-01T00:00:00Z'),
+      },
+    });
+    const rpc = vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 120 } as never);
+
+    const { status, body } = await get('/indexer');
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      lastLedger: 100,
+      latestLedger: 120,
+      lagLedgers: 20,
+      paused: false,
+      gap: false,
+      gapOldestLedger: null,
+      updatedAt: '2026-10-01T00:00:00.000Z',
+    });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns paused and gap fields', async () => {
+    await prisma.indexerState.upsert({
+      where: { id: 1 },
+      create: {
+        id: 1,
+        lastLedger: 50,
+        paused: true,
+        gap: true,
+        gapOldestLedger: 200,
+      },
+      update: { lastLedger: 50, paused: true, gap: true, gapOldestLedger: 200 },
+    });
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 250 } as never);
+
+    const { status, body } = await get('/indexer');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      lastLedger: 50,
+      latestLedger: 250,
+      lagLedgers: 200,
+      paused: true,
+      gap: true,
+      gapOldestLedger: 200,
+    });
+  });
+});
+
 describe('GET /ready', () => {
   afterEach(() => vi.restoreAllMocks());
 

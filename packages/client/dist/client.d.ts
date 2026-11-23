@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, ClinicServicesParams, ClinicServicesResponse, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
+import type { ApiErrorEnvelope, ClinicServicesParams, ClinicServicesResponse, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, IndexerStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
 import { type StreamFilters, type StreamHandle, type StreamHandlers, type StreamOptions, type VoucherStreamEvent } from './stream.js';
 export declare class ApiError extends Error {
     readonly status: number;
@@ -35,6 +35,7 @@ export declare class Client {
     health(): Promise<HealthStatus>;
     version(): Promise<VersionInfo>;
     ready(): Promise<ReadyStatus>;
+    indexer(): Promise<IndexerStatus>;
     stats(): Promise<Stats>;
     dailyStats(days?: number): Promise<DailyStats>;
     providers(params?: ListProvidersParams): Promise<ProvidersResponse>;

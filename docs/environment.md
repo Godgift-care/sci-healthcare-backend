@@ -15,6 +15,7 @@ Every variable the service reads. The Zod schema in `src/env.ts` is the source o
 | `READY_MAX_LAG_LEDGERS` | No | `120` | `120` | Indexer lag in ledgers at which `/ready` reports degraded (503) |
 | `READY_WEBHOOK_MAX_AGE_MS` | No | `900000` | `900000` | Age at which a pending webhook delivery makes `/ready` report a backlog and answer 503 |
 | `DATABASE_URL` | Yes | — | `file:./dev.db` | Database connection string. SQLite paths resolve **relative to `prisma/`**; production uses a Postgres URL |
+| `DATABASE_CONNECT_TIMEOUT_MS` | No | `60000` | `60000` | Maximum startup wait for the first database connection, using bounded exponential backoff |
 | `DATABASE_POOL_SIZE` | No | — | `5` | Maximum Postgres connection pool size; applied via `connection_limit` parameter on Postgres URLs, ignored on SQLite |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | No | — | `10000` | Maximum Postgres query execution time in milliseconds; applied via `statement_timeout` parameter on Postgres URLs, ignored on SQLite |
 | `IPFS_GATEWAY_URL` | No | `https://ipfs.io/ipfs` | `https://gateway.pinata.cloud/ipfs` | Base URL of the gateway used to resolve `ipfs://<cid>` provider metadata pointers. The CID and path are appended to it; only http(s) gateways are accepted |
@@ -24,6 +25,7 @@ Every variable the service reads. The Zod schema in `src/env.ts` is the source o
 | `SOROBAN_RPC_URL` | No | — | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint (used when `SOROBAN_RPC_URLS` is unset) |
 | `SOROBAN_RPC_URLS` | No | — | `https://rpc-a.example,https://rpc-b.example` | Comma-separated endpoints, tried in order on repeated failure |
 | `SOROBAN_RPC_MAX_FAILURES` | No | `3` | `3` | Consecutive failures against one endpoint before switching |
+| `INDEXER_ARCHIVE_RPC_URL` | No | — | `https://archive-rpc.example` | Optional full-history RPC used only by the backfill command; the live indexer never uses it |
 | `NETWORK_PASSPHRASE` | Yes | — | `Test SDF Network ; September 2015` | Network passphrase used when building contract-read simulations |
 | `REGISTRY_CONTRACT_ID` | Yes | — | `CAMU635NRFEHATJ6MTY5SI43IAZ43KHPFXAQDQAST2AHKCHLSGWHVE4V` | Clinic registry contract id; indexed for providers and admin history |
 | `VOUCHER_CONTRACT_ID` | Yes | — | `CBPUQN6CNJCNGPKNEXB7UM4T7RINKQB7HQI5CXEOSQ5EFRHE4G4VKPSQ` | Voucher escrow contract id; indexed for vouchers |
