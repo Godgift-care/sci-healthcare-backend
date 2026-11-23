@@ -805,9 +805,11 @@
     },
     "/v1/providers": {
       "get": {
+        "summary": "List clinics, optionally filtered by service and sortable",
+        "description": "Filters: `status`, `country`, `q` (name contains, case-insensitive) and `serviceCode` (clinics with that service active). Sorts by `sort=name`, `registered` (default) or `country`, with `order=asc` or `desc` (default: `desc` for `registered`, `asc` otherwise). The sort and order are encoded in `nextCursor`; a cursor from another ordering is `400 invalid_cursor`.",
         "responses": {
           "200": {
-            "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
+            "description": "A page of clinics with their active services. Filter by `status`, `country`, `q` or `serviceCode` (only clinics with that service active); sort by `name`, `registered` (default, newest first) or `country`, with `order=asc|desc`. `nextCursor` encodes the ordering and answers `400 invalid_cursor` if used with another one; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
             "content": {
               "application/json": {
                 "example": {
@@ -1916,9 +1918,11 @@
     },
     "/v1/services": {
       "get": {
+        "summary": "Service catalogue with search, price range and sorting",
+        "description": "Filters: `q` (a service label contains it, case-insensitive, 1–64 chars), `minPrice` / `maxPrice` (base-unit decimal strings, compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sorts by `sort=code` (default), `price` (cheapest clinic first) or `label`, with `order=asc` (default) or `desc`.",
         "responses": {
           "200": {
-            "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge.",
+            "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge. Filter with `q` (label contains, case-insensitive, 1-64 chars), `minPrice` and `maxPrice` (base-unit decimal strings compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sort by `code` (default), `price` (cheapest clinic first) or `label`, with `order=asc|desc`; ties order by code.",
             "content": {
               "application/json": {
                 "example": {
@@ -2019,6 +2023,32 @@
                 }
               }
             }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "origin": "string",
+                      "code": "too_small",
+                      "minimum": 1,
+                      "inclusive": true,
+                      "path": [
+                        "q"
+                      ],
+                      "message": "Too small: expected string to have >=1 characters"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` for a `q` outside 1-64 characters, a malformed or over-i128 price, `minPrice` greater than `maxPrice`, or an unknown `sort`/`order`."
           },
           "429": {
             "content": {
@@ -5092,9 +5122,11 @@
     },
     "/providers": {
       "get": {
+        "summary": "List clinics, optionally filtered by service and sortable",
+        "description": "Filters: `status`, `country`, `q` (name contains, case-insensitive) and `serviceCode` (clinics with that service active). Sorts by `sort=name`, `registered` (default) or `country`, with `order=asc` or `desc` (default: `desc` for `registered`, `asc` otherwise). The sort and order are encoded in `nextCursor`; a cursor from another ordering is `400 invalid_cursor`.",
         "responses": {
           "200": {
-            "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
+            "description": "A page of clinics with their active services. Filter by `status`, `country`, `q` or `serviceCode` (only clinics with that service active); sort by `name`, `registered` (default, newest first) or `country`, with `order=asc|desc`. `nextCursor` encodes the ordering and answers `400 invalid_cursor` if used with another one; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
             "content": {
               "application/json": {
                 "example": {
@@ -6203,9 +6235,11 @@
     },
     "/services": {
       "get": {
+        "summary": "Service catalogue with search, price range and sorting",
+        "description": "Filters: `q` (a service label contains it, case-insensitive, 1–64 chars), `minPrice` / `maxPrice` (base-unit decimal strings, compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sorts by `sort=code` (default), `price` (cheapest clinic first) or `label`, with `order=asc` (default) or `desc`.",
         "responses": {
           "200": {
-            "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge.",
+            "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge. Filter with `q` (label contains, case-insensitive, 1-64 chars), `minPrice` and `maxPrice` (base-unit decimal strings compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sort by `code` (default), `price` (cheapest clinic first) or `label`, with `order=asc|desc`; ties order by code.",
             "content": {
               "application/json": {
                 "example": {
@@ -6306,6 +6340,32 @@
                 }
               }
             }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "origin": "string",
+                      "code": "too_small",
+                      "minimum": 1,
+                      "inclusive": true,
+                      "path": [
+                        "q"
+                      ],
+                      "message": "Too small: expected string to have >=1 characters"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` for a `q` outside 1-64 characters, a malformed or over-i128 price, `minPrice` greater than `maxPrice`, or an unknown `sort`/`order`."
           },
           "429": {
             "content": {

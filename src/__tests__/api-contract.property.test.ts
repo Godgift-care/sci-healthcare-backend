@@ -112,6 +112,101 @@ describe('cursor pagination properties (#146)', () => {
   }, 30_000);
 });
 
+describe('provider cursor pagination properties (#237)', () => {
+  const SORT_PREFIX = 'GSORTPROP';
+
+  async function clearSortProviders(): Promise<void> {
+    await prisma.service.deleteMany({
+      where: { providerAddress: { startsWith: SORT_PREFIX } },
+    });
+    await prisma.provider.deleteMany({ where: { address: { startsWith: SORT_PREFIX } } });
+  }
+
+  afterEach(clearSortProviders);
+
+  it('returns every clinic exactly once for every sort order', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(
+          fc.record({
+            bucket: fc.integer({ min: 0, max: 3 }),
+            country: fc.constantFrom('KE', 'NG', 'TZ'),
+          }),
+          { minLength: 1, maxLength: 8 },
+        ),
+        fc.integer({ min: 1, max: 3 }),
+        async (rows, limit) => {
+          await clearSortProviders();
+          await prisma.provider.createMany({
+            data: rows.map((row, index) => ({
+              address: `${SORT_PREFIX}${String(index).padStart(4, '0')}`,
+              name: `Sortprop ${row.bucket}-${String(index).padStart(2, '0')}`,
+              country: row.country,
+              status: 'Active',
+              registeredAt: new Date(BASE_TIME - row.bucket * 1000),
+            })),
+          });
+
+          const all = rows.map((row, index) => ({
+            address: `${SORT_PREFIX}${String(index).padStart(4, '0')}`,
+            name: `Sortprop ${row.bucket}-${String(index).padStart(2, '0')}`,
+            country: row.country,
+            registeredAt: BASE_TIME - row.bucket * 1000,
+          }));
+          const expectedFor = (sort: 'name' | 'registered' | 'country') =>
+            [...all]
+              .sort((a, b) => {
+                const primary =
+                  sort === 'registered'
+                    ? b.registeredAt - a.registeredAt
+                    : sort === 'name'
+                      ? a.name.localeCompare(b.name)
+                      : a.country.localeCompare(b.country);
+                if (primary !== 0) return primary;
+                return sort === 'registered'
+                  ? b.address.localeCompare(a.address)
+                  : a.address.localeCompare(b.address);
+              })
+              .map((row) => row.address);
+
+          let request = 0;
+          for (const sort of ['name', 'registered', 'country'] as const) {
+            const seen: string[] = [];
+            let cursor: string | null | undefined;
+            let page = 0;
+            do {
+              const params = new URLSearchParams({
+                q: 'Sortprop',
+                sort,
+                limit: String(limit),
+              });
+              if (cursor) params.set('cursor', cursor);
+              request += 1;
+              const response = await app.inject({
+                method: 'GET',
+                url: `/providers?${params}`,
+                headers: { 'x-forwarded-for': `10.1.${(request >>> 8) & 255}.${request & 255}` },
+              });
+              expect(response.statusCode).toBe(200);
+              const body = response.json() as {
+                nextCursor?: string | null;
+                providers: { address: string }[];
+              };
+              seen.push(...body.providers.map((provider) => provider.address));
+              cursor = body.nextCursor;
+              page += 1;
+              expect(page).toBeLessThanOrEqual(all.length + 1);
+            } while (cursor);
+
+            expect(seen, `${sort} must visit every clinic once`).toEqual(expectedFor(sort));
+          }
+        },
+      ),
+      { numRuns: 8 },
+    );
+  }, 30_000);
+});
+
 describe('list-query fuzz properties (#147)', () => {
   it('returns a handled response for arbitrary query strings', async () => {
     const routes = [
