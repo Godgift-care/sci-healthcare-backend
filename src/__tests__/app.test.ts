@@ -3,7 +3,7 @@ import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { buildApp } from '../app.js';
+import { buildApp, SECURITY_TXT_EXPIRES } from '../app.js';
 import { prisma } from '../db.js';
 
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
@@ -171,5 +171,52 @@ describe('error envelope', () => {
     const res = await app.inject({ method: 'GET', url: `/vouchers?funder=${FUNDER}` });
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ error: 'internal_error', message: 'Internal server error' });
+  });
+});
+
+describe('rate-limit headers (#249)', () => {
+  it('responds with IETF draft RateLimit headers on a normal request', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { 'x-forwarded-for': '10.1.2.3' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['ratelimit-limit']).toBeDefined();
+    expect(res.headers['ratelimit-remaining']).toBeDefined();
+    expect(res.headers['ratelimit-reset']).toBeDefined();
+  });
+
+  it('exposes the RateLimit headers in CORS', async () => {
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/health',
+      headers: {
+        origin: 'https://example.com',
+        'access-control-request-method': 'GET',
+      },
+    });
+    const exposed = res.headers['access-control-expose-headers'] ?? '';
+    expect(String(exposed).toLowerCase()).toContain('ratelimit-limit');
+    expect(String(exposed).toLowerCase()).toContain('ratelimit-remaining');
+    expect(String(exposed).toLowerCase()).toContain('ratelimit-reset');
+  });
+});
+
+describe('security.txt (#250)', () => {
+  it('serves /.well-known/security.txt with the required RFC 9116 fields', async () => {
+    const res = await app.inject({ method: 'GET', url: '/.well-known/security.txt' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/plain');
+    const body = res.body;
+    expect(body).toContain('Contact:');
+    expect(body).toContain('Policy:');
+    expect(body).toContain('Expires:');
+  });
+
+  it('Expires date is at least 30 days in the future', () => {
+    const expires = new Date(SECURITY_TXT_EXPIRES);
+    const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    expect(expires.getTime()).toBeGreaterThan(thirtyDaysFromNow.getTime());
   });
 });

@@ -95,6 +95,7 @@ export type ProviderHistory = {
 
 export type CountryStats = {
   code: string;
+  name: string;
   clinicCount: number;
 };
 

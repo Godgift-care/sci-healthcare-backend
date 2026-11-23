@@ -45,6 +45,9 @@ import { streamRoutes } from './routes/stream.js';
 import { voucherRoutes } from './routes/vouchers.js';
 import { DEFAULT_RATE_LIMIT } from './lib/rate-limits.js';
 
+/** Update annually — the test fails when this date is less than 30 days away. */
+export const SECURITY_TXT_EXPIRES = '2027-11-23T00:00:00.000Z';
+
 /**
  * Request ids are opaque, bounded and safe to put in a log line. Anything
  * else in the header is ignored and replaced, so a caller cannot inject
@@ -200,11 +203,12 @@ export async function buildApp(
   await app.register(cors, {
     origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()),
     methods: ['GET'],
+    exposedHeaders: ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
   });
 
   await app.register(compress);
   await app.register(helmet, { contentSecurityPolicy: false });
-  await app.register(rateLimit, DEFAULT_RATE_LIMIT);
+  await app.register(rateLimit, { ...DEFAULT_RATE_LIMIT, enableDraftSpec: true });
 
   // Every response, including errors and 404s, carries the id that appears
   // in the matching log line, plus the configured Stellar network name.
@@ -331,6 +335,23 @@ export async function buildApp(
     async (_req, reply) => {
       reply.header('content-type', registry.contentType);
       return registry.metrics();
+    },
+  );
+
+  // RFC 9116 security contact — intentionally not rate-limited so automated
+  // scanners can always reach it, and not cached so an updated Expires is
+  // served immediately.
+  app.get(
+    '/.well-known/security.txt',
+    { schema: { hide: true }, config: { rateLimit: false } },
+    async (_req, reply) => {
+      reply.header('content-type', 'text/plain; charset=utf-8').header('cache-control', NO_STORE);
+      return [
+        'Contact: https://github.com/Godgift-care/sci-healthcare-backend/security/advisories/new',
+        'Policy: https://github.com/Godgift-care/sci-healthcare-backend/blob/main/SECURITY.md',
+        `Expires: ${SECURITY_TXT_EXPIRES}`,
+        '',
+      ].join('\n');
     },
   );
 
