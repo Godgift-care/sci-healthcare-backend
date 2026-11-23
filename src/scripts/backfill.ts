@@ -50,7 +50,7 @@ async function main(): Promise<void> {
       from,
       to,
       oldestLedger: health.oldestLedger,
-      archiveRpc: archive ? env.INDEXER_ARCHIVE_RPC_URL : null,
+      archiveRpcConfigured: archive !== null,
     },
     'backfill starting',
   );
