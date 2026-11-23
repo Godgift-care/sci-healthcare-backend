@@ -184,7 +184,7 @@ export type IndexerOptions = {
   voucherReader?: VoucherReader;
   /** Optional RPC server interface (for fake RPC testing or custom RPC endpoints). */
   rpcServer?: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
-  /** Batch page size passed to collectEvents (default: 200). */
+  /** Batch page size passed to collectEvents. */
   pageSize?: number;
 };
 
@@ -224,7 +224,7 @@ export class Indexer {
     this.shutdownTimeoutMs = opts.shutdownTimeoutMs ?? env.SHUTDOWN_TIMEOUT_MS;
     this.voucherReader = opts.voucherReader ?? readVoucherFromChain;
     this.rpcServer = opts.rpcServer ?? server;
-    this.pageSize = opts.pageSize ?? 200;
+    this.pageSize = opts.pageSize ?? env.INDEXER_PAGE_SIZE;
   }
 
   async start(): Promise<void> {

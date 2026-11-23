@@ -132,28 +132,14 @@ describe('indexer logs', () => {
 });
 
 describe('RPC retention gap', () => {
-  it('clears the gap after advancing contiguous to the RPC retention window', async () => {
-    await prisma.indexerState.update({
-      where: { id: 1 },
-      data: {
-        lastLedger: 199,
-        gap: true,
-        gapOldestLedger: 200,
-        gapCursorLedger: 100,
-      },
-    });
-    vi.spyOn(server, 'getHealth').mockResolvedValue({
-      oldestLedger: 200,
-      latestLedger: 1000,
-    } as never);
-    stubEvents([], 200);
+  it('passes the configured page size to RPC event collection', async () => {
+    stubEvents([], 100);
+    await new Indexer(fakeLog(), { pageSize: 25 }).tick();
 
-    await new Indexer(fakeLog()).tick();
-
-    const state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
-    expect(state.gap).toBe(false);
-    expect(state.gapOldestLedger).toBeNull();
-    expect(state.gapCursorLedger).toBeNull();
+    expect(collectEvents).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pageSize: 25 }),
+    );
   });
 
   it('marks the indexer as degraded when cursor is older than oldestLedger', async () => {

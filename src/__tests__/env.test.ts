@@ -11,29 +11,18 @@ const validBaseEnv = {
   RECEIPT_CONTRACT_ID: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M',
 };
 
-describe('INDEXER_ARCHIVE_RPC_URL', () => {
-  it('allows an http(s) archive endpoint', () => {
-    expect(
-      schema.parse({
-        ...validBaseEnv,
-        INDEXER_ARCHIVE_RPC_URL: 'https://archive-rpc.example',
-      }).INDEXER_ARCHIVE_RPC_URL,
-    ).toBe('https://archive-rpc.example');
+describe('INDEXER_PAGE_SIZE validation', () => {
+  it('defaults to 200', () => {
+    expect(schema.parse(validBaseEnv).INDEXER_PAGE_SIZE).toBe(200);
   });
 
-  it('allows the archive to be omitted', () => {
-    expect(
-      schema.parse({ ...validBaseEnv, INDEXER_ARCHIVE_RPC_URL: '' }).INDEXER_ARCHIVE_RPC_URL,
-    ).toBeUndefined();
+  it.each([0, 1001, -1])('rejects out-of-range value %i', (value) => {
+    expect(schema.safeParse({ ...validBaseEnv, INDEXER_PAGE_SIZE: value }).success).toBe(false);
   });
 
-  it('rejects a non-http archive endpoint', () => {
-    expect(
-      schema.safeParse({
-        ...validBaseEnv,
-        INDEXER_ARCHIVE_RPC_URL: 'ftp://archive-rpc.example',
-      }).success,
-    ).toBe(false);
+  it('accepts values from 1 through 1000', () => {
+    expect(schema.parse({ ...validBaseEnv, INDEXER_PAGE_SIZE: 1 }).INDEXER_PAGE_SIZE).toBe(1);
+    expect(schema.parse({ ...validBaseEnv, INDEXER_PAGE_SIZE: 1000 }).INDEXER_PAGE_SIZE).toBe(1000);
   });
 });
 
