@@ -310,6 +310,16 @@ export type VersionInfo = {
   startedAt: string;
 };
 
+/** One endpoint's circuit breaker as `/ready` reports it (#265). */
+export type ReadinessWebhookBreaker = {
+  /** Origin and path only; a query string is never reported. */
+  endpoint: string;
+  state: 'closed' | 'open' | 'half-open';
+  consecutiveFailures: number;
+  /** When the breaker opened, or null while it is closed. */
+  openedAt: string | null;
+};
+
 /** The webhook outbox as `/ready` reports it. */
 export type ReadinessWebhooks = {
   state: 'ok' | 'backlog' | 'disabled';
@@ -318,6 +328,8 @@ export type ReadinessWebhooks = {
   abandoned: number;
   oldestPendingAgeSeconds: number | null;
   maxPendingAgeSeconds: number;
+  /** Per-endpoint circuit breakers; empty until the dispatcher has seen one. */
+  breakers: ReadinessWebhookBreaker[];
 };
 
 /**

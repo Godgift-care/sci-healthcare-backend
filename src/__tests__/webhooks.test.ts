@@ -14,6 +14,7 @@ import {
   WEBHOOK_MAX_BACKOFF_MS,
   WEBHOOK_SIGNATURE_HEADER,
   WebhookDispatcher,
+  webhookCircuit,
   webhookPayload,
   type VoucherWebhookEvent,
 } from '../lib/webhooks.js';
@@ -49,6 +50,9 @@ function dispatcherWith(fetchImpl: typeof fetch, opts: object = {}) {
 }
 
 beforeEach(async () => {
+  // Every case shares one endpoint URL, so failures from a previous case
+  // would otherwise open the process-wide breaker under the next one.
+  webhookCircuit.reset();
   await prisma.webhookDelivery.deleteMany();
   await prisma.receipt.deleteMany();
   await prisma.voucher.deleteMany();

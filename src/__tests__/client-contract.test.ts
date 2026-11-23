@@ -211,6 +211,7 @@ const CONTRACTS = {
       'abandoned',
       'oldestPendingAgeSeconds',
       'maxPendingAgeSeconds',
+      'breakers',
     ],
     absent: [],
   },
