@@ -22,6 +22,7 @@ import {
   type GovernanceHistoryEvent,
   type GovernanceResponse,
   type HealthStatus,
+  IndexerStatus,
   type Provider,
   type ProviderHistory,
   type ProviderHistoryItem,
@@ -83,6 +84,7 @@ interface Shapes {
   Version: VersionInfo;
   VersionContracts: VersionInfo['contracts'];
   Ready: ReadyStatus;
+  Indexer: IndexerStatus;
   ReadinessChecks: ReadinessChecks;
   ReadinessWebhooks: ReadinessWebhooks;
   Stats: Stats;
@@ -180,6 +182,18 @@ const CONTRACTS = {
     absent: [],
   },
   Ready: { present: ['status', 'checks'], absent: [] },
+  Indexer: {
+    present: [
+      'lastLedger',
+      'latestLedger',
+      'lagLedgers',
+      'paused',
+      'gap',
+      'gapOldestLedger',
+      'updatedAt',
+    ],
+    absent: [],
+  },
   ReadinessChecks: {
     present: [
       'database',
@@ -484,6 +498,7 @@ const CONTRACTED_METHODS = [
   'dailyStats',
   'governance',
   'health',
+  'indexer',
   'provider',
   'providerHistory',
   'providerServiceHistory',
@@ -784,6 +799,10 @@ describe('@sci-healthcare/client contract (#310)', () => {
     expectShape('Ready', ready);
     expectShape('ReadinessChecks', ready.checks);
     expectShape('ReadinessWebhooks', ready.checks.webhooks);
+  });
+
+  it('indexer', async () => {
+    expectShape('Indexer', await client.indexer());
   });
 
   it('stats', async () => {

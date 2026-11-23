@@ -311,7 +311,64 @@
         "description": "Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.",
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "The indexer cursor, latest ledger, calculated lag and persisted pause or retention-gap state.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "lastLedger": 5000000,
+                  "latestLedger": 5000000,
+                  "lagLedgers": 0,
+                  "paused": false,
+                  "gap": false,
+                  "gapOldestLedger": null,
+                  "updatedAt": "2026-11-18T16:34:28.834Z"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
           }
         }
       }
@@ -4678,7 +4735,64 @@
         "description": "Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.",
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "The indexer cursor, latest ledger, calculated lag and persisted pause or retention-gap state.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "lastLedger": 5000000,
+                  "latestLedger": 5000000,
+                  "lagLedgers": 0,
+                  "paused": false,
+                  "gap": false,
+                  "gapOldestLedger": null,
+                  "updatedAt": "2026-11-18T16:34:28.834Z"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
           }
         }
       }
