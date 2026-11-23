@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 
 import pino from 'pino';
 
-import { disconnect, prisma } from '../db.js';
+import { disconnect, prisma, waitForDatabase } from '../db.js';
 import { env, INDEXED_CONTRACTS } from '../env.js';
 import { server } from '../stellar/client.js';
 import { decodeEvent } from '../stellar/events.js';
@@ -27,6 +27,7 @@ if (!Number.isInteger(from) || from < 0) {
 const log = pino({ level: env.LOG_LEVEL });
 
 async function main(): Promise<void> {
+  await waitForDatabase();
   const health = await server.getHealth();
 
   if (from < health.oldestLedger) {

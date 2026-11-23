@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from './app.js';
-import { disconnect } from './db.js';
+import { disconnect, waitForDatabase } from './db.js';
 import { env } from './env.js';
 import { startTracingIfConfigured } from './tracing.js';
 
@@ -20,6 +20,7 @@ export type ApiOptions = {
 };
 
 export async function start(opts: ApiOptions = {}): Promise<FastifyInstance> {
+  await waitForDatabase();
   // No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set (#54).
   startTracingIfConfigured();
 

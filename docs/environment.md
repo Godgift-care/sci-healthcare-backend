@@ -15,6 +15,7 @@ Every variable the service reads. The Zod schema in `src/env.ts` is the source o
 | `READY_MAX_LAG_LEDGERS` | No | `120` | `120` | Indexer lag in ledgers at which `/ready` reports degraded (503) |
 | `READY_WEBHOOK_MAX_AGE_MS` | No | `900000` | `900000` | Age at which a pending webhook delivery makes `/ready` report a backlog and answer 503 |
 | `DATABASE_URL` | Yes | — | `file:./dev.db` | Database connection string. SQLite paths resolve **relative to `prisma/`**; production uses a Postgres URL |
+| `DATABASE_CONNECT_TIMEOUT_MS` | No | `60000` | `60000` | Maximum startup wait for the first database connection, using bounded exponential backoff |
 | `DATABASE_POOL_SIZE` | No | — | `5` | Maximum Postgres connection pool size; applied via `connection_limit` parameter on Postgres URLs, ignored on SQLite |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | No | — | `10000` | Maximum Postgres query execution time in milliseconds; applied via `statement_timeout` parameter on Postgres URLs, ignored on SQLite |
 | `IPFS_GATEWAY_URL` | No | `https://ipfs.io/ipfs` | `https://gateway.pinata.cloud/ipfs` | Base URL of the gateway used to resolve `ipfs://<cid>` provider metadata pointers. The CID and path are appended to it; only http(s) gateways are accepted |
