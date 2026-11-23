@@ -18,7 +18,7 @@
  */
 
 /** Languages the API answers error messages in. */
-export const SUPPORTED_LANGUAGES = ['en', 'fr', 'sw'] as const;
+export const SUPPORTED_LANGUAGES = ['en', 'fr', 'sw', 'pt'] as const;
 
 export type Language = (typeof SUPPORTED_LANGUAGES)[number];
 
@@ -93,6 +93,24 @@ const CATALOGUES: Record<Language, Record<string, string>> = {
     voucher_not_found: 'Cheti haipatikani',
     filter_required: 'Toa angalau moja kati ya: {filters}',
     stream_full: 'Kiolesura hiki kina mifumo mingi mno iliyowazi; jaribu tena baada ya muda mfupi.',
+  },
+  pt: {
+    internal_error: 'Erro interno do servidor',
+    database_unavailable: 'Base de dados indisponível, tente novamente em {seconds} segundos',
+    maintenance_mode: 'O serviço está em manutenção, tente novamente em {seconds} segundos',
+    rate_limited: 'Demasiadas pedidos',
+    bad_request: 'Pedido inválido',
+    route_not_found: 'Rota {method} {url} não encontrada',
+    method_not_allowed: 'O método {method} não é permitido para {path}; permitidos: {allowed}',
+    invalid_query: 'Parâmetros de consulta inválidos',
+    invalid_cursor: 'Cursor inválido',
+    invalid_code: 'o código tem de ser um inteiro não negativo',
+    provider_not_found: 'Prestador não encontrado',
+    service_not_found: 'Serviço não encontrado',
+    receipt_not_found: 'Recibo não encontrado',
+    voucher_not_found: 'Vale de saúde não encontrado',
+    filter_required: 'Forneça pelo menos um dos seguintes: {filters}',
+    stream_full: 'Esta instância já tem demasiados fluxos abertos; tente novamente em breve.',
   },
 };
 

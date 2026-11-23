@@ -25,6 +25,9 @@ describe('negotiateLanguage', () => {
     expect(negotiateLanguage('fr-CA')).toBe('fr');
     expect(negotiateLanguage('sw-KE')).toBe('sw');
     expect(negotiateLanguage('SW')).toBe('sw');
+    expect(negotiateLanguage('pt')).toBe('pt');
+    expect(negotiateLanguage('pt-BR')).toBe('pt');
+    expect(negotiateLanguage('PT-PT')).toBe('pt');
   });
 
   it('falls back to English when nothing supported is offered', () => {
@@ -83,9 +86,19 @@ describe('errorMessage', () => {
     );
   });
 
-  it('exposes English as the default language and supports en, fr and sw', () => {
+  it('exposes English as the default language and supports en, fr, sw and pt', () => {
     expect(DEFAULT_LANGUAGE).toBe('en');
-    expect([...SUPPORTED_LANGUAGES]).toEqual(['en', 'fr', 'sw']);
+    expect([...SUPPORTED_LANGUAGES]).toEqual(['en', 'fr', 'sw', 'pt']);
+  });
+
+  it('translates a catalogued code for Portuguese', () => {
+    expect(errorMessage('voucher_not_found', 'pt', 'Voucher not found')).toBe(
+      'Vale de saúde não encontrado',
+    );
+    expect(errorMessage('rate_limited', 'pt', 'Too many requests')).toBe('Demasiadas pedidos');
+    expect(errorMessage('invalid_query', 'pt', 'Invalid query parameters')).toBe(
+      'Parâmetros de consulta inválidos',
+    );
   });
 });
 
