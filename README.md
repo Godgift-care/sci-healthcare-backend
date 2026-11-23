@@ -103,6 +103,9 @@ curl http://localhost:8080/ready    # 200 once the indexer catches up
 `INDEXER_START_LEDGER` is `0` in compose, which starts at the current ledger tip
 so `/ready` goes green in seconds. Set it to the deployment ledger to backfill
 history instead — but note Soroban RPC only retains a rolling window of ledgers.
+Use `INDEXER_ARCHIVE_RPC_URL` with `npm run indexer:backfill:dev -- --from ...`
+to replay ledgers older than the live RPC window. The archive endpoint is
+backfill-only: ordinary indexer and readiness polling still use the live RPC pool.
 
 The image runs as the unprivileged `node` user. Override any environment value
 (for example `CORS_ORIGIN` or the contract ids) by exporting it or adding a
