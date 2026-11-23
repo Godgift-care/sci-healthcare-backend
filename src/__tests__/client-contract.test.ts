@@ -284,7 +284,7 @@ const CONTRACTS = {
     present: ['price', 'priceDisplay', 'ledger', 'changedAt'],
     absent: [],
   },
-  CountryStats: { present: ['code', 'name', 'clinicCount'], absent: [] },
+  CountryStats: { present: ['code', 'name', 'clinicCount', 'suppressed'], absent: [] },
   CountriesResponse: { present: ['countries'], absent: [] },
   ServicesResponse: { present: ['total', 'services'], absent: [] },
   ServiceCatalogueItem: {

@@ -5,6 +5,7 @@ import type { Prisma } from '@prisma/client';
 
 import { prisma } from '../db.js';
 import { compareBaseUnits, fromBaseUnits } from '../lib/amounts.js';
+import { env } from '../env.js';
 import { negotiateLanguage } from '../lib/i18n.js';
 import { isPostgres } from '../lib/database.js';
 import {
@@ -702,15 +703,45 @@ export function providerRoutes(app: FastifyInstance): void {
     });
 
     const displayNames = new Intl.DisplayNames([language], { type: 'region' });
+    const minCell = env.STATS_MIN_CELL;
+
+    type CountryRow = {
+      code: string;
+      name: string;
+      clinicCount: number | null;
+      suppressed: boolean;
+    };
+    const rows: CountryRow[] = grouped.map((g) => {
+      const count = g._count._all;
+      const isSuppressed = minCell > 0 && count > 0 && count < minCell;
+      return {
+        code: g.country,
+        name: displayNames.of(g.country) ?? g.country,
+        clinicCount: isSuppressed ? null : count,
+        suppressed: isSuppressed,
+      };
+    });
+
+    // Complementary suppression: if only one entry was primarily suppressed,
+    // suppress the next-smallest revealed entry as well so an operator who
+    // knows the total active-provider count cannot recover the hidden value
+    // by subtraction.
+    if (minCell > 0) {
+      const primaryCount = rows.filter((r) => r.suppressed).length;
+      if (primaryCount === 1 && rows.length >= 3) {
+        const revealed = rows
+          .filter((r) => !r.suppressed)
+          .sort((a, b) => (a.clinicCount ?? 0) - (b.clinicCount ?? 0));
+        if (revealed.length > 0) {
+          const smallest = revealed[0]!;
+          smallest.clinicCount = null;
+          smallest.suppressed = true;
+        }
+      }
+    }
 
     return {
-      countries: grouped
-        .map((g) => ({
-          code: g.country,
-          name: displayNames.of(g.country) ?? g.country,
-          clinicCount: g._count._all,
-        }))
-        .sort((a, b) => a.code.localeCompare(b.code)),
+      countries: rows.sort((a, b) => a.code.localeCompare(b.code)),
     };
   });
 }

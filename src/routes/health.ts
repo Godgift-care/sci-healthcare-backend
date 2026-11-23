@@ -28,11 +28,12 @@ const funnelResponse = z.object({
   country: z.string().nullable(),
   clinic: z.string().nullable(),
   counts: z.object({
-    funded: z.number().int().nonnegative(),
-    claimed: z.number().int().nonnegative(),
-    attested: z.number().int().nonnegative(),
-    settled: z.number().int().nonnegative(),
+    funded: z.number().int().nonnegative().nullable(),
+    claimed: z.number().int().nonnegative().nullable(),
+    attested: z.number().int().nonnegative().nullable(),
+    settled: z.number().int().nonnegative().nullable(),
   }),
+  suppressed: z.boolean(),
   medianHours: z.object({
     fundedToClaimed: z.number().nonnegative().nullable(),
     claimedToAttested: z.number().nonnegative().nullable(),
@@ -207,15 +208,36 @@ async function funnelStats(country?: string, clinic?: string) {
     return hours === null ? [] : [hours];
   });
 
+  const rawCounts = {
+    funded: vouchers.length,
+    claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
+    attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
+    settled: receipts.length,
+  };
+
+  // Small-cell suppression: apply only to scoped queries, not the global
+  // aggregate, so dashboard totals are never null (#256). Zero is never
+  // suppressed — it reveals nothing about individuals.
+  const isScoped = country !== undefined || clinic !== undefined;
+  const minCell = isScoped ? env.STATS_MIN_CELL : 0;
+  const suppress = (n: number): number | null => (minCell > 0 && n > 0 && n < minCell ? null : n);
+  const counts = {
+    funded: suppress(rawCounts.funded),
+    claimed: suppress(rawCounts.claimed),
+    attested: suppress(rawCounts.attested),
+    settled: suppress(rawCounts.settled),
+  };
+  const suppressed =
+    counts.funded === null ||
+    counts.claimed === null ||
+    counts.attested === null ||
+    counts.settled === null;
+
   return {
     country: country ?? null,
     clinic: clinic ?? null,
-    counts: {
-      funded: vouchers.length,
-      claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
-      attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
-      settled: receipts.length,
-    },
+    counts,
+    suppressed,
     medianHours: {
       fundedToClaimed: medianHours(claimTimes),
       claimedToAttested: medianHours(attestationTimes),
