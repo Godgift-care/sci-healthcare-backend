@@ -1,21 +1,45 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import type { Prisma } from '@prisma/client';
+
 import { prisma } from '../db.js';
-import { fromBaseUnits } from '../lib/amounts.js';
+import { compareBaseUnits, fromBaseUnits } from '../lib/amounts.js';
+import { env } from '../env.js';
+import { negotiateLanguage } from '../lib/i18n.js';
 import { isPostgres } from '../lib/database.js';
-import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
+import {
+  cursorParam,
+  decodeCursor,
+  decodeSortCursor,
+  encodeSortCursor,
+  limitParam,
+} from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
 import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
-import { providerMetadataOf } from '../lib/provider-metadata.js';
+import {
+  providerMetadataErrorOf,
+  providerMetadataOf,
+  storedMetadataStatus,
+} from '../lib/provider-metadata.js';
 import { serialiseProviderDetail, openVoucherCounts } from '../lib/providers.js';
 import { formatServicePrice, type ScheduledPriceRow } from '../lib/services.js';
+
+/** The orderings `GET /providers` can page through (#237). */
+const PROVIDER_SORTS = ['name', 'registered', 'country'] as const;
+type ProviderSort = (typeof PROVIDER_SORTS)[number];
+type SortDirection = 'asc' | 'desc';
 
 const listQuery = z.object({
   status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
   country: z.string().length(2).optional(),
   q: z.string().min(1).max(64).optional(),
+  // A clinic is listed only when it has this service active: a code the
+  // clinic paused or removed is not an offering (#238).
+  serviceCode: z.coerce.number().int().min(0).max(2_147_483_647).optional(),
+  sort: z.enum(PROVIDER_SORTS).default('registered'),
+  order: z.enum(['asc', 'desc']).optional(),
   cursor: cursorParam,
   limit: limitParam,
   offset: z.coerce.number().int().min(0).default(0),
@@ -33,6 +57,11 @@ const PROVIDER_FIELDS = [
   // field, so a clinic card asking only for hours and a phone number
   // does not also download every service price.
   'metadata',
+  // The fetch state beside it (#271): `pending`, `ok` or `failed`, and a
+  // short error code the clinic can act on. Requestable like any other
+  // field, so a status banner does not download the document.
+  'metadataStatus',
+  'metadataError',
   // Clinic capacity read model (#316): the cap indexed from the registry and
   // the live count of open (Funded + Claimed) vouchers, so a funder can see
   // a clinic is full before funding it.
@@ -117,6 +146,9 @@ type DirectoryRow = {
   status: string;
   registeredAt: Date;
   metadata: string | null;
+  /** Absent on a page whose fieldset left the metadata status out (#271). */
+  metadataStatus?: string | null;
+  metadataError?: string | null;
   /** Absent on a page whose fieldset left `capacity` out (#321). */
   capacity?: number | null;
   /** Absent on a page whose fieldset left `services` out (#321). */
@@ -135,6 +167,10 @@ function formatProvider(p: DirectoryRow, openVouchers: number, now: Date) {
     // (#159); null until one was fetched, so clients treat it as
     // optional rather than a second request they must make.
     metadata: providerMetadataOf(p),
+    // #271: the last fetch state and its short error code, so a clinic can
+    // see a broken link on its own page instead of silently serving nothing.
+    metadataStatus: storedMetadataStatus(p.metadataStatus ?? null),
+    metadataError: providerMetadataErrorOf({ metadataError: p.metadataError ?? null }),
     // #316: the cap indexed from the registry (`0` means unlimited, null
     // when the clinic has never set one) and the vouchers open against it.
     capacity: p.capacity ?? null,
@@ -231,12 +267,47 @@ const clinicServicesQuery = z.object({
   order: z.enum(CLINIC_SERVICE_FILTERS.order).default('asc'),
 });
 
-/** Numeric order of two base-unit amounts too large for a JS number. */
-function comparePrices(a: string, b: string): number {
-  const av = BigInt(a);
-  const bv = BigInt(b);
-  if (av === bv) return 0;
-  return av < bv ? -1 : 1;
+/** The default direction matches the route's historical newest-first order. */
+function directionOf(sort: ProviderSort, order: SortDirection | undefined): SortDirection {
+  return order ?? (sort === 'registered' ? 'desc' : 'asc');
+}
+
+/** The keyset order for a provider page, always unique on `address`. */
+function providerOrderBy(
+  sort: ProviderSort,
+  order: SortDirection,
+): Prisma.ProviderOrderByWithRelationInput[] {
+  const direction = order;
+  if (sort === 'name') return [{ name: direction }, { address: direction }];
+  if (sort === 'country') return [{ country: direction }, { address: direction }];
+  return [{ registeredAt: direction }, { address: direction }];
+}
+
+/** The column value a cursor stores for this ordering. */
+function sortKeyOf(row: DirectoryRow, sort: ProviderSort): string | Date {
+  return sort === 'registered' ? row.registeredAt : row[sort];
+}
+
+/**
+ * The rows after a cursor for the chosen ordering. `address` is the unique
+ * tie-break, so equal names, countries or registration instants page without
+ * gaps or repeats.
+ */
+function providerKeyset(
+  sort: ProviderSort,
+  order: SortDirection,
+  value: string,
+  address: string,
+): Prisma.ProviderWhereInput {
+  const comparison = order === 'asc' ? 'gt' : 'lt';
+  const equality = sort === 'registered' ? new Date(value) : value;
+  const column = sort === 'registered' ? 'registeredAt' : sort;
+  return {
+    OR: [
+      { [column]: { [comparison]: equality } },
+      { [column]: equality, address: { [comparison]: address } },
+    ],
+  };
 }
 
 /** Numeric median; keep fractional seconds when averaging an even sample. */
@@ -255,81 +326,113 @@ function nameContains(q: string): { contains: string; mode?: string } {
 }
 
 export function providerRoutes(app: FastifyInstance): void {
-  app.get('/providers', { config: { rateLimit: LIST_ROUTE_RATE_LIMIT } }, async (req) => {
-    const parsed = listQuery.safeParse(req.query);
-    if (!parsed.success) {
-      throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
-    }
-    const { status, country, q, cursor, limit, offset, fields } = parsed.data;
-
-    const fieldSet = parseFields(fields, PROVIDER_FIELDS, 'GET /providers');
-    const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
-      fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
-
-    // One grouped count for the whole page, never one per clinic (#316) — and
-    // only when the fieldset actually carries the count (#321).
-    const formatPage = async (page: DirectoryRow[]) => {
-      const openBy = includesField(fieldSet, 'openVouchers')
-        ? await openVoucherCounts(page.map((p) => p.address))
-        : new Map<string, number>();
-      // One instant for the page, so two rows cannot disagree about whether a
-      // schedule has taken effect (#315).
-      const now = new Date();
-      return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0, now));
-    };
-
-    if (cursor) {
-      const decoded = decodeCursor(cursor);
-      if (!decoded) {
-        throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
+  app.get(
+    '/providers',
+    {
+      schema: {
+        summary: 'List clinics, optionally filtered by service and sortable',
+        description:
+          'Filters: `status`, `country`, `q` (name contains, case-insensitive) and ' +
+          '`serviceCode` (clinics with that service active). Sorts by `sort=name`, ' +
+          '`registered` (default) or `country`, with `order=asc` or `desc` ' +
+          '(default: `desc` for `registered`, `asc` otherwise). The sort and ' +
+          'order are encoded in `nextCursor`; a cursor from another ordering is ' +
+          '`400 invalid_cursor`.',
+      },
+      config: { rateLimit: LIST_ROUTE_RATE_LIMIT },
+    },
+    async (req) => {
+      const parsed = listQuery.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
       }
-      const cursorDate = new Date(decoded.createdAt);
-      const where = {
+      const { status, country, q, serviceCode, sort, cursor, limit, offset, fields } = parsed.data;
+      const order = directionOf(sort, parsed.data.order);
+      const filter = {
         ...(status ? { status } : {}),
         ...(country ? { country } : {}),
         ...(q ? { name: nameContains(q) } : {}),
-        OR: [
-          { registeredAt: { lt: cursorDate } },
-          { registeredAt: cursorDate, address: { lt: decoded.id } },
-        ],
+        ...(serviceCode === undefined
+          ? {}
+          : { services: { some: { code: serviceCode, active: true } } }),
+      } satisfies Prisma.ProviderWhereInput;
+
+      const fieldSet = parseFields(fields, PROVIDER_FIELDS, 'GET /providers');
+      const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
+        fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
+
+      // One grouped count for the whole page, never one per clinic (#316) — and
+      // only when the fieldset actually carries the count (#321).
+      const formatPage = async (page: DirectoryRow[]) => {
+        const openBy = includesField(fieldSet, 'openVouchers')
+          ? await openVoucherCounts(page.map((p) => p.address))
+          : new Map<string, number>();
+        // One instant for the page, so two rows cannot disagree about whether a
+        // schedule has taken effect (#315).
+        const now = new Date();
+        return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0, now));
       };
-      const rows = (await prisma.provider.findMany({
-        where,
-        select: providerSelect(fieldSet),
-        orderBy: [{ registeredAt: 'desc' }, { address: 'desc' }],
-        take: limit + 1,
-      })) as unknown as DirectoryRow[];
+
+      if (cursor) {
+        // A cursor issued for another ordering cannot be resumed here: its key
+        // is a different column, so continuing would skip or repeat rows. A
+        // legacy cursor (before sort support) carries no sort and is only valid
+        // for the historical registered/desc order.
+        const sortCursor = decodeSortCursor(cursor);
+        const legacyCursor = sortCursor ? null : decodeCursor(cursor);
+        if (!sortCursor && !legacyCursor) {
+          throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
+        }
+        const cursorSort = sortCursor?.sort ?? 'registered';
+        const cursorOrder = sortCursor?.order ?? 'desc';
+        if (cursorSort !== sort || cursorOrder !== order) {
+          throw new ApiError(400, 'invalid_cursor', 'Cursor belongs to another sort order');
+        }
+        const value = sortCursor?.value ?? legacyCursor!.createdAt;
+        const address = sortCursor?.id ?? legacyCursor!.id;
+        if (sort === 'registered' && Number.isNaN(new Date(value).getTime())) {
+          throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
+        }
+
+        const where = { ...filter, ...providerKeyset(sort, order, value, address) };
+        const rows = (await prisma.provider.findMany({
+          where,
+          select: providerSelect(fieldSet),
+          orderBy: providerOrderBy(sort, order),
+          take: limit + 1,
+        })) as unknown as DirectoryRow[];
+        const hasNext = rows.length > limit;
+        const page = hasNext ? rows.slice(0, limit) : rows;
+        const last = page[page.length - 1];
+        const nextCursor =
+          hasNext && last
+            ? encodeSortCursor(sortKeyOf(last, sort), last.address, sort, order)
+            : null;
+        return { limit, nextCursor, providers: project(await formatPage(page)) };
+      }
+
+      const [rows, total] = await Promise.all([
+        prisma.provider.findMany({
+          where: filter,
+          select: providerSelect(fieldSet),
+          orderBy: providerOrderBy(sort, order),
+          take: limit + 1,
+          skip: offset,
+        }) as unknown as Promise<DirectoryRow[]>,
+        prisma.provider.count({ where: filter }),
+      ]);
+
       const hasNext = rows.length > limit;
       const page = hasNext ? rows.slice(0, limit) : rows;
       const last = page[page.length - 1];
-      const nextCursor = hasNext && last ? encodeCursor(last.registeredAt, last.address) : null;
-      return { limit, nextCursor, providers: project(await formatPage(page)) };
-    }
+      const nextCursor =
+        hasNext && last
+          ? encodeSortCursor(sortKeyOf(last, sort), last.address, sort, order)
+          : undefined;
 
-    const where = {
-      ...(status ? { status } : {}),
-      ...(country ? { country } : {}),
-      ...(q ? { name: nameContains(q) } : {}),
-    };
-
-    const [rows, total] = await Promise.all([
-      prisma.provider.findMany({
-        where,
-        select: providerSelect(fieldSet),
-        orderBy: [{ registeredAt: 'desc' }, { address: 'desc' }],
-        take: limit + 1,
-        skip: offset,
-      }) as unknown as Promise<DirectoryRow[]>,
-      prisma.provider.count({ where }),
-    ]);
-
-    const hasNext = rows.length > limit;
-    const page = hasNext ? rows.slice(0, limit) : rows;
-    const last = page[page.length - 1];
-    const nextCursor = hasNext && last ? encodeCursor(last.registeredAt, last.address) : undefined;
-
-    return { total, limit, offset, nextCursor, providers: project(await formatPage(page)) };
-  });
+      return { total, limit, offset, nextCursor, providers: project(await formatPage(page)) };
+    },
+  );
 
   app.get('/providers/:address', async (req) => {
     const { address } = req.params as { address: string };
@@ -428,7 +531,7 @@ export function providerRoutes(app: FastifyInstance): void {
           };
         })
         .sort((a, b) => {
-          const cmp = sort === 'code' ? a.code - b.code : comparePrices(a.price, b.price);
+          const cmp = sort === 'code' ? a.code - b.code : compareBaseUnits(a.price, b.price);
           // Tie-break on the code so equal prices keep a stable, repeatable order.
           const primary = cmp !== 0 ? cmp : a.code - b.code;
           return order === 'desc' ? -primary : primary;
@@ -603,17 +706,58 @@ export function providerRoutes(app: FastifyInstance): void {
     };
   });
 
-  app.get('/countries', async () => {
+  app.get('/countries', async (req) => {
+    const query = req.query as { lang?: string };
+    const language = query.lang
+      ? negotiateLanguage(query.lang)
+      : negotiateLanguage(req.headers['accept-language']);
+
     const grouped = await prisma.provider.groupBy({
       by: ['country'],
       where: { status: 'Active' },
       _count: { _all: true },
     });
 
+    const displayNames = new Intl.DisplayNames([language], { type: 'region' });
+    const minCell = env.STATS_MIN_CELL;
+
+    type CountryRow = {
+      code: string;
+      name: string;
+      clinicCount: number | null;
+      suppressed: boolean;
+    };
+    const rows: CountryRow[] = grouped.map((g) => {
+      const count = g._count._all;
+      const isSuppressed = minCell > 0 && count > 0 && count < minCell;
+      return {
+        code: g.country,
+        name: displayNames.of(g.country) ?? g.country,
+        clinicCount: isSuppressed ? null : count,
+        suppressed: isSuppressed,
+      };
+    });
+
+    // Complementary suppression: if only one entry was primarily suppressed,
+    // suppress the next-smallest revealed entry as well so an operator who
+    // knows the total active-provider count cannot recover the hidden value
+    // by subtraction.
+    if (minCell > 0) {
+      const primaryCount = rows.filter((r) => r.suppressed).length;
+      if (primaryCount === 1 && rows.length >= 3) {
+        const revealed = rows
+          .filter((r) => !r.suppressed)
+          .sort((a, b) => (a.clinicCount ?? 0) - (b.clinicCount ?? 0));
+        if (revealed.length > 0) {
+          const smallest = revealed[0]!;
+          smallest.clinicCount = null;
+          smallest.suppressed = true;
+        }
+      }
+    }
+
     return {
-      countries: grouped
-        .map((g) => ({ code: g.country, clinicCount: g._count._all }))
-        .sort((a, b) => a.code.localeCompare(b.code)),
+      countries: rows.sort((a, b) => a.code.localeCompare(b.code)),
     };
   });
 }

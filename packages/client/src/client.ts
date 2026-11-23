@@ -9,6 +9,7 @@ import type {
   DueVouchersResponse,
   GovernanceResponse,
   HealthStatus,
+  IndexerStatus,
   ListProvidersParams,
   ListReceiptsParams,
   ListVouchersParams,
@@ -186,6 +187,10 @@ export class Client {
 
   async ready(): Promise<ReadyStatus> {
     return this.request<ReadyStatus>('/ready');
+  }
+
+  async indexer(): Promise<IndexerStatus> {
+    return this.request<IndexerStatus>('/indexer');
   }
 
   async stats(): Promise<Stats> {

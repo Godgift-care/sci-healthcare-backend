@@ -10,6 +10,7 @@ import { encodeCursor } from '../lib/cursor.js';
 import { backfillDailyStats } from '../lib/daily-stats.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
+import { webhookCircuit } from '../lib/webhooks.js';
 import { resetStatsCache } from '../routes/health.js';
 import { server } from '../stellar/client.js';
 
@@ -560,6 +561,9 @@ describe('GET /stats/funnel', () => {
       },
     });
 
+    // Seed 8 vouchers so all stage counts (funded=8, claimed=7, attested=6,
+    // settled=5) are at or above the STATS_MIN_CELL=5 threshold and no
+    // suppression occurs in the existing counts/medians assertions.
     await prisma.voucher.createMany({
       data: [
         { id: 'funnel-funded', status: 'Funded', claimedAt: null, attestedAt: null },
@@ -587,6 +591,24 @@ describe('GET /stats/funnel', () => {
           claimedAt: hoursAfterCreation(8),
           attestedAt: hoursAfterCreation(11),
         },
+        {
+          id: 'funnel-settled-c',
+          status: 'Settled',
+          claimedAt: hoursAfterCreation(10),
+          attestedAt: hoursAfterCreation(13),
+        },
+        {
+          id: 'funnel-settled-d',
+          status: 'Settled',
+          claimedAt: hoursAfterCreation(12),
+          attestedAt: hoursAfterCreation(15),
+        },
+        {
+          id: 'funnel-settled-e',
+          status: 'Settled',
+          claimedAt: hoursAfterCreation(14),
+          attestedAt: hoursAfterCreation(17),
+        },
       ].map((voucher) => ({
         ...voucher,
         funder: FUNDER,
@@ -603,6 +625,9 @@ describe('GET /stats/funnel', () => {
       data: [
         { voucherId: 'funnel-settled-a', settledAt: hoursAfterCreation(17) },
         { voucherId: 'funnel-settled-b', settledAt: hoursAfterCreation(15) },
+        { voucherId: 'funnel-settled-c', settledAt: hoursAfterCreation(19) },
+        { voucherId: 'funnel-settled-d', settledAt: hoursAfterCreation(22) },
+        { voucherId: 'funnel-settled-e', settledAt: hoursAfterCreation(25) },
       ].map((receipt) => ({
         ...receipt,
         beneficiaryRef: REF,
@@ -614,9 +639,13 @@ describe('GET /stats/funnel', () => {
   });
 
   it('returns stage counts and fixed-time medians filtered by country or clinic', async () => {
+    // funded=8, claimed=7, attested=6, settled=5 — all above STATS_MIN_CELL=5.
+    // medians: fundedToClaimed=[2,4,6,8,10,12,14]→8, claimedToAttested=[3,5,3,3,3,3]→3,
+    //          attestedToSettled=[6,4,6,7,8]→6
     const expected = {
-      counts: { funded: 5, claimed: 4, attested: 3, settled: 2 },
-      medianHours: { fundedToClaimed: 5, claimedToAttested: 3, attestedToSettled: 5 },
+      counts: { funded: 8, claimed: 7, attested: 6, settled: 5 },
+      suppressed: false,
+      medianHours: { fundedToClaimed: 8, claimedToAttested: 3, attestedToSettled: 6 },
     };
 
     const byCountry = await get('/stats/funnel?country=zz');
@@ -628,6 +657,9 @@ describe('GET /stats/funnel', () => {
     expect(byClinic.body).toMatchObject({ country: null, clinic: funnelClinic, ...expected });
 
     const combined = await get(`/stats/funnel?country=NG&clinic=${funnelClinic}`);
+    // Country NG has no matching providers: all counts are 0, which is not
+    // sensitive and is never suppressed.
+    expect(combined.body.suppressed).toBe(false);
     expect(combined.body.counts).toEqual({ funded: 0, claimed: 0, attested: 0, settled: 0 });
     expect(combined.body.medianHours).toEqual({
       fundedToClaimed: null,
@@ -636,10 +668,155 @@ describe('GET /stats/funnel', () => {
     });
   });
 
+  it('suppresses stage counts below STATS_MIN_CELL on scoped queries', async () => {
+    // The existing funnel clinic has funded=8, claimed=7, attested=6, settled=5.
+    // A second tiny clinic with only 2 settled vouchers should have them suppressed.
+    const tinyClinic = `G${'T'.repeat(55)}`;
+    await prisma.provider.create({
+      data: {
+        address: tinyClinic,
+        name: 'Tiny Clinic',
+        country: 'ZZ',
+        status: 'Active',
+        registeredAt: createdAt,
+      },
+    });
+    await prisma.voucher.createMany({
+      data: ['tiny-a', 'tiny-b'].map((id) => ({
+        id,
+        status: 'Settled',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: tinyClinic,
+        serviceCode: 101,
+        amount: '1000000',
+        createdAt,
+        claimedAt: hoursAfterCreation(1),
+        attestedAt: hoursAfterCreation(2),
+        expiresAt: new Date(createdAt.getTime() + DAY),
+      })),
+    });
+    await prisma.receipt.createMany({
+      data: ['tiny-a', 'tiny-b'].map((voucherId) => ({
+        voucherId,
+        beneficiaryRef: REF,
+        providerAddress: tinyClinic,
+        serviceCode: 101,
+        amount: '1000000',
+        settledAt: hoursAfterCreation(3),
+      })),
+    });
+
+    const { status, body } = await get(`/stats/funnel?clinic=${tinyClinic}`);
+    expect(status).toBe(200);
+    expect(body.suppressed).toBe(true);
+    // 2 vouchers funded/claimed/attested — below threshold of 5 → all null.
+    expect(body.counts.funded).toBeNull();
+    expect(body.counts.settled).toBeNull();
+  });
+
+  it('never suppresses the global aggregate (unscoped query)', async () => {
+    // The global /stats/funnel has no country or clinic filter, so STATS_MIN_CELL
+    // does not apply regardless of how small the total counts are.
+    const tinyClinic2 = `G${'U'.repeat(55)}`;
+    await prisma.provider.create({
+      data: {
+        address: tinyClinic2,
+        name: 'Tiny2',
+        country: 'XY',
+        status: 'Active',
+        registeredAt: createdAt,
+      },
+    });
+    await prisma.voucher.create({
+      data: {
+        id: 'tiny2-a',
+        status: 'Funded',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: tinyClinic2,
+        serviceCode: 101,
+        amount: '1000000',
+        createdAt,
+        claimedAt: null,
+        attestedAt: null,
+        expiresAt: new Date(createdAt.getTime() + DAY),
+      },
+    });
+
+    const { status, body } = await get('/stats/funnel');
+    expect(status).toBe(200);
+    expect(body.suppressed).toBe(false);
+    // All counts are concrete numbers, never null.
+    expect(typeof body.counts.funded).toBe('number');
+  });
+
   it('rejects a country filter that is not a two-letter code', async () => {
     const { status, body } = await get('/stats/funnel?country=ZZZ');
     expect(status).toBe(400);
     expect(body.error).toBe('bad_request');
+  });
+});
+
+describe('GET /countries', () => {
+  // Helper: create n Active providers for a country, using unique addresses.
+  const addClinics = (country: string, n: number, prefix: string) =>
+    prisma.provider.createMany({
+      data: Array.from({ length: n }, (_, i) => ({
+        address: `${prefix}${i}`.padEnd(56, '0').slice(0, 56),
+        name: `${country} Clinic ${i}`,
+        country,
+        status: 'Active' as const,
+        registeredAt: new Date('2026-01-01T00:00:00Z'),
+      })),
+    });
+
+  it('returns clinic counts sorted by country code', async () => {
+    // seed() creates 1 Active NG and 1 Active TZ provider. Add enough in each
+    // to bring both above STATS_MIN_CELL=5, plus a fresh KE block.
+    await addClinics('NG', 10, 'PNX'); // NG: 1 (seeded) + 10 = 11
+    await addClinics('TZ', 10, 'PTX'); // TZ: 1 (seeded) + 10 = 11
+    await addClinics('KE', 7, 'PKX'); // KE: 0 Active (seeded is Pending) + 7 = 7
+
+    const { status, body } = await get('/countries');
+    expect(status).toBe(200);
+    const countries: { code: string; clinicCount: number | null }[] = body.countries;
+    expect(countries.find((c) => c.code === 'NG')?.clinicCount).toBe(11);
+    expect(countries.find((c) => c.code === 'KE')?.clinicCount).toBe(7);
+    expect(countries.find((c) => c.code === 'TZ')?.clinicCount).toBe(11);
+    // Response is sorted alphabetically.
+    const codes = countries.map((c) => c.code);
+    expect(codes).toEqual([...codes].sort());
+  });
+
+  it('suppresses clinicCount when below STATS_MIN_CELL', async () => {
+    // seed() creates 1 Active NG and 1 Active TZ — both below threshold.
+    // Bring NG and TZ above threshold so they don't add extra primary
+    // suppressions and skew the complementary-suppression logic.
+    await addClinics('NG', 10, 'PNY'); // NG: 1 + 10 = 11
+    await addClinics('TZ', 10, 'PTY'); // TZ: 1 + 10 = 11
+    // AA: 2 clinics → below threshold → primary suppression.
+    await addClinics('AA', 2, 'PAA');
+    // BB: 10 clinics → not suppressed.
+    await addClinics('BB', 10, 'PBB');
+    // CC: 8 clinics → not suppressed on its own, but it is the smallest
+    // revealed entry and will receive complementary suppression.
+    await addClinics('CC', 8, 'PCC');
+
+    const { status, body } = await get('/countries');
+    expect(status).toBe(200);
+    const aa = body.countries.find((c: { code: string }) => c.code === 'AA');
+    expect(aa.clinicCount).toBeNull();
+    expect(aa.suppressed).toBe(true);
+    // Complementary suppression: exactly 1 primary suppression and ≥3 entries →
+    // the next-smallest revealed entry (CC=8) is also suppressed.
+    const cc = body.countries.find((c: { code: string }) => c.code === 'CC');
+    expect(cc.clinicCount).toBeNull();
+    expect(cc.suppressed).toBe(true);
+    // The larger entry remains revealed.
+    const bb = body.countries.find((c: { code: string }) => c.code === 'BB');
+    expect(bb.clinicCount).toBe(10);
+    expect(bb.suppressed).toBe(false);
   });
 });
 
@@ -710,6 +887,76 @@ describe('GET /version', () => {
   });
 });
 
+describe('GET /indexer', () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await prisma.indexerState.update({
+      where: { id: 1 },
+      data: {
+        paused: false,
+        gap: false,
+        gapOldestLedger: null,
+        gapCursorLedger: null,
+      },
+    });
+  });
+
+  it('returns running status and one latest-ledger value', async () => {
+    await prisma.indexerState.upsert({
+      where: { id: 1 },
+      create: { id: 1, lastLedger: 100, updatedAt: new Date('2026-10-01T00:00:00Z') },
+      update: {
+        lastLedger: 100,
+        paused: false,
+        gap: false,
+        gapOldestLedger: null,
+        updatedAt: new Date('2026-10-01T00:00:00Z'),
+      },
+    });
+    const rpc = vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 120 } as never);
+
+    const { status, body } = await get('/indexer');
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      lastLedger: 100,
+      latestLedger: 120,
+      lagLedgers: 20,
+      paused: false,
+      gap: false,
+      gapOldestLedger: null,
+      updatedAt: '2026-10-01T00:00:00.000Z',
+    });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns paused and gap fields', async () => {
+    await prisma.indexerState.upsert({
+      where: { id: 1 },
+      create: {
+        id: 1,
+        lastLedger: 50,
+        paused: true,
+        gap: true,
+        gapOldestLedger: 200,
+      },
+      update: { lastLedger: 50, paused: true, gap: true, gapOldestLedger: 200 },
+    });
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 250 } as never);
+
+    const { status, body } = await get('/indexer');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      lastLedger: 50,
+      latestLedger: 250,
+      lagLedgers: 200,
+      paused: true,
+      gap: true,
+      gapOldestLedger: 200,
+    });
+  });
+});
+
 describe('GET /ready', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -763,6 +1010,28 @@ describe('GET /ready', () => {
       reconcile: 'ok',
       reconcileMismatches: 0,
     });
+  });
+
+  it('reports per-endpoint circuit breaker state, redacted (#265)', async () => {
+    await seedCursor(1000);
+    vi.spyOn(server, 'getLatestLedger').mockResolvedValue({ sequence: 1000 } as never);
+    webhookCircuit.recordFailure('https://clinic.example.test/webhooks?token=secret');
+
+    try {
+      const { status, body } = await get('/ready');
+      // A single failure is not yet a tripped breaker, and reporting one
+      // must not take a healthy instance out of rotation either way.
+      expect(status).toBe(200);
+      expect(body.checks.webhooks.breakers).toContainEqual({
+        endpoint: 'https://clinic.example.test/webhooks',
+        state: 'closed',
+        consecutiveFailures: 1,
+        openedAt: null,
+      });
+      expect(JSON.stringify(body)).not.toContain('token=secret');
+    } finally {
+      webhookCircuit.reset();
+    }
   });
 
   it('reports reconciliation drift without taking the instance out of rotation', async () => {
@@ -928,6 +1197,103 @@ describe('GET /providers', () => {
     const { status, body } = await get(`/providers/${FUNDER}`);
     expect(status).toBe(404);
     expect(body.error).toBe('provider_not_found');
+  });
+});
+
+describe('GET /providers sorting and service filter (#237, #238)', () => {
+  it('lists only clinics that currently offer a service code', async () => {
+    const general = await get('/providers?serviceCode=101');
+    expect(general.status).toBe(200);
+    expect(general.body.providers.map((p: { address: string }) => p.address)).toEqual([
+      CLINIC,
+      SECOND_CLINIC,
+    ]);
+
+    // 303 is delisted at CLINIC, so it is not an offering there.
+    const paused = await get('/providers?serviceCode=303');
+    expect(paused.body.total).toBe(0);
+  });
+
+  it('combines the service filter with status and country', async () => {
+    const { body } = await get('/providers?serviceCode=101&status=Active&country=NG');
+    expect(body.providers.map((p: { address: string }) => p.address)).toEqual([CLINIC]);
+
+    const wrongCountry = await get('/providers?serviceCode=101&country=KE');
+    expect(wrongCountry.body.providers).toEqual([]);
+  });
+
+  it('sorts by name, country and registration, in both directions', async () => {
+    const namesAsc = await get('/providers?sort=name');
+    expect(namesAsc.body.providers.map((p: { name: string }) => p.name)).toEqual([
+      'Ikeja General Clinic',
+      'Kisumu Health Post',
+      'Mwanza Mission Hospital',
+    ]);
+
+    const namesDesc = await get('/providers?sort=name&order=desc');
+    expect(namesDesc.body.providers.map((p: { name: string }) => p.name)).toEqual([
+      'Mwanza Mission Hospital',
+      'Kisumu Health Post',
+      'Ikeja General Clinic',
+    ]);
+
+    // The historical default, newest registration first.
+    const registered = await get('/providers?sort=registered');
+    expect(registered.body.providers.map((p: { address: string }) => p.address)).toEqual([
+      PENDING_CLINIC,
+      CLINIC,
+      SECOND_CLINIC,
+    ]);
+
+    const countries = await get('/providers?sort=country&order=desc');
+    expect(countries.body.providers.map((p: { country: string }) => p.country)).toEqual([
+      'TZ',
+      'NG',
+      'KE',
+    ]);
+  });
+
+  it('pages every sort without gaps or repeats', async () => {
+    for (const sort of ['name', 'country', 'registered']) {
+      const seen: string[] = [];
+      let cursor: string | null | undefined;
+      do {
+        const suffix = cursor ? `&cursor=${cursor}` : '';
+        const { body } = await get(`/providers?sort=${sort}&limit=1${suffix}`);
+        seen.push(body.providers[0].address);
+        cursor = body.nextCursor;
+      } while (cursor);
+
+      expect(new Set(seen).size, `${sort} must not repeat a clinic`).toBe(seen.length);
+      expect(seen, `${sort} must visit every clinic`).toHaveLength(3);
+    }
+  });
+
+  it('rejects a cursor issued for another ordering', async () => {
+    const first = await get('/providers?sort=name&limit=1');
+    const cursor = first.body.nextCursor as string;
+    expect(cursor).toBeTruthy();
+
+    const sameSort = await get(`/providers?sort=name&cursor=${cursor}`);
+    expect(sameSort.status).toBe(200);
+
+    const otherSort = await get(`/providers?sort=country&cursor=${cursor}`);
+    expect(otherSort.status).toBe(400);
+    expect(otherSort.body.error).toBe('invalid_cursor');
+
+    const otherOrder = await get(`/providers?sort=name&order=desc&cursor=${cursor}`);
+    expect(otherOrder.status).toBe(400);
+    expect(otherOrder.body.error).toBe('invalid_cursor');
+  });
+
+  it('rejects an unknown sort or service code', async () => {
+    const sort = await get('/providers?sort=price');
+    expect(sort.status).toBe(400);
+    expect(sort.body.error).toBe('invalid_query');
+
+    const code = await get('/providers?serviceCode=not-a-code');
+    expect(code.status).toBe(400);
+    expect(code.body.error).toBe('invalid_query');
   });
 });
 
@@ -2755,6 +3121,135 @@ describe('scheduled price changes in the API (#315)', () => {
     const { body } = await get(`/providers/${CLINIC}/services`);
     expect(body.services[0].upcomingPrice).toBeNull();
     expect(body.services[0].upcomingFrom).toBeNull();
+  });
+});
+
+describe('GET /services filters and sorting (#239, #240)', () => {
+  const SORT_CLINIC = `G${'E'.repeat(55)}`;
+  const BIG_CLINIC = `G${'F'.repeat(55)}`;
+
+  async function seedCatalogueClinic(
+    address: string,
+    name: string,
+    services: { id: string; code: number; label: string; price: string }[],
+  ) {
+    await prisma.provider.create({
+      data: {
+        address,
+        name,
+        country: 'ZZ',
+        status: 'Active',
+        registeredAt: new Date('2026-01-01T00:00:00Z'),
+        services: { create: services },
+      },
+    });
+  }
+
+  it('searches labels case-insensitively', async () => {
+    const lower = await get('/services?q=malaria');
+    expect(lower.status).toBe(200);
+    expect(lower.body.services.map((s: { code: number }) => s.code)).toEqual([202]);
+    expect(lower.body.services[0].labels).toEqual(['Malaria rapid test']);
+
+    const upper = await get('/services?q=MALARIA');
+    expect(upper.body.services.map((s: { code: number }) => s.code)).toEqual([202]);
+
+    const none = await get('/services?q=no-such-service');
+    expect(none.body.total).toBe(0);
+  });
+
+  it('compares prices exactly above 2^53', async () => {
+    await seedCatalogueClinic(BIG_CLINIC, 'Precision Clinic', [
+      {
+        id: `${BIG_CLINIC}:901`,
+        code: 901,
+        label: 'Precision procedure one',
+        price: '9007199254740993', // 2^53 + 1
+      },
+      {
+        id: `${BIG_CLINIC}:902`,
+        code: 902,
+        label: 'Precision procedure two',
+        price: '9007199254740992', // 2^53
+      },
+    ]);
+
+    const atOrAbove = await get('/services?q=precision&minPrice=9007199254740993');
+    expect(atOrAbove.body.services.map((s: { code: number }) => s.code)).toEqual([901]);
+
+    // A float parse would round 2^53+1 down to 2^53 and include both.
+    const atOrBelow = await get('/services?q=precision&maxPrice=9007199254740992');
+    expect(atOrBelow.body.services.map((s: { code: number }) => s.code)).toEqual([902]);
+
+    const between = await get(
+      '/services?q=precision&minPrice=9007199254740992&maxPrice=9007199254740993',
+    );
+    expect(between.body.services.map((s: { code: number }) => s.code)).toEqual([901, 902]);
+  });
+
+  it('filters by price range without losing the rest of the catalogue', async () => {
+    // 202 costs 10,000,000–15,000,000, so a 16,000,000 budget covers it while
+    // 101 (30,000,000–40,000,000) is out of range.
+    const { body } = await get('/services?minPrice=12000000&maxPrice=16000000');
+    expect(body.services.map((s: { code: number }) => s.code)).toEqual([202]);
+    expect(body.total).toBe(1);
+  });
+
+  it('sorts by price numerically, not by the string', async () => {
+    await seedCatalogueClinic(SORT_CLINIC, 'Sorting Clinic', [
+      { id: `${SORT_CLINIC}:811`, code: 811, label: 'Sorting nine', price: '9' },
+      { id: `${SORT_CLINIC}:812`, code: 812, label: 'Sorting ten', price: '10' },
+      { id: `${SORT_CLINIC}:813`, code: 813, label: 'Sorting hundred', price: '100' },
+    ]);
+
+    const ascending = await get('/services?q=sorting&sort=price');
+    expect(ascending.body.services.map((s: { minPrice: string }) => s.minPrice)).toEqual([
+      '9',
+      '10',
+      '100',
+    ]);
+
+    const descending = await get('/services?q=sorting&sort=price&order=desc');
+    expect(descending.body.services.map((s: { minPrice: string }) => s.minPrice)).toEqual([
+      '100',
+      '10',
+      '9',
+    ]);
+  });
+
+  it('sorts by label and code, in both directions', async () => {
+    await seedCatalogueClinic(SORT_CLINIC, 'Sorting Clinic', [
+      { id: `${SORT_CLINIC}:811`, code: 811, label: 'Sorting nine', price: '9' },
+      { id: `${SORT_CLINIC}:812`, code: 812, label: 'Sorting ten', price: '10' },
+      { id: `${SORT_CLINIC}:813`, code: 813, label: 'Sorting hundred', price: '100' },
+    ]);
+
+    const labels = await get('/services?q=sorting&sort=label');
+    expect(labels.body.services.map((s: { labels: string[] }) => s.labels[0])).toEqual([
+      'Sorting hundred',
+      'Sorting nine',
+      'Sorting ten',
+    ]);
+
+    const codes = await get('/services?q=sorting&sort=code&order=desc');
+    expect(codes.body.services.map((s: { code: number }) => s.code)).toEqual([813, 812, 811]);
+  });
+
+  it('rejects malformed search and price parameters', async () => {
+    for (const query of [
+      'q=',
+      `q=${'a'.repeat(65)}`,
+      'minPrice=abc',
+      'maxPrice=-1',
+      'minPrice=1000000000000000000000000000000000000000',
+      'minPrice=10&maxPrice=9',
+      'sort=name',
+      'order=sideways',
+    ]) {
+      const { status, body } = await get(`/services?${query}`);
+      expect(status, query).toBe(400);
+      expect(body.error).toBe('invalid_query');
+    }
   });
 });
 

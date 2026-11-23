@@ -61,6 +61,17 @@ export type Provider = {
    */
   location?: ProviderLocation | null;
   metadata?: ProviderMetadata | null;
+  /**
+   * The metadata fetch state (#271): `pending` after a pointer is announced,
+   * `ok` once a document is cached, `failed` when the last attempt was
+   * rejected. Null when the clinic never published a pointer.
+   */
+  metadataStatus?: 'pending' | 'ok' | 'failed' | null;
+  /**
+   * A short code for the last rejection — never the remote body — or null
+   * when the last fetch succeeded or none has run.
+   */
+  metadataError?: string | null;
 };
 
 export type ServicePriceChange = {
@@ -95,7 +106,9 @@ export type ProviderHistory = {
 
 export type CountryStats = {
   code: string;
-  clinicCount: number;
+  name: string;
+  clinicCount: number | null;
+  suppressed: boolean;
 };
 
 /** One entry of `GET /services`: every clinic price for one service code. */
@@ -315,6 +328,16 @@ export type VersionInfo = {
   startedAt: string;
 };
 
+/** One endpoint's circuit breaker as `/ready` reports it (#265). */
+export type ReadinessWebhookBreaker = {
+  /** Origin and path only; a query string is never reported. */
+  endpoint: string;
+  state: 'closed' | 'open' | 'half-open';
+  consecutiveFailures: number;
+  /** When the breaker opened, or null while it is closed. */
+  openedAt: string | null;
+};
+
 /** The webhook outbox as `/ready` reports it. */
 export type ReadinessWebhooks = {
   state: 'ok' | 'backlog' | 'disabled';
@@ -323,6 +346,8 @@ export type ReadinessWebhooks = {
   abandoned: number;
   oldestPendingAgeSeconds: number | null;
   maxPendingAgeSeconds: number;
+  /** Per-endpoint circuit breakers; empty until the dispatcher has seen one. */
+  breakers: ReadinessWebhookBreaker[];
 };
 
 /**
@@ -371,6 +396,17 @@ export type ReadinessChecks = {
 export type ReadyStatus = {
   status: 'ready' | 'degraded';
   checks: ReadinessChecks;
+};
+
+/** Public indexer cursor and retention/gap status (`GET /indexer`). */
+export type IndexerStatus = {
+  lastLedger: number;
+  latestLedger: number;
+  lagLedgers: number;
+  paused: boolean;
+  gap: boolean;
+  gapOldestLedger: number | null;
+  updatedAt: string | null;
 };
 
 export type ApiErrorDetail = {

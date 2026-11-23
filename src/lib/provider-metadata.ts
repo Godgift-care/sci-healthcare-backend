@@ -9,15 +9,18 @@
  * this service is the only place that ever dials a URI a stranger wrote.
  *
  * That trust is why the fetch is fenced in on every axis the URL can be
- * wrong on: http(s) only, a hard timeout, a hard byte cap read off the
- * stream (a declared `content-length` is advisory and is checked first,
- * not trusted), JSON only, and a strict schema. Anything else is ignored
- * with the reason logged — a clinic's bad document must never take the
- * directory down or wedge the indexer.
+ * wrong on: http(s) or an `ipfs://<cid>` resolved through a configured
+ * gateway (#269), a hard timeout, a hard byte cap read off the stream (a
+ * declared `content-length` is advisory and is checked first, not trusted),
+ * JSON only, and a strict schema. Anything else is ignored with the reason
+ * logged — a clinic's bad document must never take the directory down or
+ * wedge the indexer.
  *
  * The refresh loop lives in the indexer (see `Indexer.refreshMetadataIfDue`
  * in `src/stellar/indexer.ts`), which also means only the lease holder
- * fetches: N replicas produce one HTTP request per URI per day.
+ * fetches: N replicas produce one HTTP request per URI per day (#270). The
+ * request is conditional on the stored ETag, so an unchanged document costs
+ * a `304 Not Modified` rather than another body.
  */
 
 import { z } from 'zod';
@@ -25,6 +28,7 @@ import { z } from 'zod';
 import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
+import { env } from '../env.js';
 
 /** Hard ceiling on a metadata fetch: socket, DNS and body read together. */
 export const METADATA_FETCH_TIMEOUT_MS = 5_000;
@@ -32,7 +36,7 @@ export const METADATA_FETCH_TIMEOUT_MS = 5_000;
 /** Largest metadata document that will be read, buffered and validated. */
 export const METADATA_MAX_BYTES = 64 * 1024;
 
-/** How stale a cached document may get before it is fetched again. */
+/** Default how stale a cached document may get before it is fetched again. */
 export const METADATA_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -45,6 +49,66 @@ export const METADATA_URI_MAX_LENGTH = 512;
 
 /** Largest number of stale documents refreshed in one pass. */
 export const METADATA_BATCH_SIZE = 50;
+
+/** The three states served beside a clinic's cached document (#271). */
+export const METADATA_STATUSES = ['pending', 'ok', 'failed'] as const;
+export type MetadataStatus = (typeof METADATA_STATUSES)[number];
+
+/**
+ * Short, stable codes for why a fetch was rejected (#271, #272).
+ *
+ * These are what the API exposes; the remote body, a status line or a raw
+ * `Error.message` never is. A clinic reads the code to fix its link, and an
+ * operator alerts on it without parsing prose.
+ */
+export const METADATA_ERROR_CODES = [
+  'invalid_url',
+  'unsupported_scheme',
+  'invalid_gateway',
+  'timeout',
+  'fetch_failed',
+  'http_error',
+  'too_large',
+  'invalid_json',
+  'invalid_document',
+  'unknown',
+] as const;
+export type MetadataErrorCode = (typeof METADATA_ERROR_CODES)[number];
+
+/**
+ * A failure a retry cannot fix: a malformed URI or a scheme this service
+ * does not fetch. Re-fetching it on every refresh pass would be load for
+ * nothing, so these rows are left alone until an event announces a new URI
+ * (#269). Every other failure is retried after the TTL.
+ */
+export const PERMANENT_METADATA_ERRORS: readonly MetadataErrorCode[] = [
+  'invalid_url',
+  'unsupported_scheme',
+  'invalid_gateway',
+];
+
+/** True when `code` names a failure that a later refresh cannot repair. */
+export function isPermanentMetadataError(code: string | null | undefined): boolean {
+  return (
+    code !== null &&
+    code !== undefined &&
+    PERMANENT_METADATA_ERRORS.includes(code as MetadataErrorCode)
+  );
+}
+
+/**
+ * A rejected metadata fetch, carrying the short code stored on the provider
+ * row. The message stays for logs; callers serve `code`, never `message`.
+ */
+export class MetadataFetchError extends Error {
+  readonly code: MetadataErrorCode;
+
+  constructor(code: MetadataErrorCode, message: string) {
+    super(message);
+    this.name = 'MetadataFetchError';
+    this.code = code;
+  }
+}
 
 /** Latitude/longitude as JSON numbers, bounded to the valid ranges. */
 const geoSchema = z.object({
@@ -84,6 +148,40 @@ export const providerMetadataSchema = z
       });
     }
   });
+
+/**
+ * The published JSON Schema (#272): served at `/schemas/provider-metadata.json`
+ * and committed as `docs/provider-metadata.schema.json`, so a clinic can
+ * validate a file before publishing it.
+ *
+ * The structural part is generated from `providerMetadataSchema`, which is
+ * the validator the refresh actually runs, and a test keeps the committed
+ * file equal to this object. `z.toJSONSchema` cannot see a `superRefine`, so
+ * the "at least one recognised field" rule is added here as an `anyOf` of
+ * the recognised keys, and `additionalProperties` is opened back up because
+ * the fetcher strips unknown fields rather than refusing the document.
+ */
+export const providerMetadataJsonSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://sci-healthcare.example/schemas/provider-metadata.json',
+  title: 'SCI Healthcare provider metadata',
+  description:
+    'The off-chain document a clinic may publish at its on-chain metadata URI. ' +
+    'At least one recognised field is required; unknown fields are ignored by the API.',
+  ...z.toJSONSchema(providerMetadataSchema, { target: 'draft-2020-12' }),
+  // Zod's generated object schema closes itself; the runtime is tolerant of
+  // extra keys, so the published schema must be too.
+  additionalProperties: true,
+  anyOf: [
+    { required: ['name'] },
+    { required: ['address'] },
+    { required: ['location'] },
+    { required: ['geo'] },
+    { required: ['hours'] },
+    { required: ['phone'] },
+    { required: ['languages'] },
+  ],
+};
 
 /**
  * The shape stored in the database and served by the provider routes.
@@ -142,61 +240,189 @@ export function providerMetadataOf(row: { metadata: string | null }): ProviderMe
   }
 }
 
+/**
+ * The fetch state to serve (#271). A row from before the status column
+ * existed is `pending` when it has a URI and was never fetched, and `ok`
+ * once a document is cached, rather than making clients understand null.
+ */
+export function providerMetadataStatusOf(row: {
+  metadataUri: string | null;
+  metadataStatus: string | null;
+  metadata: string | null;
+}): MetadataStatus | null {
+  // A clinic that never published a pointer has no state to report.
+  if (row.metadataUri === null && row.metadata === null) return null;
+  if (
+    row.metadataStatus !== null &&
+    METADATA_STATUSES.includes(row.metadataStatus as MetadataStatus)
+  ) {
+    return row.metadataStatus as MetadataStatus;
+  }
+  // Rows written before the status column existed: a cached document is
+  // `ok`, anything else is still waiting for its first fetch.
+  return row.metadata !== null ? 'ok' : 'pending';
+}
+
+/** The stored status, narrowed to a value the API documents, or null. */
+export function storedMetadataStatus(value: string | null): MetadataStatus | null {
+  return value !== null && METADATA_STATUSES.includes(value as MetadataStatus)
+    ? (value as MetadataStatus)
+    : null;
+}
+
+/** The short error code to serve, or null when the last fetch did not fail. */
+export function providerMetadataErrorOf(row: {
+  metadataError: string | null;
+}): MetadataErrorCode | null {
+  if (row.metadataError === null) return null;
+  return METADATA_ERROR_CODES.includes(row.metadataError as MetadataErrorCode)
+    ? (row.metadataError as MetadataErrorCode)
+    : 'unknown';
+}
+
 export type FetchOptions = {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   maxBytes?: number;
+  /** Replayed as `If-None-Match`; a matching document answers 304 (#270). */
+  ifNoneMatch?: string;
+  /** Overrides `IPFS_GATEWAY_URL` for one fetch (tests, scripts). */
+  ipfsGatewayUrl?: string;
 };
 
 /**
- * Fetches one metadata document and returns it validated and normalised.
+ * The result of one metadata fetch. `notModified` is the conditional
+ * request's `304`, in which case `metadata` is null and the previous
+ * document must be kept.
+ */
+export type MetadataFetchResult = {
+  metadata: ProviderMetadata | null;
+  etag: string | null;
+  notModified: boolean;
+};
+
+/**
+ * Resolves the URI a clinic announced to the URL actually fetched.
  *
- * Throws an `Error` whose message is the logged rejection reason on every
- * failure path: a non-http(s) URI, a timeout, a non-2xx status, an
- * oversized body, a body that is not JSON, and a document the schema
- * refuses all read the same way in the logs.
+ * `http(s)` is used as published. `ipfs://<cid>[/<path>]` is appended to the
+ * configured gateway path (#269); the CID is validated and every path
+ * segment is percent-encoded, so a pointer can choose a document on the
+ * gateway but never the gateway's host or an escape from its path.
+ *
+ * Throws a `MetadataFetchError` with the code to store: an unparseable URI
+ * or an unsupported scheme is permanent and will not be retried.
+ */
+export function metadataFetchUrl(uri: string, ipfsGatewayUrl: string = env.IPFS_GATEWAY_URL): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    throw new MetadataFetchError('invalid_url', 'metadata URI is not a valid URL');
+  }
+
+  if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed;
+
+  if (parsed.protocol !== 'ipfs:') {
+    throw new MetadataFetchError(
+      'unsupported_scheme',
+      `metadata URI scheme ${parsed.protocol} is not supported; use http(s) or ipfs`,
+    );
+  }
+
+  // The URL parser lower-cases the host, and an IPFS v0 CID is base58 (case
+  // sensitive), so the CID is read off the raw string rather than `host`.
+  const raw = uri.trim().slice('ipfs://'.length);
+  const segments = raw.split(/[?#]/)[0]!.split('/');
+  // Gateways also accept `ipfs://ipfs/<cid>`; tolerate the redundant prefix.
+  if (segments[0] === 'ipfs') segments.shift();
+  const cid = segments.shift() ?? '';
+  if (!/^[A-Za-z0-9]{1,128}$/.test(cid)) {
+    throw new MetadataFetchError('invalid_url', 'ipfs URI has no valid CID');
+  }
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    throw new MetadataFetchError('invalid_url', 'ipfs URI has an invalid document path');
+  }
+
+  let gateway: URL;
+  try {
+    gateway = new URL(ipfsGatewayUrl);
+  } catch {
+    throw new MetadataFetchError('invalid_gateway', 'IPFS_GATEWAY_URL is not a valid URL');
+  }
+  if (gateway.protocol !== 'http:' && gateway.protocol !== 'https:') {
+    throw new MetadataFetchError('invalid_gateway', 'IPFS_GATEWAY_URL must be http(s)');
+  }
+
+  const basePath = gateway.pathname.replace(/\/+$/, '');
+  const suffix = segments.map((segment) => `/${encodeURIComponent(segment)}`).join('');
+  const target = new URL(gateway.toString());
+  target.pathname = `${basePath}/${cid}${suffix}`;
+  target.search = '';
+  target.hash = '';
+  return target;
+}
+
+/**
+ * Fetches one metadata document and returns it validated and normalised,
+ * plus the ETag the host sent so the next refresh can be conditional.
+ *
+ * Throws a `MetadataFetchError` whose `code` is the stored rejection reason
+ * on every failure path: an unsupported scheme, a timeout, a non-2xx
+ * status, an oversized body, a body that is not JSON, and a document the
+ * schema refuses all read the same way in the logs.
  */
 export async function fetchProviderMetadata(
   uri: string,
   opts: FetchOptions = {},
-): Promise<ProviderMetadata> {
+): Promise<MetadataFetchResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? METADATA_FETCH_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? METADATA_MAX_BYTES;
-
-  let url: URL;
-  try {
-    url = new URL(uri);
-  } catch {
-    throw new Error('metadata URI is not a valid URL');
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`metadata URI scheme ${url.protocol} is not http(s)`);
-  }
+  const target = metadataFetchUrl(uri, opts.ipfsGatewayUrl ?? env.IPFS_GATEWAY_URL);
 
   let res: Response;
   try {
-    res = await fetchImpl(uri, {
+    res = await fetchImpl(target, {
       method: 'GET',
-      headers: { accept: 'application/json' },
+      headers: {
+        accept: 'application/json',
+        ...(opts.ifNoneMatch !== undefined ? { 'if-none-match': opts.ifNoneMatch } : {}),
+      },
       redirect: 'follow',
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
+    if (err instanceof MetadataFetchError) throw err;
     const cause = err as Error & { name?: string };
-    throw new Error(
+    throw new MetadataFetchError(
+      cause.name === 'TimeoutError' || cause.name === 'AbortError' ? 'timeout' : 'fetch_failed',
       cause.name === 'TimeoutError' || cause.name === 'AbortError'
         ? `metadata fetch timed out after ${timeoutMs}ms`
         : `metadata fetch failed: ${cause.message}`,
     );
   }
 
-  if (!res.ok) throw new Error(`metadata fetch returned HTTP ${res.status}`);
+  const etag = res.headers.get('etag');
+
+  // Only a conditional request can legitimately answer 304; a host doing it
+  // unsolicited is misbehaving and must not be mistaken for "unchanged".
+  if (res.status === 304) {
+    if (opts.ifNoneMatch === undefined) {
+      throw new MetadataFetchError(
+        'http_error',
+        'metadata fetch returned HTTP 304 without a conditional request',
+      );
+    }
+    return { metadata: null, etag: etag ?? opts.ifNoneMatch, notModified: true };
+  }
+
+  if (!res.ok)
+    throw new MetadataFetchError('http_error', `metadata fetch returned HTTP ${res.status}`);
 
   // Advisory: a lying or absent header is caught by the streamed cap below.
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new Error(`metadata document exceeds ${maxBytes} bytes`);
+    throw new MetadataFetchError('too_large', `metadata document exceeds ${maxBytes} bytes`);
   }
 
   const text = await readCappedBody(res, maxBytes);
@@ -205,17 +431,20 @@ export async function fetchProviderMetadata(
   try {
     document = JSON.parse(text);
   } catch {
-    throw new Error('metadata document is not valid JSON');
+    throw new MetadataFetchError('invalid_json', 'metadata document is not valid JSON');
   }
 
   try {
-    return parseProviderMetadata(document);
+    return { metadata: parseProviderMetadata(document), etag, notModified: false };
   } catch (err) {
     const detail =
       err instanceof z.ZodError
         ? err.issues.map((i) => `${i.path.join('.') || 'document'}: ${i.message}`).join('; ')
         : String(err);
-    throw new Error(`metadata document failed validation: ${detail}`);
+    throw new MetadataFetchError(
+      'invalid_document',
+      `metadata document failed validation: ${detail}`,
+    );
   }
 }
 
@@ -241,14 +470,15 @@ async function readCappedBody(res: Response, maxBytes: number): Promise<string> 
       size += value.byteLength;
       if (size > maxBytes) {
         await reader.cancel();
-        throw new Error(`metadata document exceeds ${maxBytes} bytes`);
+        throw new MetadataFetchError('too_large', `metadata document exceeds ${maxBytes} bytes`);
       }
       chunks.push(value);
     }
   } catch (err) {
+    if (err instanceof MetadataFetchError) throw err;
     const cause = err as Error & { name?: string };
     if (cause.name === 'TimeoutError' || cause.name === 'AbortError') {
-      throw new Error('metadata fetch timed out while reading the body');
+      throw new MetadataFetchError('timeout', 'metadata fetch timed out while reading the body');
     }
     throw err;
   }
@@ -262,12 +492,16 @@ export type RefreshOptions = {
   batchSize?: number;
   timeoutMs?: number;
   maxBytes?: number;
+  /** How old a document may get before it is re-requested (#270). */
   refreshMs?: number;
+  ipfsGatewayUrl?: string;
 };
 
 export type RefreshResult = {
   /** Documents fetched, validated and stored. */
   fetched: number;
+  /** Conditional requests answered 304; the cached document was kept. */
+  unchanged: number;
   /** URIs refused, with the reason logged; the fetch is retried tomorrow. */
   rejected: number;
 };
@@ -276,55 +510,102 @@ export type RefreshResult = {
  * Refreshes every provider whose metadata is due: never fetched, or last
  * attempted at least `refreshMs` ago (a day by default).
  *
- * A rejection stamps `metadataFetchedAt` too. Not stamping it would retry a
- * dead or hostile URI on every pass, which is exactly the self-inflicted
- * load the daily window exists to prevent; keeping the previous document
- * means a clinic whose host is down for an afternoon does not vanish from
- * the directory.
+ * A request carries the document's stored ETag, so an unchanged document
+ * costs one `304` and is counted as `unchanged` rather than `fetched`
+ * (#270). A rejection stamps `metadataFetchedAt` too. Not stamping it
+ * would retry a dead or hostile URI on every pass, which is exactly the
+ * self-inflicted load the daily window exists to prevent; keeping the
+ * previous document means a clinic whose host is down for an afternoon does
+ * not vanish from the directory.
+ *
+ * The exception is a URI that cannot ever work — a malformed URL or an
+ * unsupported scheme (#269). Those are stored as `failed` with their code
+ * and skipped by later passes until an event announces a new URI.
  */
 export async function refreshDueProviderMetadata(opts: RefreshOptions): Promise<RefreshResult> {
   const { log } = opts;
   const fetchImpl = opts.fetchImpl ?? fetch;
   const now = opts.now?.() ?? new Date();
   const batchSize = opts.batchSize ?? METADATA_BATCH_SIZE;
-  const refreshMs = opts.refreshMs ?? METADATA_REFRESH_MS;
+  const refreshMs = opts.refreshMs ?? env.PROVIDER_METADATA_TTL_MS;
 
   const due = await prisma.provider.findMany({
     where: {
       metadataUri: { not: null },
-      OR: [
-        { metadataFetchedAt: null },
-        { metadataFetchedAt: { lte: new Date(now.getTime() - refreshMs) } },
+      AND: [
+        // A permanently invalid pointer is not retried; only a new URI or a
+        // supported scheme can fix it, and neither is discovered by fetching.
+        // Spelled as a disjunction rather than `NOT (failed AND permanent)`
+        // because both columns are nullable and SQL's three-valued logic
+        // would otherwise exclude every not-yet-fetched row from the pass.
+        {
+          OR: [
+            { metadataStatus: null },
+            { metadataStatus: { not: 'failed' } },
+            { metadataError: null },
+            { metadataError: { notIn: [...PERMANENT_METADATA_ERRORS] } },
+          ],
+        },
+        {
+          OR: [
+            { metadataFetchedAt: null },
+            { metadataFetchedAt: { lte: new Date(now.getTime() - refreshMs) } },
+          ],
+        },
       ],
     },
-    select: { address: true, metadataUri: true },
+    select: { address: true, metadataUri: true, metadataEtag: true },
     orderBy: { metadataFetchedAt: 'asc' },
     take: batchSize,
   });
 
-  const result: RefreshResult = { fetched: 0, rejected: 0 };
+  const result: RefreshResult = { fetched: 0, unchanged: 0, rejected: 0 };
   for (const row of due) {
     const uri = row.metadataUri;
     if (uri === null) continue; // narrowed by the where clause; belt and braces
     try {
-      const metadata = await fetchProviderMetadata(uri, {
+      const fetched = await fetchProviderMetadata(uri, {
         fetchImpl,
+        ...(row.metadataEtag !== null ? { ifNoneMatch: row.metadataEtag } : {}),
+        ...(opts.ipfsGatewayUrl !== undefined ? { ipfsGatewayUrl: opts.ipfsGatewayUrl } : {}),
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
         ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
       });
-      await prisma.provider.update({
-        where: { address: row.address },
-        data: { metadata: JSON.stringify(metadata), metadataFetchedAt: now },
-      });
-      result.fetched += 1;
-      log.info({ provider: row.address, uri }, 'provider metadata cached');
+
+      if (fetched.notModified) {
+        await prisma.provider.update({
+          where: { address: row.address },
+          data: {
+            metadataFetchedAt: now,
+            metadataStatus: 'ok',
+            metadataError: null,
+            ...(fetched.etag !== null ? { metadataEtag: fetched.etag } : {}),
+          },
+        });
+        result.unchanged += 1;
+        log.info({ provider: row.address, uri }, 'provider metadata unchanged');
+      } else {
+        await prisma.provider.update({
+          where: { address: row.address },
+          data: {
+            metadata: JSON.stringify(fetched.metadata),
+            metadataFetchedAt: now,
+            metadataStatus: 'ok',
+            metadataError: null,
+            metadataEtag: fetched.etag,
+          },
+        });
+        result.fetched += 1;
+        log.info({ provider: row.address, uri }, 'provider metadata cached');
+      }
     } catch (err) {
       result.rejected += 1;
+      const code = err instanceof MetadataFetchError ? err.code : 'unknown';
       const reason = err instanceof Error ? err.message : String(err);
-      log.warn({ provider: row.address, uri, reason }, 'provider metadata ignored');
+      log.warn({ provider: row.address, uri, code, reason }, 'provider metadata ignored');
       await prisma.provider.update({
         where: { address: row.address },
-        data: { metadataFetchedAt: now },
+        data: { metadataFetchedAt: now, metadataStatus: 'failed', metadataError: code },
       });
     }
   }

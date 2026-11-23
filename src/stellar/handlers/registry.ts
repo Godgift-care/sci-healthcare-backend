@@ -4,6 +4,12 @@ import { contractName } from '../../env.js';
 import { metadataUriOf, METADATA_URI_MAX_LENGTH } from '../../lib/provider-metadata.js';
 import { scheduledPriceOf } from '../../lib/services.js';
 import {
+  enqueueWebhook,
+  PROVIDER_REGISTERED_EVENT,
+  PROVIDER_STATUS_CHANGED_EVENT,
+  SERVICE_PRICE_CHANGED_EVENT,
+} from '../../lib/webhooks.js';
+import {
   asAddress,
   asAmount,
   asNumber,
@@ -48,7 +54,7 @@ export async function onProviderRegistered(
   // Look up deployment ID from the contract ID in the event
   const deploymentId = await lookupDeploymentId(e.contractId, db);
 
-  await db.provider.upsert({
+  const provider = await db.provider.upsert({
     where: { address },
     create: {
       address,
@@ -58,8 +64,22 @@ export async function onProviderRegistered(
       registeredAt: asTimestamp(d.registered_at),
       deploymentId,
       ...storedMetadataUri(d.metadata_uri, options?.log),
+      // #271: a pointer that has not been fetched yet is visibly pending.
+      ...(metadataUriOf(d.metadata_uri) !== null ? { metadataStatus: 'pending' } : {}),
     },
     update: { name: String(d.name), country: String(d.country) },
+  });
+
+  // #266: a partner listing clinics hears about a new clinic here. The
+  // status is read back from the row rather than assumed: a re-registration
+  // keeps whatever status the clinic already had. Queued in the same
+  // transaction as the projection, like every other delivery.
+  await enqueueWebhook(db, {
+    event: PROVIDER_REGISTERED_EVENT,
+    provider: address,
+    status: provider.status,
+    txHash: e.txHash,
+    ledger: e.ledger,
   });
 
   // A re-registration that repoints the URI must invalidate the cached
@@ -81,7 +101,14 @@ export async function onProviderRegistered(
         address,
         OR: [{ metadataUri: { not: uri } }, { metadataUri: null }],
       },
-      data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
+      data: {
+        metadataUri: uri,
+        metadata: null,
+        metadataFetchedAt: null,
+        metadataStatus: 'pending',
+        metadataError: null,
+        metadataEtag: null,
+      },
     });
   }
 }
@@ -108,7 +135,14 @@ export async function onProviderMetadataChanged(db: Db, e: DecodedEvent): Promis
       : { OR: [{ metadataUri: { not: uri } }, { metadataUri: null }] };
   await db.provider.updateMany({
     where: { address, ...differs },
-    data: { metadataUri: uri, metadata: null, metadataFetchedAt: null },
+    data: {
+      metadataUri: uri,
+      metadata: null,
+      metadataFetchedAt: null,
+      metadataStatus: uri === null ? null : 'pending',
+      metadataError: null,
+      metadataEtag: null,
+    },
   });
 }
 
@@ -130,6 +164,12 @@ export async function onCapacityChanged(db: Db, e: DecodedEvent): Promise<void> 
 export async function onProviderStatus(db: Db, e: DecodedEvent): Promise<void> {
   const address = asAddress(e.fields.provider);
   const status = providerStatusName(e.fields.status);
+  // Read before writing so a replay of the same event — or a status the
+  // clinic already had — does not notify a receiver twice.
+  const existing = await db.provider.findUnique({
+    where: { address },
+    select: { status: true },
+  });
   // `db` is the cycle's (or applyEvent's) transaction, so the status update
   // and its history row commit together.
   await db.provider.updateMany({ where: { address }, data: { status } });
@@ -144,6 +184,19 @@ export async function onProviderStatus(db: Db, e: DecodedEvent): Promise<void> {
     },
     update: {},
   });
+
+  // #266: a suspension is what a partner listing clinics most needs to hear
+  // about, so it is a delivery of its own. An event that reports the status
+  // the row already has is a replay (or a no-op) and is not announced again.
+  if (existing?.status !== status) {
+    await enqueueWebhook(db, {
+      event: PROVIDER_STATUS_CHANGED_EVENT,
+      provider: address,
+      status,
+      txHash: e.txHash,
+      ledger: e.ledger,
+    });
+  }
 }
 
 export async function onServiceUpserted(db: Db, e: DecodedEvent): Promise<void> {
@@ -199,6 +252,16 @@ export async function onServiceUpserted(db: Db, e: DecodedEvent): Promise<void> 
         changedAt: e.ledgerClosedAt,
       },
       update: {},
+    });
+    // #266: a partner can refresh its cached price list without polling.
+    // A first listing counts as a change from no price at all.
+    await enqueueWebhook(db, {
+      event: SERVICE_PRICE_CHANGED_EVENT,
+      provider: providerAddress,
+      serviceCode: code,
+      price,
+      txHash: e.txHash,
+      ledger: e.ledger,
     });
   }
 }

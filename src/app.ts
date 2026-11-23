@@ -33,6 +33,7 @@ import { allowedMethods, routePatterns, type RoutePattern } from './lib/method-a
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
 import { httpDuration, httpRequests, registry } from './lib/metrics.js';
 import { openapiDocsTransform } from './lib/openapi.js';
+import { providerMetadataJsonSchema } from './lib/provider-metadata.js';
 import { APP_VERSION } from './lib/version.js';
 import { attesterRoutes } from './routes/attesters.js';
 import { feedRoutes } from './routes/feed.js';
@@ -43,8 +44,11 @@ import { receiptRoutes } from './routes/receipts.js';
 import { serviceRoutes } from './routes/services.js';
 import { sponsorRoutes } from './routes/sponsors.js';
 import { streamRoutes } from './routes/stream.js';
-import { voucherRoutes } from './routes/vouchers.js';
+import { voucherRoutes } from './routes/vouchers/index.js';
 import { DEFAULT_RATE_LIMIT } from './lib/rate-limits.js';
+
+/** Update annually — the test fails when this date is less than 30 days away. */
+export const SECURITY_TXT_EXPIRES = '2027-11-23T00:00:00.000Z';
 
 /**
  * Request ids are opaque, bounded and safe to put in a log line. Anything
@@ -202,11 +206,12 @@ export async function buildApp(
   await app.register(cors, {
     origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()),
     methods: ['GET'],
+    exposedHeaders: ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
   });
 
   await app.register(compress);
   await app.register(helmet, { contentSecurityPolicy: false });
-  await app.register(rateLimit, DEFAULT_RATE_LIMIT);
+  await app.register(rateLimit, { ...DEFAULT_RATE_LIMIT, enableDraftSpec: true });
 
   // Every response, including errors and 404s, carries the id that appears
   // in the matching log line, plus the configured Stellar network name.
@@ -312,6 +317,15 @@ export async function buildApp(
     return app.swagger();
   });
 
+  // The published JSON Schema for the off-chain document (#272), so a clinic
+  // can validate its file before publishing the pointer. Hidden from the
+  // OpenAPI document like the other non-data routes; `docs/api-reference.md`
+  // documents it for humans.
+  app.get('/schemas/provider-metadata.json', { schema: { hide: true } }, (_req, reply) => {
+    reply.header('cache-control', 'public, max-age=86400');
+    return providerMetadataJsonSchema;
+  });
+
   // Labelled by route pattern, not URL, so ids in paths cannot blow up the
   // number of series. Unmatched requests share one label.
   app.addHook('onResponse', async (req, reply) => {
@@ -333,6 +347,23 @@ export async function buildApp(
     async (_req, reply) => {
       reply.header('content-type', registry.contentType);
       return registry.metrics();
+    },
+  );
+
+  // RFC 9116 security contact — intentionally not rate-limited so automated
+  // scanners can always reach it, and not cached so an updated Expires is
+  // served immediately.
+  app.get(
+    '/.well-known/security.txt',
+    { schema: { hide: true }, config: { rateLimit: false } },
+    async (_req, reply) => {
+      reply.header('content-type', 'text/plain; charset=utf-8').header('cache-control', NO_STORE);
+      return [
+        'Contact: https://github.com/Godgift-care/sci-healthcare-backend/security/advisories/new',
+        'Policy: https://github.com/Godgift-care/sci-healthcare-backend/blob/main/SECURITY.md',
+        `Expires: ${SECURITY_TXT_EXPIRES}`,
+        '',
+      ].join('\n');
     },
   );
 

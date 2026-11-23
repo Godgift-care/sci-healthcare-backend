@@ -180,7 +180,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events, the webhook outbox backlog and per-endpoint circuit breakers.",
         "responses": {
           "200": {
             "description": "Every readiness check passed; safe to route traffic here. The body is the same in both statuses, so an operator can read the diagnosis from a `503` without a second request.",
@@ -298,6 +298,77 @@
               }
             },
             "description": "Degraded, and `checks` says why: a database error string instead of `ok`, `failedEvents` above 0, `webhooks.state: backlog`, an `indexer` of `lagging`, `gap` or `paused`, or an `rpc` error. This is the route’s own diagnosis, not the shared error envelope, because a failed check is an answer rather than a rejected request."
+          }
+        }
+      }
+    },
+    "/v1/indexer": {
+      "get": {
+        "summary": "Public indexer status",
+        "tags": [
+          "health"
+        ],
+        "description": "Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.",
+        "responses": {
+          "200": {
+            "description": "The indexer cursor, latest ledger, calculated lag and persisted pause or retention-gap state.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "lastLedger": 5000000,
+                  "latestLedger": 5000000,
+                  "lagLedgers": 0,
+                  "paused": false,
+                  "gap": false,
+                  "gapOldestLedger": null,
+                  "updatedAt": "2026-11-18T16:34:28.834Z"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
           }
         }
       }
@@ -449,24 +520,52 @@
                       "type": "object",
                       "properties": {
                         "funded": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "claimed": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "attested": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "settled": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -476,6 +575,9 @@
                         "settled"
                       ],
                       "additionalProperties": false
+                    },
+                    "suppressed": {
+                      "type": "boolean"
                     },
                     "medianHours": {
                       "type": "object",
@@ -526,6 +628,7 @@
                     "country",
                     "clinic",
                     "counts",
+                    "suppressed",
                     "medianHours"
                   ],
                   "additionalProperties": false
@@ -805,9 +908,11 @@
     },
     "/v1/providers": {
       "get": {
+        "summary": "List clinics, optionally filtered by service and sortable",
+        "description": "Filters: `status`, `country`, `q` (name contains, case-insensitive) and `serviceCode` (clinics with that service active). Sorts by `sort=name`, `registered` (default) or `country`, with `order=asc` or `desc` (default: `desc` for `registered`, `asc` otherwise). The sort and order are encoded in `nextCursor`; a cursor from another ordering is `400 invalid_cursor`.",
         "responses": {
           "200": {
-            "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
+            "description": "A page of clinics with their active services. Filter by `status`, `country`, `q` or `serviceCode` (only clinics with that service active); sort by `name`, `registered` (default, newest first) or `country`, with `order=asc|desc`. `nextCursor` encodes the ordering and answers `400 invalid_cursor` if used with another one; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
             "content": {
               "application/json": {
                 "example": {
@@ -823,6 +928,8 @@
                       "status": "Active",
                       "registeredAt": "2026-01-08T10:00:00.000Z",
                       "metadata": null,
+                      "metadataStatus": null,
+                      "metadataError": null,
                       "capacity": null,
                       "openVouchers": 2,
                       "services": [
@@ -977,6 +1084,8 @@
                   "status": "Active",
                   "registeredAt": "2026-01-08T10:00:00.000Z",
                   "metadata": null,
+                  "metadataStatus": null,
+                  "metadataError": null,
                   "capacity": null,
                   "openVouchers": 2,
                   "services": [
@@ -1916,9 +2025,11 @@
     },
     "/v1/services": {
       "get": {
+        "summary": "Service catalogue with search, price range and sorting",
+        "description": "Filters: `q` (a service label contains it, case-insensitive, 1–64 chars), `minPrice` / `maxPrice` (base-unit decimal strings, compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sorts by `sort=code` (default), `price` (cheapest clinic first) or `label`, with `order=asc` (default) or `desc`.",
         "responses": {
           "200": {
-            "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge.",
+            "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge. Filter with `q` (label contains, case-insensitive, 1-64 chars), `minPrice` and `maxPrice` (base-unit decimal strings compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sort by `code` (default), `price` (cheapest clinic first) or `label`, with `order=asc|desc`; ties order by code.",
             "content": {
               "application/json": {
                 "example": {
@@ -2019,6 +2130,32 @@
                 }
               }
             }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "origin": "string",
+                      "code": "too_small",
+                      "minimum": 1,
+                      "inclusive": true,
+                      "path": [
+                        "q"
+                      ],
+                      "message": "Too small: expected string to have >=1 characters"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` for a `q` outside 1-64 characters, a malformed or over-i128 price, `minPrice` greater than `maxPrice`, or an unknown `sort`/`order`."
           },
           "429": {
             "content": {
@@ -4570,7 +4707,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events, the webhook outbox backlog and per-endpoint circuit breakers.",
         "responses": {
           "200": {
             "description": "Every readiness check passed; safe to route traffic here. The body is the same in both statuses, so an operator can read the diagnosis from a `503` without a second request.",
@@ -4688,6 +4825,77 @@
               }
             },
             "description": "Degraded, and `checks` says why: a database error string instead of `ok`, `failedEvents` above 0, `webhooks.state: backlog`, an `indexer` of `lagging`, `gap` or `paused`, or an `rpc` error. This is the route’s own diagnosis, not the shared error envelope, because a failed check is an answer rather than a rejected request."
+          }
+        }
+      }
+    },
+    "/indexer": {
+      "get": {
+        "summary": "Public indexer status",
+        "tags": [
+          "health"
+        ],
+        "description": "Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.",
+        "responses": {
+          "200": {
+            "description": "The indexer cursor, latest ledger, calculated lag and persisted pause or retention-gap state.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "lastLedger": 5000000,
+                  "latestLedger": 5000000,
+                  "lagLedgers": 0,
+                  "paused": false,
+                  "gap": false,
+                  "gapOldestLedger": null,
+                  "updatedAt": "2026-11-18T16:34:28.834Z"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
           }
         }
       }
@@ -4839,24 +5047,52 @@
                       "type": "object",
                       "properties": {
                         "funded": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "claimed": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "attested": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "settled": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -4866,6 +5102,9 @@
                         "settled"
                       ],
                       "additionalProperties": false
+                    },
+                    "suppressed": {
+                      "type": "boolean"
                     },
                     "medianHours": {
                       "type": "object",
@@ -4916,6 +5155,7 @@
                     "country",
                     "clinic",
                     "counts",
+                    "suppressed",
                     "medianHours"
                   ],
                   "additionalProperties": false
@@ -5195,9 +5435,11 @@
     },
     "/providers": {
       "get": {
+        "summary": "List clinics, optionally filtered by service and sortable",
+        "description": "Filters: `status`, `country`, `q` (name contains, case-insensitive) and `serviceCode` (clinics with that service active). Sorts by `sort=name`, `registered` (default) or `country`, with `order=asc` or `desc` (default: `desc` for `registered`, `asc` otherwise). The sort and order are encoded in `nextCursor`; a cursor from another ordering is `400 invalid_cursor`.",
         "responses": {
           "200": {
-            "description": "A page of clinics with their active services, newest registration first. `nextCursor` is the way forward; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
+            "description": "A page of clinics with their active services. Filter by `status`, `country`, `q` or `serviceCode` (only clinics with that service active); sort by `name`, `registered` (default, newest first) or `country`, with `order=asc|desc`. `nextCursor` encodes the ordering and answers `400 invalid_cursor` if used with another one; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
             "content": {
               "application/json": {
                 "example": {
@@ -5213,6 +5455,8 @@
                       "status": "Active",
                       "registeredAt": "2026-01-08T10:00:00.000Z",
                       "metadata": null,
+                      "metadataStatus": null,
+                      "metadataError": null,
                       "capacity": null,
                       "openVouchers": 2,
                       "services": [
@@ -5367,6 +5611,8 @@
                   "status": "Active",
                   "registeredAt": "2026-01-08T10:00:00.000Z",
                   "metadata": null,
+                  "metadataStatus": null,
+                  "metadataError": null,
                   "capacity": null,
                   "openVouchers": 2,
                   "services": [
@@ -6306,9 +6552,11 @@
     },
     "/services": {
       "get": {
+        "summary": "Service catalogue with search, price range and sorting",
+        "description": "Filters: `q` (a service label contains it, case-insensitive, 1–64 chars), `minPrice` / `maxPrice` (base-unit decimal strings, compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sorts by `sort=code` (default), `price` (cheapest clinic first) or `label`, with `order=asc` (default) or `desc`.",
         "responses": {
           "200": {
-            "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge.",
+            "description": "The catalogue observed across every clinic: one entry per service code, with the price range clinics actually charge. Filter with `q` (label contains, case-insensitive, 1-64 chars), `minPrice` and `maxPrice` (base-unit decimal strings compared exactly with BigInt). A price filter includes a service when its clinic price band overlaps the range, so `maxPrice` is a budget. Sort by `code` (default), `price` (cheapest clinic first) or `label`, with `order=asc|desc`; ties order by code.",
             "content": {
               "application/json": {
                 "example": {
@@ -6409,6 +6657,32 @@
                 }
               }
             }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "origin": "string",
+                      "code": "too_small",
+                      "minimum": 1,
+                      "inclusive": true,
+                      "path": [
+                        "q"
+                      ],
+                      "message": "Too small: expected string to have >=1 characters"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` for a `q` outside 1-64 characters, a malformed or over-i128 price, `minPrice` greater than `maxPrice`, or an unknown `sort`/`order`."
           },
           "429": {
             "content": {

@@ -100,6 +100,9 @@ state; the history lives in `ProviderStatusChange`.
 | `metadataUri` | `String?` | Yes | `metadata_uri` on `provider_registered` / `provider_metadata_changed` | Off-chain directory pointer (hours, phone, location). Kept only when it is within `METADATA_URI_MAX_LENGTH` (512); an over-long URI is ignored rather than truncated, and an empty one clears the column |
 | `metadata` | `String?` | Yes | the indexer's metadata refresh, JSON of the fetched document (`src/lib/provider-metadata.ts`) | Validated against a schema before it is stored. Null until the first successful fetch; a later failure keeps the previous document, and any event that repoints or clears `metadataUri` nulls it so stale hours are never shown against a new URI |
 | `metadataFetchedAt` | `DateTime?` | Yes | the same refresh, on success and on rejection | Stamped on a rejected fetch too, so a dead URI is retried once a day instead of on every cycle; this is what the refresh window selects on |
+| `metadataStatus` | `String?` | Yes | the same refresh, and the registration handlers | `pending` after a URI is announced, `ok` once a document is cached, `failed` when the last attempt was rejected. Null when the clinic published no URI; served on the provider routes (#271) |
+| `metadataError` | `String?` | Yes | the same refresh, on rejection | A short code (`unsupported_scheme`, `timeout`, `invalid_document`, …), never the remote body or a raw error message. Cleared by a successful fetch; served beside `metadataStatus` (#271) |
+| `metadataEtag` | `String?` | Yes | the refresh, from the response's `ETag` | Replayed as `If-None-Match`, so an unchanged document costs one conditional request and answers `304` (#270). Null when the host sends no ETag |
 | `capacity` | `Int?` | Yes | `capacity_changed.max_outstanding` | The clinic's outstanding-voucher cap from the registry. `0` means unlimited (the contract's own convention); `null` until the registry is first observed setting it. Paired with the live `openVouchers` count on the provider routes |
 | `deployment` | `Deployment?` | Yes | relation | Which contract instance registered this provider |
 | `deploymentId` | `Int?` | Yes | `Deployment.id` for the event's contract | `null` when the contract was not in the `Deployment` table at write time |
@@ -393,9 +396,11 @@ retries and backs off independently.
 | --- | --- | --- | --- | --- |
 | `id` | `String` | No | `randomUUID()` at enqueue | Primary key; not an on-chain id |
 | `url` | `String` | No | one entry of `WEBHOOK_URLS` | One row per endpoint per event |
-| `event` | `String` | No | contract event name | e.g. `voucher_settled` |
-| `voucherId` | `String` | No | the voucher the event is about | |
-| `status` | `String` | No | resulting voucher status | e.g. `Settled` |
+| `event` | `String` | No | contract event name, or a registry event name | e.g. `voucher_settled`, `provider.registered`, `provider.status_changed`, `service.price_changed` (#266) |
+| `voucherId` | `String?` | Yes | the voucher the event is about | Null for registry and service events |
+| `status` | `String?` | Yes | resulting voucher or provider status | e.g. `Settled`, `Active`; null for `service.price_changed` |
+| `provider` | `String?` | Yes | the clinic the event is about | Set for `provider.*` and `service.price_changed` |
+| `serviceCode` | `Int?` | Yes | service code from `service.price_changed` | Null for every other event |
 | `txHash` | `String?` | Yes | event transaction hash | Null when the RPC did not report one |
 | `ledger` | `Int` | No | event ledger | |
 | `payload` | `String` | No | exact JSON body at enqueue time | Stored rather than rebuilt on retry: the HMAC signature covers those bytes, so a retry must send the same request. Never contains a beneficiary reference |

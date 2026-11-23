@@ -17,6 +17,8 @@ Every variable the service reads. The Zod schema in `src/env.ts` is the source o
 | `DATABASE_URL` | Yes | — | `file:./dev.db` | Database connection string. SQLite paths resolve **relative to `prisma/`**; production uses a Postgres URL |
 | `DATABASE_POOL_SIZE` | No | — | `5` | Maximum Postgres connection pool size; applied via `connection_limit` parameter on Postgres URLs, ignored on SQLite |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | No | — | `10000` | Maximum Postgres query execution time in milliseconds; applied via `statement_timeout` parameter on Postgres URLs, ignored on SQLite |
+| `IPFS_GATEWAY_URL` | No | `https://ipfs.io/ipfs` | `https://gateway.pinata.cloud/ipfs` | Base URL of the gateway used to resolve `ipfs://<cid>` provider metadata pointers. The CID and path are appended to it; only http(s) gateways are accepted |
+| `PROVIDER_METADATA_TTL_MS` | No | `86400000` | `86400000` | How long a cached provider metadata document is trusted before the refresh pass re-requests it. The request is conditional on the stored ETag, so an unchanged document costs one `304` |
 | `EVENT_RETENTION_DAYS` | No | `0` | `365` | Prune `ContractEvent` log rows older than this many days, in batches, for vouchers in a final status (`Settled`, `Refunded`) and for events that belong to no voucher. History of open vouchers is never pruned. `0` (default) keeps the log forever |
 | `STELLAR_NETWORK` | No | `testnet` | `testnet` | Stellar network: `testnet`, `public` or `futurenet` |
 | `SOROBAN_RPC_URL` | No | — | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint (used when `SOROBAN_RPC_URLS` is unset) |
@@ -35,6 +37,7 @@ Every variable the service reads. The Zod schema in `src/env.ts` is the source o
 | `SHUTDOWN_TIMEOUT_MS` | No | `15000` | `15000` | How long SIGTERM/SIGINT waits for the indexer cycle in flight before the process hard-exits |
 | `SSE_HEARTBEAT_MS` | No | `15000` | `15000` | Idle interval between `: heartbeat` comments on `GET /stream` |
 | `SSE_MAX_CONNECTIONS` | No | `64` | `64` | Concurrent `GET /stream` connections one process will hold; past that the route answers `503 stream_full` |
+| `STATS_MIN_CELL` | No | `5` | `5` | Minimum voucher count per reporting cell for `GET /countries` and scoped `GET /stats/funnel` calls. Cells with a non-zero count below this threshold are suppressed (returned as `null`). Set to `0` to disable suppression |
 | `WEBHOOK_URLS` | No |  | `https://clinic.example/hooks` | Comma-separated endpoints sent a signed notification for each voucher event; blank (the default) disables webhooks |
 | `WEBHOOK_SECRET` | No |  | `a-long-random-string` | HMAC-SHA256 key for the `X-SCI-Signature` header; blank by default, required (min 16 characters) when `WEBHOOK_URLS` is set |
 
