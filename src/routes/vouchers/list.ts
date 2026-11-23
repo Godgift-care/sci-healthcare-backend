@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { prisma } from '../../db.js';
 import { voucherSeq } from '../../lib/voucher-seq.js';
-import { decodeCursor, encodeCursor } from '../../lib/cursor.js';
+import { decodeCursor, encodeCursor, nextPageLink } from '../../lib/cursor.js';
 import { ApiError } from '../../lib/errors.js';
 import { applyFields, parseFields } from '../../lib/fields.js';
 import { isRefundable, isSettleable } from '../../lib/lifecycle.js';
@@ -33,7 +33,7 @@ export function registerVoucherList(app: FastifyInstance): void {
       },
       config: { rateLimit: LIST_ROUTE_RATE_LIMIT },
     },
-    async (req) => {
+    async (req, reply) => {
       const parsed = listQuery.safeParse(req.query);
       if (!parsed.success) {
         throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
@@ -54,6 +54,7 @@ export function registerVoucherList(app: FastifyInstance): void {
         offset,
         fields,
         include,
+        count,
       } = parsed.data;
 
       const includes = new Set<Include>(include ?? []);
@@ -152,21 +153,38 @@ export function registerVoucherList(app: FastifyInstance): void {
         const page = hasNext ? rows.slice(0, limit) : rows;
         const last = page[page.length - 1];
         const nextCursor = hasNext && last ? encodeCursor(last.createdAt, last.id) : null;
+        const link = nextPageLink(req.url, nextCursor);
+        if (link) reply.header('link', link);
+        // #247: a keyset page does not count unless asked, because that would
+        // be a second aggregate query on every page. The count uses the same
+        // filters as the page, without the cursor predicate.
+        const total = count ? await prisma.voucher.count({ where }) : undefined;
         return {
+          ...(total === undefined ? {} : { total }),
           limit,
           nextCursor,
           vouchers: project(await serialisePage(page, includes, fieldSet)),
         };
       }
 
-      const { rows, total } = await pageByWhere(where, sort, order, limit + 1, offset, fieldSet);
+      const { rows, total } = await pageByWhere(
+        where,
+        sort,
+        order,
+        limit + 1,
+        offset,
+        fieldSet,
+        count,
+      );
 
       const hasNext = rows.length > limit;
       const page = hasNext ? rows.slice(0, limit) : rows;
       const last = page[page.length - 1];
       const nextCursor = hasNext && last ? encodeCursor(last.createdAt, last.id) : undefined;
+      const link = nextPageLink(req.url, nextCursor);
+      if (link) reply.header('link', link);
       return {
-        total,
+        ...(total === undefined ? {} : { total }),
         limit,
         offset,
         nextCursor,
