@@ -5,7 +5,7 @@ import { prisma } from '../db.js';
 import { env, WEBHOOKS_ENABLED } from '../env.js';
 import { clearLedgerMemos, lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
 import { isPostgres } from '../lib/database.js';
-import { webhookBacklog } from '../lib/webhooks.js';
+import { webhookBacklog, webhookCircuitSnapshot } from '../lib/webhooks.js';
 import { APP_VERSION, deployedCommit, STARTED_AT } from '../lib/version.js';
 import { server } from '../stellar/client.js';
 
@@ -28,11 +28,12 @@ const funnelResponse = z.object({
   country: z.string().nullable(),
   clinic: z.string().nullable(),
   counts: z.object({
-    funded: z.number().int().nonnegative(),
-    claimed: z.number().int().nonnegative(),
-    attested: z.number().int().nonnegative(),
-    settled: z.number().int().nonnegative(),
+    funded: z.number().int().nonnegative().nullable(),
+    claimed: z.number().int().nonnegative().nullable(),
+    attested: z.number().int().nonnegative().nullable(),
+    settled: z.number().int().nonnegative().nullable(),
   }),
+  suppressed: z.boolean(),
   medianHours: z.object({
     fundedToClaimed: z.number().nonnegative().nullable(),
     claimedToAttested: z.number().nonnegative().nullable(),
@@ -207,15 +208,36 @@ async function funnelStats(country?: string, clinic?: string) {
     return hours === null ? [] : [hours];
   });
 
+  const rawCounts = {
+    funded: vouchers.length,
+    claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
+    attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
+    settled: receipts.length,
+  };
+
+  // Small-cell suppression: apply only to scoped queries, not the global
+  // aggregate, so dashboard totals are never null (#256). Zero is never
+  // suppressed — it reveals nothing about individuals.
+  const isScoped = country !== undefined || clinic !== undefined;
+  const minCell = isScoped ? env.STATS_MIN_CELL : 0;
+  const suppress = (n: number): number | null => (minCell > 0 && n > 0 && n < minCell ? null : n);
+  const counts = {
+    funded: suppress(rawCounts.funded),
+    claimed: suppress(rawCounts.claimed),
+    attested: suppress(rawCounts.attested),
+    settled: suppress(rawCounts.settled),
+  };
+  const suppressed =
+    counts.funded === null ||
+    counts.claimed === null ||
+    counts.attested === null ||
+    counts.settled === null;
+
   return {
     country: country ?? null,
     clinic: clinic ?? null,
-    counts: {
-      funded: vouchers.length,
-      claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
-      attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
-      settled: receipts.length,
-    },
+    counts,
+    suppressed,
     medianHours: {
       fundedToClaimed: medianHours(claimTimes),
       claimedToAttested: medianHours(attestationTimes),
@@ -303,7 +325,7 @@ export function healthRoutes(app: FastifyInstance): void {
         summary: 'Readiness check',
         description:
           'Reports indexer lag, RPC retention gaps, database connectivity, failed ' +
-          'events and the webhook outbox backlog.',
+          'events, the webhook outbox backlog and per-endpoint circuit breakers.',
       },
     },
     async (_req, reply) => {
@@ -341,6 +363,10 @@ export function healthRoutes(app: FastifyInstance): void {
           abandoned: backlog.abandoned,
           oldestPendingAgeSeconds: backlog.oldestPendingAgeSeconds,
           maxPendingAgeSeconds: env.READY_WEBHOOK_MAX_AGE_MS / 1000,
+          // Per-endpoint breakers (#265). A tripped breaker is reported, not
+          // degraded: the outbox is still holding those deliveries, and a
+          // clinic outage must not pull a working API out of rotation.
+          breakers: webhookCircuitSnapshot(),
         };
         if (webhookState === 'backlog') healthy = false;
       } catch (err) {

@@ -180,7 +180,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events, the webhook outbox backlog and per-endpoint circuit breakers.",
         "responses": {
           "200": {
             "description": "Every readiness check passed; safe to route traffic here. The body is the same in both statuses, so an operator can read the diagnosis from a `503` without a second request.",
@@ -449,24 +449,52 @@
                       "type": "object",
                       "properties": {
                         "funded": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "claimed": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "attested": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "settled": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -476,6 +504,9 @@
                         "settled"
                       ],
                       "additionalProperties": false
+                    },
+                    "suppressed": {
+                      "type": "boolean"
                     },
                     "medianHours": {
                       "type": "object",
@@ -526,6 +557,7 @@
                     "country",
                     "clinic",
                     "counts",
+                    "suppressed",
                     "medianHours"
                   ],
                   "additionalProperties": false
@@ -4501,7 +4533,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events, the webhook outbox backlog and per-endpoint circuit breakers.",
         "responses": {
           "200": {
             "description": "Every readiness check passed; safe to route traffic here. The body is the same in both statuses, so an operator can read the diagnosis from a `503` without a second request.",
@@ -4770,24 +4802,52 @@
                       "type": "object",
                       "properties": {
                         "funded": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "claimed": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "attested": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "settled": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -4797,6 +4857,9 @@
                         "settled"
                       ],
                       "additionalProperties": false
+                    },
+                    "suppressed": {
+                      "type": "boolean"
                     },
                     "medianHours": {
                       "type": "object",
@@ -4847,6 +4910,7 @@
                     "country",
                     "clinic",
                     "counts",
+                    "suppressed",
                     "medianHours"
                   ],
                   "additionalProperties": false

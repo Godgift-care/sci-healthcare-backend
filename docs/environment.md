@@ -37,6 +37,7 @@ Every variable the service reads. The Zod schema in `src/env.ts` is the source o
 | `SHUTDOWN_TIMEOUT_MS` | No | `15000` | `15000` | How long SIGTERM/SIGINT waits for the indexer cycle in flight before the process hard-exits |
 | `SSE_HEARTBEAT_MS` | No | `15000` | `15000` | Idle interval between `: heartbeat` comments on `GET /stream` |
 | `SSE_MAX_CONNECTIONS` | No | `64` | `64` | Concurrent `GET /stream` connections one process will hold; past that the route answers `503 stream_full` |
+| `STATS_MIN_CELL` | No | `5` | `5` | Minimum voucher count per reporting cell for `GET /countries` and scoped `GET /stats/funnel` calls. Cells with a non-zero count below this threshold are suppressed (returned as `null`). Set to `0` to disable suppression |
 | `WEBHOOK_URLS` | No |  | `https://clinic.example/hooks` | Comma-separated endpoints sent a signed notification for each voucher event; blank (the default) disables webhooks |
 | `WEBHOOK_SECRET` | No |  | `a-long-random-string` | HMAC-SHA256 key for the `X-SCI-Signature` header; blank by default, required (min 16 characters) when `WEBHOOK_URLS` is set |
 

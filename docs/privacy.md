@@ -60,5 +60,26 @@ The SCI Healthcare backend is a **public, unauthenticated read-only indexer** fo
 4. **Auditability Without Surveillance:**
    The design strikes a deliberate balance: donors and auditors can verify that funds were disbursed to legitimate clinics for healthcare services, while patient dignity and medical privacy are unconditionally preserved.
 
-5. **Request Log Redaction:**
+5. **Small-Cell Suppression (`STATS_MIN_CELL`):**
+   Aggregate routes that group counts by clinic or country can expose small
+   cohorts that re-identify individuals when the count approaches the number
+   of people known to have used a particular service. Any cell whose count
+   falls below the `STATS_MIN_CELL` threshold (default 5) is replaced with
+   `null` and flagged as `suppressed: true` in the response:
+   - `GET /countries`: the `clinicCount` for any country with fewer than
+     `STATS_MIN_CELL` active clinics is suppressed. Complementary suppression
+     also applies: if only one country entry is suppressed and an operator
+     knows the total active-clinic count from another source, they could
+     recover the hidden value by subtraction. To prevent this, the
+     next-smallest revealed entry is also suppressed whenever exactly one
+     primary suppression has occurred and three or more entries are present.
+   - `GET /stats/funnel?country=` / `?clinic=`: each stage count (funded,
+     claimed, attested, settled) is independently suppressed when below the
+     threshold. The global (unscoped) aggregate is never suppressed.
+     The response includes `suppressed: true` when any count was hidden.
+   Set `STATS_MIN_CELL=0` to disable suppression in environments where
+   disclosure risk is managed by other means (e.g. authenticated internal
+   dashboards).
+
+6. **Request Log Redaction:**
    `GET /vouchers` and `GET /receipts` take `beneficiaryRef` as a query filter, and the HTTP server logs the request URL of every request. Logs are retained longer and shared more widely than the database, and a reference links one patient's visits together, so the Fastify request serializer masks the parameter to `beneficiaryRef=%5Bredacted%5D` before any log line is written (`src/lib/log-redaction.ts`, wired through `withRedactedLogging` in `src/app.ts`). The filter's presence stays visible for operators; the reference itself never is. Error log lines carry the failure reason only — validation messages name the failing parameter and never echo its value. Asserted in `src/__tests__/log-redaction.test.ts`.

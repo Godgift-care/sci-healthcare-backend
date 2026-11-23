@@ -329,9 +329,11 @@ retries and backs off independently.
 | --- | --- | --- | --- | --- |
 | `id` | `String` | No | `randomUUID()` at enqueue | Primary key; not an on-chain id |
 | `url` | `String` | No | one entry of `WEBHOOK_URLS` | One row per endpoint per event |
-| `event` | `String` | No | contract event name | e.g. `voucher_settled` |
-| `voucherId` | `String` | No | the voucher the event is about | |
-| `status` | `String` | No | resulting voucher status | e.g. `Settled` |
+| `event` | `String` | No | contract event name, or a registry event name | e.g. `voucher_settled`, `provider.registered`, `provider.status_changed`, `service.price_changed` (#266) |
+| `voucherId` | `String?` | Yes | the voucher the event is about | Null for registry and service events |
+| `status` | `String?` | Yes | resulting voucher or provider status | e.g. `Settled`, `Active`; null for `service.price_changed` |
+| `provider` | `String?` | Yes | the clinic the event is about | Set for `provider.*` and `service.price_changed` |
+| `serviceCode` | `Int?` | Yes | service code from `service.price_changed` | Null for every other event |
 | `txHash` | `String?` | Yes | event transaction hash | Null when the RPC did not report one |
 | `ledger` | `Int` | No | event ledger | |
 | `payload` | `String` | No | exact JSON body at enqueue time | Stored rather than rebuilt on retry: the HMAC signature covers those bytes, so a retry must send the same request. Never contains a beneficiary reference |

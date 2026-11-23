@@ -31,11 +31,16 @@ function corsViolation(cfg: CorsConfig): string | null {
   return ok ? null : 'CORS_ORIGIN must contain valid http(s) URLs';
 }
 
-/** A 56-character contract id that may be omitted or left blank. */
-const blankableContractId = z.union([
-  z.string().length(56),
-  z.literal('').transform(() => undefined),
-]);
+/**
+ * An optional variable that is blank means "not configured".
+ *
+ * `.env.example` ships optional ids as empty lines, and a dotenv loader turns
+ * those into `''` rather than leaving the key absent. Without this, a stock
+ * `.env` fails boot on an id the deployment never meant to set.
+ */
+function blankToUndefined(value: unknown): unknown {
+  return typeof value === 'string' && value.trim() === '' ? undefined : value;
+}
 
 /** The parsed environment shape, before the CORS rule is layered on. */
 const envShape = z.object({
@@ -81,12 +86,9 @@ const envShape = z.object({
   REGISTRY_CONTRACT_ID: z.string().length(56),
   VOUCHER_CONTRACT_ID: z.string().length(56),
   RECEIPT_CONTRACT_ID: z.string().length(56),
-  // An empty value (the shape `.env.example` leaves behind) means "unset",
-  // not a present-but-malformed id. Without this, copying the example file
-  // makes an optional id fail boot with a message about its length.
-  USDC_CONTRACT_ID: blankableContractId.optional(),
+  USDC_CONTRACT_ID: z.preprocess(blankToUndefined, z.string().length(56).optional()),
   /** Testnet demo faucet. Drips are counted only when this is set. */
-  FAUCET_CONTRACT_ID: blankableContractId.optional(),
+  FAUCET_CONTRACT_ID: z.preprocess(blankToUndefined, z.string().length(56).optional()),
 
   /**
    * Optional JSON array of previous contract deployments for redeployment support.
@@ -145,6 +147,14 @@ const envShape = z.object({
    * answers 503 and the client retries later.
    */
   SSE_MAX_CONNECTIONS: z.coerce.number().int().positive().default(64),
+  /**
+   * Minimum voucher count per reporting cell for public aggregate routes
+   * (`GET /countries`, `GET /stats/funnel?country=` and `?clinic=`).
+   * Cells below this threshold are suppressed (returned as null) to prevent
+   * re-identification of individuals in small cohorts (#256).
+   * Set to 0 to disable suppression (testing or unrestricted deployments).
+   */
+  STATS_MIN_CELL: z.coerce.number().int().nonnegative().default(5),
 });
 
 /**
