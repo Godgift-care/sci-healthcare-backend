@@ -125,7 +125,7 @@ describe('errorMessage', () => {
       method: 'GET',
       url: '/x',
     });
-    expect(result).toBe('المسار ⁦GET⁩ ⁦/x⁩ غير موجود');
+    expect(result).toBe('المسار \u2066GET\u2069 \u2066/x\u2069 غير موجود');
   });
 
   it('does not add bidi marks for non-RTL languages', () => {

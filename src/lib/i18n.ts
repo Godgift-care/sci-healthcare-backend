@@ -262,7 +262,7 @@ function interpolate(template: string, params: MessageParams, rtl = false): stri
   return template.replace(/\{(\w+)\}/g, (whole, name: string) => {
     if (!Object.prototype.hasOwnProperty.call(params, name)) return whole;
     const val = params[name]!;
-    return rtl ? `⁦${val}⁩` : val;
+    return rtl ? `\u2066${val}\u2069` : val;
   });
 }
 
