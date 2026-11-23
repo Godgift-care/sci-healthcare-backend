@@ -11,6 +11,32 @@ const validBaseEnv = {
   RECEIPT_CONTRACT_ID: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M',
 };
 
+describe('INDEXER_ARCHIVE_RPC_URL', () => {
+  it('allows an http(s) archive endpoint', () => {
+    expect(
+      schema.parse({
+        ...validBaseEnv,
+        INDEXER_ARCHIVE_RPC_URL: 'https://archive-rpc.example',
+      }).INDEXER_ARCHIVE_RPC_URL,
+    ).toBe('https://archive-rpc.example');
+  });
+
+  it('allows the archive to be omitted', () => {
+    expect(
+      schema.parse({ ...validBaseEnv, INDEXER_ARCHIVE_RPC_URL: '' }).INDEXER_ARCHIVE_RPC_URL,
+    ).toBeUndefined();
+  });
+
+  it('rejects a non-http archive endpoint', () => {
+    expect(
+      schema.safeParse({
+        ...validBaseEnv,
+        INDEXER_ARCHIVE_RPC_URL: 'ftp://archive-rpc.example',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('CORS_ORIGIN validation in env schema', () => {
   it('rejects wildcard origin "*" when NODE_ENV is production', () => {
     const result = schema.safeParse({

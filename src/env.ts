@@ -81,6 +81,10 @@ const envShape = z.object({
    * next. One blip is not an outage, so the default waits for a small streak.
    */
   SOROBAN_RPC_MAX_FAILURES: z.coerce.number().int().positive().default(3),
+  INDEXER_ARCHIVE_RPC_URL: z.preprocess(
+    blankToUndefined,
+    z.string().refine(isValidHttpUrl).optional(),
+  ),
   NETWORK_PASSPHRASE: z.string().min(1),
 
   REGISTRY_CONTRACT_ID: z.string().length(56),
