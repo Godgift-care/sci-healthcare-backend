@@ -159,10 +159,6 @@ export type Env = Omit<z.infer<typeof schema>, 'SOROBAN_RPC_URL' | 'WEBHOOK_ALLO
   SOROBAN_RPC_URL: string;
   /** Every configured endpoint, in failover order. Never empty. */
   RPC_URLS: readonly string[];
-  /** Parsed delivery targets; empty means webhooks are off. */
-  WEBHOOK_ENDPOINT_LIST: readonly WebhookEndpoint[];
-  /** Parsed signing keys, newest first. */
-  WEBHOOK_SECRET_LIST: readonly string[];
   /** Boolean form of WEBHOOK_ALLOW_PRIVATE. */
   WEBHOOK_ALLOW_PRIVATE: boolean;
 };
@@ -391,27 +387,10 @@ function load(): Env {
     );
   }
 
-  const webhookSecrets = parseWebhookSecrets(config.WEBHOOK_SECRETS, config.WEBHOOK_SECRET);
-  const configuredEndpoints = parseWebhookEndpoints(config.WEBHOOK_ENDPOINTS, webhookSecrets);
-  // WEBHOOK_ENDPOINTS is the richer form; the flat list stays the simple
-  // case and is ignored (not merged, which would double-deliver) when the
-  // JSON list is present. Both are documented in docs/environment.md.
-  const webhookEndpoints: WebhookEndpoint[] =
-    configuredEndpoints.length > 0
-      ? configuredEndpoints
-      : parseWebhookUrls(config.WEBHOOK_URLS).map((url) => ({
-          url,
-          secrets: webhookSecrets.map((s) => validSecret(s, 'WEBHOOK_SECRETS')),
-          events: null,
-          provider: null,
-        }));
-
   return {
     ...config,
     SOROBAN_RPC_URL: rpcUrls[0]!,
     RPC_URLS: rpcUrls,
-    WEBHOOK_ENDPOINT_LIST: webhookEndpoints,
-    WEBHOOK_SECRET_LIST: webhookSecrets,
     WEBHOOK_ALLOW_PRIVATE: config.WEBHOOK_ALLOW_PRIVATE === 'true',
   };
 }
@@ -523,17 +502,36 @@ export const CONTRACTS = [
   { contract: 'receipt', contractId: env.RECEIPT_CONTRACT_ID },
 ] as const;
 
+/** Signing keys, newest first; every key signs every delivery. */
+export const WEBHOOK_SECRETS: readonly string[] = parseWebhookSecrets(
+  env.WEBHOOK_SECRETS,
+  env.WEBHOOK_SECRET,
+);
+
 /**
  * Every delivery target, from `WEBHOOK_ENDPOINTS` or the flat
  * `WEBHOOK_URLS` list. Empty means webhooks are off.
+ *
+ * Parsed here rather than attached to `env`: the general environment object
+ * is passed around and logged, and the per-endpoint secrets belong only to
+ * the code that signs requests.
  */
-export const WEBHOOK_ENDPOINTS: readonly WebhookEndpoint[] = env.WEBHOOK_ENDPOINT_LIST;
+export const WEBHOOK_ENDPOINTS: readonly WebhookEndpoint[] = (() => {
+  const configured = parseWebhookEndpoints(env.WEBHOOK_ENDPOINTS, WEBHOOK_SECRETS);
+  if (configured.length > 0) return configured;
+  // WEBHOOK_ENDPOINTS is the richer form; the flat list stays the simple
+  // case and is ignored (not merged, which would double-deliver) when the
+  // JSON list is present. Both are documented in docs/environment.md.
+  return parseWebhookUrls(env.WEBHOOK_URLS).map((url) => ({
+    url,
+    secrets: WEBHOOK_SECRETS.map((secret) => validSecret(secret, 'WEBHOOK_SECRETS')),
+    events: null,
+    provider: null,
+  }));
+})();
 
 /** Just the URLs, for callers that only need to know where deliveries go. */
 export const WEBHOOK_URLS: readonly string[] = WEBHOOK_ENDPOINTS.map((e) => e.url);
-
-/** Signing keys, newest first; every key signs every delivery. */
-export const WEBHOOK_SECRETS: readonly string[] = env.WEBHOOK_SECRET_LIST;
 
 /** True when at least one endpoint is configured. */
 export const WEBHOOKS_ENABLED = WEBHOOK_ENDPOINTS.length > 0;
