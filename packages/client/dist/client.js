@@ -116,6 +116,9 @@ export class Client {
     async ready() {
         return this.request('/ready');
     }
+    async indexer() {
+        return this.request('/indexer');
+    }
     async stats() {
         return this.request('/stats');
     }

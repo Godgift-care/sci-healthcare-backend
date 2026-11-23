@@ -193,7 +193,7 @@ model Voucher {
   deploymentId Int?
 
   // Composite indexes for the list routes (issue #58). Each mirrors a real
-  // filter + sort path in src/routes/vouchers.ts; the single-column indexes
+  // filter + sort path in src/routes/vouchers/query.ts; the single-column indexes
   // they replace (funder, providerAddress, beneficiaryRef, status) were
   // strict prefixes of these and were dropped. Postgres scans a two-column
   // index backwards, so one index serves `order=asc|desc` for both the

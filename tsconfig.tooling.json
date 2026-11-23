@@ -1,0 +1,9 @@
+{
+  "$comment": "Type-checks the TypeScript that is run but never emitted: the top-level scripts/ (tsx) and the vitest setup under test/. test/integration/ is excluded because it holds an orphan - quickstart.test.ts imports '../app.js', a path that only resolves from inside src/, and no vitest include pattern or workflow ever loads it (issue #312).",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["scripts/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test/integration"]
+}
