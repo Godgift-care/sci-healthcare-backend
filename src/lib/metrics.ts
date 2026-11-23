@@ -107,3 +107,22 @@ export const webhookDeliveriesAbandoned = new Gauge({
   help: 'Webhook deliveries given up on after retries or a permanent response',
   registers: [registry],
 });
+
+/**
+ * Per-endpoint circuit breaker state (#265): 0 closed, 1 half-open, 2 open.
+ * A value of 2 means deliveries to that endpoint are being held, not lost —
+ * the outbox keeps them until one probe succeeds.
+ */
+export const webhookCircuitState = new Gauge({
+  name: 'webhook_circuit_state',
+  help: 'Webhook circuit breaker state per endpoint (0 closed, 1 half-open, 2 open)',
+  labelNames: ['endpoint'],
+  registers: [registry],
+});
+
+export const webhookCircuitConsecutiveFailures = new Gauge({
+  name: 'webhook_circuit_consecutive_failures',
+  help: 'Consecutive failed webhook deliveries per endpoint',
+  labelNames: ['endpoint'],
+  registers: [registry],
+});

@@ -1,4 +1,4 @@
-import { SpanStatusCode, trace, type Span } from '@opentelemetry/api';
+import { isSpanContextValid, SpanStatusCode, trace, type Span } from '@opentelemetry/api';
 import { FastifyInstrumentation } from '@opentelemetry/instrumentation-fastify';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { NodeSDK } from '@opentelemetry/sdk-node';
@@ -72,6 +72,22 @@ export function startTracingIfConfigured(source: NodeJS.ProcessEnv = process.env
  */
 function getTracer() {
   return trace.getTracer('sci-healthcare-backend', APP_VERSION);
+}
+
+/**
+ * The W3C `traceparent` header value for `span`, or undefined when it has no
+ * valid context.
+ *
+ * Outgoing calls that are not covered by an auto-instrumentation — webhook
+ * deliveries are the case this exists for (#268) — pass this explicitly, so
+ * a receiver can continue the trace. With tracing off the span is a no-op
+ * with no valid context, and nothing is sent.
+ */
+export function traceparentHeader(span: Span): string | undefined {
+  const context = span.spanContext();
+  if (!isSpanContextValid(context)) return undefined;
+  const flags = context.traceFlags.toString(16).padStart(2, '0');
+  return `00-${context.traceId}-${context.spanId}-${flags}`;
 }
 
 /**

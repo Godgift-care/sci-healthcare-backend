@@ -31,6 +31,17 @@ function corsViolation(cfg: CorsConfig): string | null {
   return ok ? null : 'CORS_ORIGIN must contain valid http(s) URLs';
 }
 
+/**
+ * An optional variable that is blank means "not configured".
+ *
+ * `.env.example` ships optional ids as empty lines, and a dotenv loader turns
+ * those into `''` rather than leaving the key absent. Without this, a stock
+ * `.env` fails boot on an id the deployment never meant to set.
+ */
+function blankToUndefined(value: unknown): unknown {
+  return typeof value === 'string' && value.trim() === '' ? undefined : value;
+}
+
 /** The parsed environment shape, before the CORS rule is layered on. */
 const envShape = z.object({
   NODE_ENV: z.string().default('development'),
@@ -75,9 +86,9 @@ const envShape = z.object({
   REGISTRY_CONTRACT_ID: z.string().length(56),
   VOUCHER_CONTRACT_ID: z.string().length(56),
   RECEIPT_CONTRACT_ID: z.string().length(56),
-  USDC_CONTRACT_ID: z.string().length(56).optional(),
+  USDC_CONTRACT_ID: z.preprocess(blankToUndefined, z.string().length(56).optional()),
   /** Testnet demo faucet. Drips are counted only when this is set. */
-  FAUCET_CONTRACT_ID: z.string().length(56).optional(),
+  FAUCET_CONTRACT_ID: z.preprocess(blankToUndefined, z.string().length(56).optional()),
 
   /**
    * Optional JSON array of previous contract deployments for redeployment support.

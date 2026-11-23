@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  PROVIDER_REGISTERED_EVENT,
+  PROVIDER_STATUS_CHANGED_EVENT,
+  SERVICE_PRICE_CHANGED_EVENT,
   WEBHOOK_BASE_BACKOFF_MS,
+  WEBHOOK_BREAKER_COOLDOWN_MS,
+  WEBHOOK_BREAKER_FAILURE_THRESHOLD,
   WEBHOOK_DELIVERY_INTERVAL_MS,
   WEBHOOK_MAX_ATTEMPTS,
   WEBHOOK_MAX_BACKOFF_MS,
@@ -74,5 +79,44 @@ describe('README webhook delivery docs', () => {
     expect(section).toContain('At-least-once');
     expect(section).toContain('No cross-event ordering');
     expect(section).toContain('Independent endpoints');
+  });
+
+  it('documents the endpoint circuit breaker with the code constants (#265)', () => {
+    expect(section).toContain(
+      `WEBHOOK_BREAKER_FAILURE_THRESHOLD = ${WEBHOOK_BREAKER_FAILURE_THRESHOLD}`,
+    );
+    expect(section).toContain(`WEBHOOK_BREAKER_COOLDOWN_MS = ${WEBHOOK_BREAKER_COOLDOWN_MS}`);
+    expect(section).toContain('checks.webhooks.breakers');
+    expect(section).toContain('webhook_circuit_state');
+    // The two behaviours receivers and operators depend on.
+    expect(section).toContain('original order');
+    expect(section).toContain('Other configured endpoints keep delivering');
+  });
+
+  it('documents the clinic and service payloads and their event names (#266)', () => {
+    for (const event of [
+      PROVIDER_REGISTERED_EVENT,
+      PROVIDER_STATUS_CHANGED_EVENT,
+      SERVICE_PRICE_CHANGED_EVENT,
+    ]) {
+      expect(section).toContain(`"event": "${event}"`);
+    }
+    expect(section).toContain('"provider": "G..."');
+    expect(section).toContain('"serviceCode": 101');
+    expect(section).toContain('exact base-unit amount as a decimal string');
+    expect(section).toContain('are unchanged by this');
+  });
+
+  it('documents the ping command and its exit behaviour (#267)', () => {
+    expect(section).toContain('npm run webhooks:ping -- --url');
+    expect(section).toContain('exits non-zero');
+    expect(section).toContain('x-sci-signature');
+  });
+
+  it('documents delivery tracing and its privacy rule (#268)', () => {
+    expect(section).toContain('webhook.deliver');
+    expect(section).toContain('traceparent');
+    expect(section).toContain('query string removed');
+    expect(section).toContain('payload is never copied into a span attribute');
   });
 });

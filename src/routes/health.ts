@@ -5,7 +5,7 @@ import { prisma } from '../db.js';
 import { env, WEBHOOKS_ENABLED } from '../env.js';
 import { clearLedgerMemos, lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
 import { isPostgres } from '../lib/database.js';
-import { webhookBacklog } from '../lib/webhooks.js';
+import { webhookBacklog, webhookCircuitSnapshot } from '../lib/webhooks.js';
 import { APP_VERSION, deployedCommit, STARTED_AT } from '../lib/version.js';
 import { server } from '../stellar/client.js';
 
@@ -325,7 +325,7 @@ export function healthRoutes(app: FastifyInstance): void {
         summary: 'Readiness check',
         description:
           'Reports indexer lag, RPC retention gaps, database connectivity, failed ' +
-          'events and the webhook outbox backlog.',
+          'events, the webhook outbox backlog and per-endpoint circuit breakers.',
       },
     },
     async (_req, reply) => {
@@ -363,6 +363,10 @@ export function healthRoutes(app: FastifyInstance): void {
           abandoned: backlog.abandoned,
           oldestPendingAgeSeconds: backlog.oldestPendingAgeSeconds,
           maxPendingAgeSeconds: env.READY_WEBHOOK_MAX_AGE_MS / 1000,
+          // Per-endpoint breakers (#265). A tripped breaker is reported, not
+          // degraded: the outbox is still holding those deliveries, and a
+          // clinic outage must not pull a working API out of rotation.
+          breakers: webhookCircuitSnapshot(),
         };
         if (webhookState === 'backlog') healthy = false;
       } catch (err) {

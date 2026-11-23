@@ -180,7 +180,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events, the webhook outbox backlog and per-endpoint circuit breakers.",
         "responses": {
           "200": {
             "description": "Every readiness check passed; safe to route traffic here. The body is the same in both statuses, so an operator can read the diagnosis from a `503` without a second request.",
@@ -4529,7 +4529,7 @@
         "tags": [
           "health"
         ],
-        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events and the webhook outbox backlog.",
+        "description": "Reports indexer lag, RPC retention gaps, database connectivity, failed events, the webhook outbox backlog and per-endpoint circuit breakers.",
         "responses": {
           "200": {
             "description": "Every readiness check passed; safe to route traffic here. The body is the same in both statuses, so an operator can read the diagnosis from a `503` without a second request.",
