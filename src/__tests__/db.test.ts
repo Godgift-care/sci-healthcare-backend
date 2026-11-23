@@ -29,7 +29,7 @@ describe('waitForDatabase', () => {
     };
 
     await expect(waitForDatabase(client, 150, async () => {})).rejects.toThrow(
-      'Database did not become reachable within 150ms: database refused connection',
+      'Database did not become reachable within 150ms',
     );
   });
 });

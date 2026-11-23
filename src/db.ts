@@ -178,14 +178,12 @@ export async function waitForDatabase(
 ): Promise<void> {
   const startedAt = Date.now();
   let delayMs = 1000;
-  let lastError: unknown;
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
       await connector.$connect();
       return;
-    } catch (err) {
-      lastError = err;
+    } catch {
       const remainingMs = timeoutMs - (Date.now() - startedAt);
       if (remainingMs <= 0) break;
       const waitMs = Math.min(delayMs, remainingMs);
@@ -194,11 +192,5 @@ export async function waitForDatabase(
     }
   }
 
-  const detail =
-    lastError instanceof Error
-      ? lastError.message
-      : typeof lastError === 'string'
-        ? lastError
-        : 'unknown error';
-  throw new Error(`Database did not become reachable within ${timeoutMs}ms: ${detail}`);
+  throw new Error(`Database did not become reachable within ${timeoutMs}ms`);
 }
