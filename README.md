@@ -62,6 +62,12 @@ region, with every contract id already set. The only value you add by hand is
 
 The indexer polls on an interval, applies each event to the read model, and only then advances its cursor — so a crash mid-batch replays rather than skips. Handlers are idempotent upserts keyed by on-chain id, which makes replay safe.
 
+At boot, API, worker and maintenance entry points wait for the first database
+connection for up to `DATABASE_CONNECT_TIMEOUT_MS` (default `60000`) using
+bounded exponential backoff. Render migrations use the same wait before
+`prisma migrate deploy`, so brief managed-database restarts do not become tight
+restart loops.
+
 The cursor is guarded by a lease (stored on `IndexerState`). However many indexer processes are running, exactly one holds the lease and advances the cursor; the others log that they are standing by and retry. Events are idempotent, but the cursor is not — two writers can skip events by advancing it from a stale read — which is the race the lease exists to prevent.
 
 When the RPC fails, the indexer backs off exponentially (with jitter, up to `INDEXER_BACKOFF_MAX_MS`) instead of retrying every poll interval, and reports the failure once per streak rather than once per attempt — retrying at full speed adds load exactly where it hurts and buries every other log line. Configure more than one endpoint in `SOROBAN_RPC_URLS` and repeated failures move reads to the next one; the active endpoint is logged on each switch and reported as `checks.rpcUrl` on `/ready`.
