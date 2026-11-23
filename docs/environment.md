@@ -35,8 +35,11 @@ Every variable the service reads. The Zod schema in `src/env.ts` is the source o
 | `SHUTDOWN_TIMEOUT_MS` | No | `15000` | `15000` | How long SIGTERM/SIGINT waits for the indexer cycle in flight before the process hard-exits |
 | `SSE_HEARTBEAT_MS` | No | `15000` | `15000` | Idle interval between `: heartbeat` comments on `GET /stream` |
 | `SSE_MAX_CONNECTIONS` | No | `64` | `64` | Concurrent `GET /stream` connections one process will hold; past that the route answers `503 stream_full` |
-| `WEBHOOK_URLS` | No |  | `https://clinic.example/hooks` | Comma-separated endpoints sent a signed notification for each voucher event; blank (the default) disables webhooks |
-| `WEBHOOK_SECRET` | No |  | `a-long-random-string` | HMAC-SHA256 key for the `X-SCI-Signature` header; blank by default, required (min 16 characters) when `WEBHOOK_URLS` is set |
+| `WEBHOOK_URLS` | No |  | `https://clinic.example/hooks` | Comma-separated endpoints sent a signed notification for each voucher event; blank (the default) disables webhooks. Ignored when `WEBHOOK_ENDPOINTS` is set |
+| `WEBHOOK_ENDPOINTS` | No |  | `[{"url":"https://clinic.example/hooks","secret":"a-long-random-string","events":["voucher_settled"],"provider":"G..."}]` | JSON array of per-endpoint objects (`url`, optional `secret`, `events`, `provider`); replaces `WEBHOOK_URLS` when set, and invalid JSON fails at startup |
+| `WEBHOOK_SECRET` | No |  | `a-long-random-string` | HMAC-SHA256 key for the `X-SCI-Signature` header; blank by default, required (min 16 characters) when an endpoint is set. Single-key form of `WEBHOOK_SECRETS` |
+| `WEBHOOK_SECRETS` | No |  | `new-key,old-key` | Comma-separated HMAC-SHA256 keys, newest first; every key signs each delivery so receivers can rotate without a synchronised cutover |
+| `WEBHOOK_ALLOW_PRIVATE` | No | `false` | `true` | Allow webhook and provider-metadata destinations in loopback/private/link-local/unique-local ranges; local development only |
 
 Set `INDEXER_START_LEDGER` to the deployment ledger. Leaving it at `0` starts at the current tip and silently skips all prior history. Soroban RPC also only retains a rolling window of ledgers (about 7 days on testnet) — an indexer that falls further behind than the window cannot catch up, and `/ready` will say so rather than pretend otherwise.
 

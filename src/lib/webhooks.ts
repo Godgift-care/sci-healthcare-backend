@@ -4,8 +4,15 @@ import type { Prisma } from '@prisma/client';
 import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
-import { env, WEBHOOK_URLS, WEBHOOKS_ENABLED } from '../env.js';
+import {
+  env,
+  WEBHOOK_ALLOW_PRIVATE,
+  WEBHOOK_ENDPOINTS,
+  WEBHOOK_SECRETS,
+  type WebhookEndpoint,
+} from '../env.js';
 import { webhookDeliveriesAbandoned, webhookDeliveriesPending } from './metrics.js';
+import { assertSafeDestination, UnsafeDestinationError, type ResolveHost } from './url-safety.js';
 
 /**
  * Signed webhook notifications for voucher events.
@@ -19,8 +26,25 @@ import { webhookDeliveriesAbandoned, webhookDeliveriesPending } from './metrics.
  * a clinic with a slow or unreachable endpoint must never stall the cursor.
  */
 
-/** Header carrying the hex HMAC-SHA256 of the raw request body. */
+/**
+ * Header carrying the HMAC-SHA256 of the raw request body.
+ *
+ * With `WEBHOOK_SECRETS` set, one hex digest per key is sent, comma-separated
+ * in the configured (newest first) order. A receiver accepts the delivery if
+ * any digest matches its own key, so rotation needs no synchronised cutover
+ * (#262). With one key the header value is exactly the single hex digest.
+ */
 export const WEBHOOK_SIGNATURE_HEADER = 'x-sci-signature';
+
+/**
+ * Stable id of one delivery target (`WebhookDelivery.id`). It is created once
+ * per event and endpoint and never changes across retries, so a receiver can
+ * store it and ignore a second POST with the same value (#261).
+ */
+export const WEBHOOK_DELIVERY_ID_HEADER = 'x-sci-delivery';
+
+/** 1-based number of this attempt, sent as `x-sci-attempt` (#261). */
+export const WEBHOOK_ATTEMPT_HEADER = 'x-sci-attempt';
 
 /** Give up after this many failed attempts. */
 export const WEBHOOK_MAX_ATTEMPTS = 6;
@@ -46,6 +70,12 @@ export type VoucherWebhookEvent = {
   status: string;
   txHash?: string | null;
   ledger: number;
+  /**
+   * Clinic the voucher belongs to, used only to decide which endpoints are
+   * told about the event. It is deliberately not part of the payload: the
+   * wire format stays the one documented in `docs/webhooks.md`.
+   */
+  provider?: string | null;
 };
 
 /** The exact object that is serialised, signed and posted. */
@@ -66,6 +96,31 @@ export function signWebhook(body: string, secret: string): string {
 }
 
 /**
+ * The `x-sci-signature` value for `body`: one digest per key, in order.
+ *
+ * A receiver compares the digest made with its own key against any entry in
+ * the list, so during a rotation both the old and the new receiver accept the
+ * same delivery (#262).
+ */
+export function webhookSignatureHeader(body: string, secrets: readonly string[]): string {
+  return secrets.map((secret) => signWebhook(body, secret)).join(', ');
+}
+
+/**
+ * Whether one endpoint asked for this event.
+ *
+ * `events` and `provider` are both optional filters: null means "everything".
+ */
+export function endpointWantsEvent(
+  endpoint: Pick<WebhookEndpoint, 'events' | 'provider'>,
+  event: Pick<VoucherWebhookEvent, 'event' | 'provider'>,
+): boolean {
+  if (endpoint.events !== null && !endpoint.events.includes(event.event)) return false;
+  if (endpoint.provider !== null && endpoint.provider !== (event.provider ?? null)) return false;
+  return true;
+}
+
+/**
  * Queues one delivery per configured endpoint, inside `tx`.
  *
  * Running inside the caller's transaction is the whole point: if the
@@ -76,13 +131,17 @@ export function signWebhook(body: string, secret: string): string {
 export async function enqueueWebhook(
   tx: Prisma.TransactionClient,
   event: VoucherWebhookEvent,
+  endpoints: readonly WebhookEndpoint[] = WEBHOOK_ENDPOINTS,
 ): Promise<void> {
-  if (!WEBHOOKS_ENABLED) return;
+  // A filtered-out event produces no row at all: an endpoint that asked for
+  // one clinic's `voucher_settled` does not get a row it will never be sent.
+  const targets = endpoints.filter((endpoint) => endpointWantsEvent(endpoint, event));
+  if (targets.length === 0) return;
   const payload = JSON.stringify(webhookPayload(event));
   await tx.webhookDelivery.createMany({
-    data: WEBHOOK_URLS.map((url) => ({
+    data: targets.map((endpoint) => ({
       id: randomUUID(),
-      url,
+      url: endpoint.url,
       event: event.event,
       voucherId: event.voucherId,
       status: event.status,
@@ -169,9 +228,13 @@ type OutboxRow = {
 };
 
 export type WebhookDispatcherOptions = {
-  /** Overridable for tests; defaults to the configured `WEBHOOK_URLS`. */
+  /** Overridable for tests; defaults to the configured endpoints. */
+  endpoints?: readonly WebhookEndpoint[];
+  /** URL-only shorthand for the simple case; overridden by `endpoints`. */
   urls?: readonly string[];
-  /** Overridable for tests; defaults to `WEBHOOK_SECRET`. */
+  /** Overridable for tests; defaults to every configured key, newest first. */
+  secrets?: readonly string[];
+  /** Single-key shorthand, kept for existing callers and tests. */
   secret?: string;
   /** Overridable for tests; defaults to the global `fetch`. */
   fetchImpl?: typeof fetch;
@@ -181,6 +244,10 @@ export type WebhookDispatcherOptions = {
   maxBackoffMs?: number;
   batchSize?: number;
   now?: () => Date;
+  /** Allow loopback/private destinations; defaults to WEBHOOK_ALLOW_PRIVATE. */
+  allowPrivate?: boolean;
+  /** Resolver seam for tests. */
+  resolveHost?: ResolveHost;
 };
 
 /**
@@ -196,8 +263,8 @@ export class WebhookDispatcher {
   private delivering = false;
   private refreshingBacklog = false;
 
-  private readonly urls: readonly string[];
-  private readonly secret: string;
+  private readonly endpoints: readonly WebhookEndpoint[];
+  private readonly secrets: readonly string[];
   private readonly fetchImpl: typeof fetch;
   private readonly intervalMs: number;
   private readonly maxAttempts: number;
@@ -205,13 +272,33 @@ export class WebhookDispatcher {
   private readonly maxBackoffMs: number;
   private readonly batchSize: number;
   private readonly now: () => Date;
+  private readonly allowPrivate: boolean;
+  private readonly resolveHost: ResolveHost | undefined;
 
   constructor(
     private readonly log: FastifyBaseLogger,
     opts: WebhookDispatcherOptions = {},
   ) {
-    this.urls = opts.urls ?? WEBHOOK_URLS;
-    this.secret = opts.secret ?? env.WEBHOOK_SECRET;
+    const override = opts.secrets ?? (opts.secret !== undefined ? [opts.secret] : null);
+    this.secrets = override ?? WEBHOOK_SECRETS;
+
+    if (opts.endpoints !== undefined) {
+      this.endpoints = opts.endpoints;
+    } else {
+      const urls = opts.urls ?? WEBHOOK_ENDPOINTS.map((endpoint) => endpoint.url);
+      this.endpoints = urls.map((url) => {
+        const configured = WEBHOOK_ENDPOINTS.find((endpoint) => endpoint.url === url);
+        // An explicit `secrets`/`secret` option replaces the environment's
+        // global keys (tests rely on this); configured filters are kept.
+        if (configured !== undefined && override === null) return configured;
+        return {
+          url,
+          secrets: this.secrets,
+          events: configured?.events ?? null,
+          provider: configured?.provider ?? null,
+        };
+      });
+    }
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.intervalMs = opts.intervalMs ?? WEBHOOK_DELIVERY_INTERVAL_MS;
     this.maxAttempts = opts.maxAttempts ?? WEBHOOK_MAX_ATTEMPTS;
@@ -219,10 +306,22 @@ export class WebhookDispatcher {
     this.maxBackoffMs = opts.maxBackoffMs ?? WEBHOOK_MAX_BACKOFF_MS;
     this.batchSize = opts.batchSize ?? 50;
     this.now = opts.now ?? (() => new Date());
+    this.allowPrivate = opts.allowPrivate ?? WEBHOOK_ALLOW_PRIVATE;
+    this.resolveHost = opts.resolveHost;
   }
 
   get enabled(): boolean {
-    return this.urls.length > 0 && this.secret.length > 0;
+    return this.endpoints.length > 0 && this.secrets.length > 0;
+  }
+
+  /**
+   * Keys for one row: its endpoint's own key(s) when configured, otherwise
+   * the global list. A row whose URL is no longer configured still gets a
+   * signature rather than an unsigned request.
+   */
+  private secretsFor(url: string): readonly string[] {
+    const endpoint = this.endpoints.find((candidate) => candidate.url === url);
+    return endpoint !== undefined && endpoint.secrets.length > 0 ? endpoint.secrets : this.secrets;
   }
 
   start(): void {
@@ -230,7 +329,7 @@ export class WebhookDispatcher {
       this.log.info('webhooks disabled; no endpoints configured');
       return;
     }
-    this.log.info({ endpoints: this.urls.length }, 'webhook delivery started');
+    this.log.info({ endpoints: this.endpoints.length }, 'webhook delivery started');
     this.schedule();
   }
 
@@ -311,12 +410,25 @@ export class WebhookDispatcher {
     let error: string | null = null;
     let retryable = true;
 
+    // Check the destination first: an endpoint that resolves to a private or
+    // loopback address is a misconfiguration, not a transient failure, so it
+    // is abandoned instead of retried forever (#264).
+    const blocked = await this.destinationError(row.url);
+
     try {
+      if (blocked !== null) {
+        error = blocked.message;
+        retryable = !blocked.permanent;
+        throw new Error(error);
+      }
+
       const res = await this.fetchImpl(row.url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          [WEBHOOK_SIGNATURE_HEADER]: signWebhook(row.payload, this.secret),
+          [WEBHOOK_SIGNATURE_HEADER]: webhookSignatureHeader(row.payload, this.secretsFor(row.url)),
+          [WEBHOOK_DELIVERY_ID_HEADER]: row.id,
+          [WEBHOOK_ATTEMPT_HEADER]: String(attempts),
         },
         body: row.payload,
       });
@@ -337,8 +449,12 @@ export class WebhookDispatcher {
       // 4xx other than 408/429 will not get better by retrying.
       retryable = res.status >= 500 || res.status === 408 || res.status === 429;
     } catch (err) {
-      error = (err as Error).message;
-      retryable = true;
+      // The blocked path threw to reach this update, but its message is
+      // already set and must not be replaced by the generic fetch failure.
+      if (error === null) {
+        error = (err as Error).message;
+        retryable = true;
+      }
     }
 
     const abandoned = !retryable || attempts >= this.maxAttempts;
@@ -362,5 +478,25 @@ export class WebhookDispatcher {
       'webhook delivery failed',
     );
     return false;
+  }
+
+  /** Why `url` must not be dialled, or null when it is safe. */
+  private async destinationError(
+    url: string,
+  ): Promise<{ message: string; permanent: boolean } | null> {
+    try {
+      await assertSafeDestination(url, {
+        allowPrivate: this.allowPrivate,
+        ...(this.resolveHost ? { resolve: this.resolveHost } : {}),
+      });
+      return null;
+    } catch (err) {
+      return {
+        message: (err as Error).message,
+        // Only a resolved private address is permanent; a DNS failure may be
+        // transient (and is retried by the normal backoff).
+        permanent: err instanceof UnsafeDestinationError,
+      };
+    }
   }
 }

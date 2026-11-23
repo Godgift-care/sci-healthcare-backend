@@ -2,10 +2,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  WEBHOOK_ATTEMPT_HEADER,
   WEBHOOK_BASE_BACKOFF_MS,
+  WEBHOOK_DELIVERY_ID_HEADER,
   WEBHOOK_DELIVERY_INTERVAL_MS,
   WEBHOOK_MAX_ATTEMPTS,
   WEBHOOK_MAX_BACKOFF_MS,
+  WEBHOOK_SIGNATURE_HEADER,
   backoffMs,
 } from '../lib/webhooks.js';
 
@@ -74,5 +77,44 @@ describe('README webhook delivery docs', () => {
     expect(section).toContain('At-least-once');
     expect(section).toContain('No cross-event ordering');
     expect(section).toContain('Independent endpoints');
+  });
+
+  it('documents the header names the dispatcher actually sends (#261)', () => {
+    for (const header of [
+      WEBHOOK_SIGNATURE_HEADER,
+      WEBHOOK_DELIVERY_ID_HEADER,
+      WEBHOOK_ATTEMPT_HEADER,
+    ]) {
+      expect(section.toLowerCase()).toContain(header);
+    }
+  });
+
+  it('documents deduplication on the stable delivery id, not the body (#261)', () => {
+    expect(section).toContain('Deduplicate on the `X-SCI-Delivery` header');
+    expect(section).toContain('same value on\nevery attempt');
+    expect(section).toContain('X-SCI-Attempt` counts up');
+    expect(section).toContain('seen.has(deliveryId)');
+  });
+
+  it('documents secret rotation with one signature per key (#262)', () => {
+    expect(section).toContain('`WEBHOOK_SECRETS`');
+    expect(section).toContain('newest first');
+    expect(section).toContain('one digest per key');
+    expect(section).toContain('`WEBHOOK_SECRET` on its own still works');
+  });
+
+  it('documents the per-endpoint filters and the replacement rule (#263)', () => {
+    expect(section).toContain('`WEBHOOK_ENDPOINTS`');
+    expect(section).toContain('replaces `WEBHOOK_URLS`');
+    expect(section).toContain('`events`');
+    expect(section).toContain('`provider`');
+    expect(section).toContain('fails at startup');
+  });
+
+  it('documents the private-destination guard and its opt-in (#264)', () => {
+    expect(section).toContain('169.254.169.254');
+    expect(section).toContain('`fc00::/7`');
+    expect(section).toContain('every\nredirect hop');
+    expect(section).toContain('`WEBHOOK_ALLOW_PRIVATE=true`');
   });
 });

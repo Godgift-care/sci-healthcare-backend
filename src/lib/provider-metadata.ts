@@ -25,6 +25,8 @@ import { z } from 'zod';
 import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
+import { WEBHOOK_ALLOW_PRIVATE } from '../env.js';
+import { assertSafeDestination, UnsafeDestinationError, type ResolveHost } from './url-safety.js';
 
 /** Hard ceiling on a metadata fetch: socket, DNS and body read together. */
 export const METADATA_FETCH_TIMEOUT_MS = 5_000;
@@ -45,6 +47,9 @@ export const METADATA_URI_MAX_LENGTH = 512;
 
 /** Largest number of stale documents refreshed in one pass. */
 export const METADATA_BATCH_SIZE = 50;
+
+/** Redirects followed for one document; each hop is checked again. */
+export const METADATA_MAX_REDIRECTS = 5;
 
 /** Latitude/longitude as JSON numbers, bounded to the valid ranges. */
 const geoSchema = z.object({
@@ -146,6 +151,10 @@ export type FetchOptions = {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   maxBytes?: number;
+  /** Allow loopback/private destinations; defaults to WEBHOOK_ALLOW_PRIVATE. */
+  allowPrivate?: boolean;
+  /** Resolver seam for tests. */
+  resolveHost?: ResolveHost;
 };
 
 /**
@@ -163,6 +172,7 @@ export async function fetchProviderMetadata(
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? METADATA_FETCH_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? METADATA_MAX_BYTES;
+  const allowPrivate = opts.allowPrivate ?? WEBHOOK_ALLOW_PRIVATE;
 
   let url: URL;
   try {
@@ -175,20 +185,54 @@ export async function fetchProviderMetadata(
   }
 
   let res: Response;
-  try {
-    res = await fetchImpl(uri, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (err) {
-    const cause = err as Error & { name?: string };
-    throw new Error(
-      cause.name === 'TimeoutError' || cause.name === 'AbortError'
-        ? `metadata fetch timed out after ${timeoutMs}ms`
-        : `metadata fetch failed: ${cause.message}`,
-    );
+  let current = url;
+  for (let redirects = 0; ; redirects += 1) {
+    // Redirects are followed by hand (`redirect: 'manual'`) so the next host
+    // is checked too: an https URL that redirects to 169.254.169.254 must
+    // not be fetched just because its first hop looked public (#264).
+    try {
+      await assertSafeDestination(current, {
+        allowPrivate,
+        ...(opts.resolveHost ? { resolve: opts.resolveHost } : {}),
+      });
+    } catch (err) {
+      if (err instanceof UnsafeDestinationError) {
+        throw new Error(`metadata fetch refused: ${err.message}`);
+      }
+      throw err;
+    }
+
+    try {
+      res = await fetchImpl(current.toString(), {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      const cause = err as Error & { name?: string };
+      throw new Error(
+        cause.name === 'TimeoutError' || cause.name === 'AbortError'
+          ? `metadata fetch timed out after ${timeoutMs}ms`
+          : `metadata fetch failed: ${cause.message}`,
+      );
+    }
+
+    if (!isRedirect(res.status)) break;
+
+    const location = res.headers.get('location');
+    if (!location)
+      throw new Error(`metadata redirect returned HTTP ${res.status} without a Location`);
+    if (redirects >= METADATA_MAX_REDIRECTS) {
+      throw new Error(`metadata fetch followed more than ${METADATA_MAX_REDIRECTS} redirects`);
+    }
+    let next: URL;
+    try {
+      next = new URL(location, current);
+    } catch {
+      throw new Error('metadata redirect Location is not a valid URL');
+    }
+    current = next;
   }
 
   if (!res.ok) throw new Error(`metadata fetch returned HTTP ${res.status}`);
@@ -219,14 +263,18 @@ export async function fetchProviderMetadata(
   }
 }
 
+/** 3xx statuses that carry a `Location` we are willing to follow. */
+function isRedirect(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
 /**
  * Reads the body one chunk at a time and refuses to buffer past `maxBytes`.
  *
  * `res.text()` would happily buffer a gigabyte before anybody counted it;
  * the counted read is what makes the cap real against a hostile or broken
  * server that never sends `content-length`.
- */
-async function readCappedBody(res: Response, maxBytes: number): Promise<string> {
+ */ async function readCappedBody(res: Response, maxBytes: number): Promise<string> {
   if (!res.body) return '';
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -263,6 +311,10 @@ export type RefreshOptions = {
   timeoutMs?: number;
   maxBytes?: number;
   refreshMs?: number;
+  /** Allow loopback/private destinations; defaults to WEBHOOK_ALLOW_PRIVATE. */
+  allowPrivate?: boolean;
+  /** Resolver seam for tests. */
+  resolveHost?: ResolveHost;
 };
 
 export type RefreshResult = {
@@ -311,6 +363,8 @@ export async function refreshDueProviderMetadata(opts: RefreshOptions): Promise<
         fetchImpl,
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
         ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+        ...(opts.allowPrivate !== undefined ? { allowPrivate: opts.allowPrivate } : {}),
+        ...(opts.resolveHost ? { resolveHost: opts.resolveHost } : {}),
       });
       await prisma.provider.update({
         where: { address: row.address },

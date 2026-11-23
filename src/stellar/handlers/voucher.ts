@@ -162,6 +162,7 @@ export async function onVoucherCreated(db: Db, e: DecodedEvent): Promise<Pending
     status: 'Funded',
     txHash: e.txHash,
     ledger: e.ledger,
+    provider: providerAddress,
   });
 
   return voucherSignal(e, 'Funded', topicProvider(e));
@@ -207,14 +208,25 @@ export async function handleVoucherStatus(
   ctx: VoucherHandlerContext,
 ): Promise<PendingSignal> {
   await onVoucherStatus(db, e.fields, status, extra, e.contractId, ctx);
+  const voucherId = asId(e.fields.voucher_id);
+  // Some events name the clinic in their topic and some do not, so fall back
+  // to the voucher's own provider before filtering endpoints (#263).
+  const voucher =
+    providerAddress === null
+      ? await db.voucher.findUnique({
+          where: { id: voucherId },
+          select: { providerAddress: true },
+        })
+      : null;
   // Queued in the same transaction, so nothing is announced that did not
   // land in the read model. Delivery happens on its own loop.
   await enqueueWebhook(db, {
     event: e.name,
-    voucherId: asId(e.fields.voucher_id),
+    voucherId,
     status,
     txHash: e.txHash,
     ledger: e.ledger,
+    provider: providerAddress ?? voucher?.providerAddress ?? null,
   });
   return voucherSignal(e, status, providerAddress);
 }

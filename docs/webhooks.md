@@ -27,7 +27,7 @@ sequenceDiagram
     IDX->>OUT: INSERT row (attempts = 0, nextAttemptAt = now, one row per endpoint)
     loop every WEBHOOK_DELIVERY_INTERVAL_MS (5 s)
         DSP->>OUT: SELECT rows with deliveredAt and abandonedAt null and nextAttemptAt <= now<br/>(ordered by nextAttemptAt, up to 50 per cycle)
-        DSP->>EP: POST payload + X-SCI-Signature header
+        DSP->>EP: POST payload + X-SCI-Signature, X-SCI-Delivery and X-SCI-Attempt
         alt 2xx
             EP-->>DSP: 204 No Content
             Note over OUT: deliveredAt set, lastError cleared, row retired
@@ -75,8 +75,9 @@ abandons the row on the spot: a 404 will not become a 204 by waiting.
 
 - **At-least-once.** A delivery that succeeds after the receiver processed
   it but before the row was marked (a timeout, a crash between the response
-  and the commit) is retried. Deduplicate on `(event, voucherId)`, or treat
-  a repeated notification as a no-op; handlers should be idempotent anyway.
+  and the commit) is retried. Deduplicate on the `X-SCI-Delivery` header
+  (stable across every retry of one delivery), or on `(event, voucherId)`;
+  handlers should be idempotent anyway.
 - **No cross-event ordering.** Rows are enqueued in ledger order, but a
   failing row backs off while newer rows keep flowing, so a receiver can see
   `voucher_settled` before the `voucher_claimed` retry that precedes it.
@@ -99,8 +100,15 @@ what the `SciWebhookBacklog` rule in `ops/alerts.yml` watches. Abandoned
 rows are never retried: those clinics missed those events, which is why the
 count is reported separately rather than folded into the log.
 
-Each request is `POST` with a JSON body and an `X-SCI-Signature` header holding
-the hex HMAC-SHA256 of the **raw request body** under `WEBHOOK_SECRET`:
+Each request is `POST` with a JSON body and these headers:
+
+| Header | Example | Meaning |
+| --- | --- | --- |
+| `X-SCI-Signature` | `9f2c…` | Hex HMAC-SHA256 of the **raw request body**. With `WEBHOOK_SECRETS`, one digest per key, comma-separated, newest first. |
+| `X-SCI-Delivery` | `0b6f1e0a-…` | The outbox row's id. Identical for every retry of this delivery and different for another endpoint or event. |
+| `X-SCI-Attempt` | `3` | 1-based attempt number; `1` on the first POST, `2` on the first retry, and so on. |
+
+The payload is:
 
 ```json
 {
@@ -114,23 +122,123 @@ the hex HMAC-SHA256 of the **raw request body** under `WEBHOOK_SECRET`:
 
 `txHash` is omitted when the RPC did not report one. The payload never contains
 a beneficiary reference, so a webhook receiver learns that *a* voucher moved,
-never who it was for.
+never who it was for. The clinic an endpoint is filtered to is likewise not
+in the body: filtering happens before the row is written, on the server.
+
+## Delivery headers and deduplication
+
+A retry reuses the same outbox row, so `X-SCI-Delivery` is the same value on
+every attempt of one delivery while `X-SCI-Attempt` counts up. Store the ids
+you have processed and answer `204` to a repeat without applying it again:
+
+```ts
+const seen = new Set<string>(); // backed by your database in production
+
+app.post('/webhooks/sci', (req, res) => {
+  const deliveryId = req.header('x-sci-delivery');
+  if (!deliveryId) return res.sendStatus(400);
+  if (seen.has(deliveryId)) return res.sendStatus(204); // already processed
+
+  // …verify the signature, then apply the event…
+  seen.add(deliveryId);
+  res.sendStatus(204);
+});
+```
+
+Use the id, not the body, as the deduplication key: two legitimate
+`voucher_settled` events for the same voucher at different ledgers have the
+same `(event, voucherId)` but different delivery ids. Conversely a retried
+POST has the same id even if `X-SCI-Attempt` has changed. Insert the id and
+the applied effect in one database transaction so a crash between applying
+and recording cannot process it twice.
+
+## Rotating the signing secret
+
+`WEBHOOK_SECRETS` takes a comma-separated list, **newest first**. Every key
+signs each delivery, so `X-SCI-Signature` carries one digest per key:
+
+```
+X-SCI-Signature: <hmac with newest key>, <hmac with previous key>
+```
+
+A receiver accepts the delivery if any digest matches its configured key, so
+rotation needs no synchronised cutover:
+
+1. Add a new key at the front: `WEBHOOK_SECRETS=<new>,<old>`.
+2. Give receivers the new key and let them switch at their own pace. Both
+   keys verify the same delivery during this window.
+3. Once every receiver has the new key, remove the old one:
+   `WEBHOOK_SECRETS=<new>`.
+
+Keep a retired key for longer than the longest retry window (six attempts,
+under three minutes with default backoff) so an in-flight retry signed before
+the removal still verifies. `WEBHOOK_SECRET` on its own still works; when
+both are set, both are used and `WEBHOOK_SECRETS` keys come first.
+
+## Endpoints and filters
+
+`WEBHOOK_URLS` is the simple case: every URL is told about every voucher
+event and shares the global secret(s). `WEBHOOK_ENDPOINTS` is a JSON array
+that gives each partner its own secret and optional filters:
+
+```json
+[
+  {
+    "url": "https://clinic-a.example/hooks",
+    "secret": "a-long-random-string",
+    "events": ["voucher_created", "voucher_claimed", "voucher_settled"],
+    "provider": "GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK"
+  },
+  { "url": "https://analytics.example/hooks", "events": ["voucher_settled"] }
+]
+```
+
+- `secret` is optional; without it the endpoint uses `WEBHOOK_SECRETS` /
+  `WEBHOOK_SECRET`.
+- `events` limits the endpoint to those contract event names. Omit it for
+  all events.
+- `provider` limits the endpoint to one clinic's vouchers. Omit it for every
+  clinic.
+- `url` must be `http(s)` and unique within the list.
+
+When `WEBHOOK_ENDPOINTS` is set it replaces `WEBHOOK_URLS` (which is then
+ignored rather than merged, so a URL is never delivered twice). Malformed
+JSON, an unknown property, a bad URL or a missing secret fails at startup
+with the offending entry named; webhooks never start half-configured.
+Filters are applied when the outbox row is written, so a filtered-out event
+costs no row and no retry.
+
+## Private destinations
+
+The server refuses to POST to a host that resolves to a loopback, private,
+link-local (`169.254.0.0/16`, including `169.254.169.254`), unique-local
+(`fc00::/7`) or otherwise reserved address, and abandons that delivery
+instead of retrying: such an endpoint is a misconfiguration, not a slow
+receiver. The same check guards provider metadata URIs — including every
+redirect hop — because those URLs come from on-chain data. Set
+`WEBHOOK_ALLOW_PRIVATE=true` for local development only.
 
 Verify a delivery by recomputing the signature over the exact bytes received —
-do not parse and re-serialise the JSON first, as that can change the bytes:
+do not parse and re-serialise the JSON first, as that can change the bytes.
+With multiple keys, accept if **any** digest matches:
 
 ```ts
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 app.post('/webhooks/sci', (req, res) => {
-  const received = req.header('x-sci-signature') ?? '';
+  const received = (req.header('x-sci-signature') ?? '')
+    .split(',')
+    .map((digest) => digest.trim())
+    .filter(Boolean);
   const expected = createHmac('sha256', process.env.WEBHOOK_SECRET!)
     .update(req.rawBody) // the raw body buffer, not a re-encoded object
     .digest('hex');
 
-  const ok =
-    received.length === expected.length &&
-    timingSafeEqual(Buffer.from(received), Buffer.from(expected));
+  const ok = received.some(
+    (digest) =>
+      digest.length === expected.length &&
+      timingSafeEqual(Buffer.from(digest), Buffer.from(expected)),
+  );
   if (!ok) return res.sendStatus(401);
 
   // Only now trust the body.
