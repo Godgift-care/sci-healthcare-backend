@@ -705,7 +705,12 @@ export function providerRoutes(app: FastifyInstance): void {
     const displayNames = new Intl.DisplayNames([language], { type: 'region' });
     const minCell = env.STATS_MIN_CELL;
 
-    type CountryRow = { code: string; name: string; clinicCount: number | null; suppressed: boolean };
+    type CountryRow = {
+      code: string;
+      name: string;
+      clinicCount: number | null;
+      suppressed: boolean;
+    };
     const rows: CountryRow[] = grouped.map((g) => {
       const count = g._count._all;
       const isSuppressed = minCell > 0 && count > 0 && count < minCell;
