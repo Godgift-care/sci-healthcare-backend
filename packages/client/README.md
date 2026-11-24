@@ -94,11 +94,12 @@ header that `EventSource` cannot set from application code.
 
 Two things a caller must know:
 
-- **A gap is possible.** The backend frames no SSE `id:`, so `stream.lastEventId`
-  stays `null` and events that happened while disconnected are not replayed.
-  Treat the stream as a signal to re-read the JSON routes rather than as a
-  complete log; frames are only written after the transaction that produced
-  them commits, so those routes are never behind the last event delivered.
+- **Reconnects resume, up to a bound.** Each frame carries the on-chain event
+  id, resent as `Last-Event-ID` so the server replays what was missed (at most
+  500 events). If the cursor is too old to replay, `onReset` fires with the
+  reason and the handle clears it; refetch the JSON routes, which are never
+  behind the last event delivered because frames are only written after the
+  transaction that produced them commits.
 - **The feed is live in a combined process.** Where the indexer runs separately
   from the API, that API process has nothing to subscribe to and its streams
   only beat, so the heartbeat timeout reconnects on a loop. Set

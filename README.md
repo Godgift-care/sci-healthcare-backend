@@ -62,9 +62,19 @@ region, with every contract id already set. The only value you add by hand is
 
 The indexer polls on an interval, applies each event to the read model, and only then advances its cursor — so a crash mid-batch replays rather than skips. Handlers are idempotent upserts keyed by on-chain id, which makes replay safe.
 
+At boot, API, worker and maintenance entry points wait for the first database
+connection for up to `DATABASE_CONNECT_TIMEOUT_MS` (default `60000`) using
+bounded exponential backoff. Render migrations use the same wait before
+`prisma migrate deploy`, so brief managed-database restarts do not become tight
+restart loops.
+
 The cursor is guarded by a lease (stored on `IndexerState`). However many indexer processes are running, exactly one holds the lease and advances the cursor; the others log that they are standing by and retry. Events are idempotent, but the cursor is not — two writers can skip events by advancing it from a stale read — which is the race the lease exists to prevent.
 
 When the RPC fails, the indexer backs off exponentially (with jitter, up to `INDEXER_BACKOFF_MAX_MS`) instead of retrying every poll interval, and reports the failure once per streak rather than once per attempt — retrying at full speed adds load exactly where it hurts and buries every other log line. Configure more than one endpoint in `SOROBAN_RPC_URLS` and repeated failures move reads to the next one; the active endpoint is logged on each switch and reported as `checks.rpcUrl` on `/ready`.
+
+The event page size is configurable with `INDEXER_PAGE_SIZE` (default `200`,
+valid range `1–1000`). Lower it for RPC providers with smaller response caps,
+or raise it for faster catch-up where the provider supports larger pages.
 
 On `SIGTERM` (every Render deploy) or `SIGINT`, the indexer stops scheduling new cycles, waits for the cycle in flight to commit its transaction and save the cursor (bounded by `SHUTDOWN_TIMEOUT_MS`), then releases the lease so the replacement instance can take over immediately. The process then closes the HTTP server and the database connection, with a hard exit as a backstop. If the cycle overruns the timeout the lease is deliberately left to expire rather than freed, so a peer cannot race a cycle that may still be committing.
 
@@ -97,6 +107,9 @@ curl http://localhost:8080/ready    # 200 once the indexer catches up
 `INDEXER_START_LEDGER` is `0` in compose, which starts at the current ledger tip
 so `/ready` goes green in seconds. Set it to the deployment ledger to backfill
 history instead — but note Soroban RPC only retains a rolling window of ledgers.
+Use `INDEXER_ARCHIVE_RPC_URL` with `npm run indexer:backfill:dev -- --from ...`
+to replay ledgers older than the live RPC window. The archive endpoint is
+backfill-only: ordinary indexer and readiness polling still use the live RPC pool.
 
 The image runs as the unprivileged `node` user. Override any environment value
 (for example `CORS_ORIGIN` or the contract ids) by exporting it or adding a

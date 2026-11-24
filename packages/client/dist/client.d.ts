@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, ClinicServicesParams, ClinicServicesResponse, CountryStats, CsvVouchersParams, DailyStats, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, IndexerStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
+import type { ApiErrorEnvelope, ClinicServicesParams, ClinicServicesResponse, CountryStats, CsvVouchersParams, DailyStats, DailyStatsQuery, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, IndexerStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
 import { type StreamFilters, type StreamHandle, type StreamHandlers, type StreamOptions, type VoucherStreamEvent } from './stream.js';
 export declare class ApiError extends Error {
     readonly status: number;
@@ -37,7 +37,7 @@ export declare class Client {
     ready(): Promise<ReadyStatus>;
     indexer(): Promise<IndexerStatus>;
     stats(): Promise<Stats>;
-    dailyStats(days?: number): Promise<DailyStats>;
+    dailyStats(days?: number, options?: DailyStatsQuery): Promise<DailyStats>;
     providers(params?: ListProvidersParams): Promise<ProvidersResponse>;
     provider(address: string): Promise<Provider>;
     /**
@@ -72,9 +72,10 @@ export declare class Client {
      * `provider` is required, matching the route, and the returned `close()`
      * stops reconnecting for good.
      *
-     * The server frames no SSE `id:` today, so a drop loses whatever happened
-     * while disconnected; re-read the JSON routes after `onReconnect` to be
-     * certain of current state.
+     * Each frame carries the on-chain event id, resent as `Last-Event-ID` on a
+     * reconnect so the server replays what was missed. If that cursor is too old
+     * for the replay window, `onReset` fires and the JSON routes should be
+     * re-read.
      */
     stream(filters: StreamFilters, handlers?: StreamHandlers, options?: StreamOptions): StreamHandle;
     /**

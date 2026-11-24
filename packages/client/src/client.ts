@@ -5,6 +5,7 @@ import type {
   CountryStats,
   CsvVouchersParams,
   DailyStats,
+  DailyStatsQuery,
   DueVouchersParams,
   DueVouchersResponse,
   GovernanceResponse,
@@ -107,6 +108,24 @@ function trimTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
+/**
+ * The first page of a list asks for its count (#247).
+ *
+ * The client has always returned `total`, and making the aggregate query
+ * opt-in on the route would otherwise break every caller that reads it. A
+ * cursor page does not ask: the count is the size of the whole filtered set,
+ * unchanged by paging, and `total` stays absent there, as the response type
+ * says.
+ */
+function firstPageCount<T extends { cursor?: string; count?: boolean }>(
+  params: T | undefined,
+): (T & { count?: boolean }) | undefined {
+  if (params === undefined) return { count: true } as T & { count?: boolean };
+  const query = { ...params };
+  if (query.cursor === undefined && query.count === undefined) query.count = true;
+  return query;
+}
+
 export class Client {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -197,12 +216,15 @@ export class Client {
     return this.request<Stats>('/stats');
   }
 
-  async dailyStats(days = 30): Promise<DailyStats> {
-    return this.request<DailyStats>('/stats/daily', { days });
+  async dailyStats(days = 30, options: DailyStatsQuery = {}): Promise<DailyStats> {
+    return this.request<DailyStats>('/stats/daily', { days, ...options });
   }
 
   async providers(params?: ListProvidersParams): Promise<ProvidersResponse> {
-    return this.request<ProvidersResponse>('/providers', params as Record<string, unknown>);
+    return this.request<ProvidersResponse>(
+      '/providers',
+      firstPageCount(params) as Record<string, unknown>,
+    );
   }
 
   async provider(address: string): Promise<Provider> {
@@ -242,7 +264,7 @@ export class Client {
   }
 
   async services(): Promise<ServicesResponse> {
-    return this.request<ServicesResponse>('/services');
+    return this.request<ServicesResponse>('/services', { count: true });
   }
 
   async service(code: number): Promise<ServiceClinics> {
@@ -250,7 +272,10 @@ export class Client {
   }
 
   async vouchers(params?: ListVouchersParams): Promise<VouchersResponse> {
-    return this.request<VouchersResponse>('/vouchers', params as Record<string, unknown>);
+    return this.request<VouchersResponse>(
+      '/vouchers',
+      firstPageCount(params) as Record<string, unknown>,
+    );
   }
 
   async voucher(id: string): Promise<VoucherDetail> {
@@ -287,7 +312,10 @@ export class Client {
   }
 
   async receipts(params: ListReceiptsParams): Promise<ReceiptsResponse> {
-    return this.request<ReceiptsResponse>('/receipts', params as Record<string, unknown>);
+    return this.request<ReceiptsResponse>(
+      '/receipts',
+      firstPageCount(params) as Record<string, unknown>,
+    );
   }
 
   async receipt(voucherId: string): Promise<Receipt> {
@@ -307,9 +335,10 @@ export class Client {
    * `provider` is required, matching the route, and the returned `close()`
    * stops reconnecting for good.
    *
-   * The server frames no SSE `id:` today, so a drop loses whatever happened
-   * while disconnected; re-read the JSON routes after `onReconnect` to be
-   * certain of current state.
+   * Each frame carries the on-chain event id, resent as `Last-Event-ID` on a
+   * reconnect so the server replays what was missed. If that cursor is too old
+   * for the replay window, `onReset` fires and the JSON routes should be
+   * re-read.
    */
   stream(
     filters: StreamFilters,

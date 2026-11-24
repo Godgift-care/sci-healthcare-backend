@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,8 +12,11 @@ import { backfillDailyStats } from '../lib/daily-stats.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { webhookCircuit } from '../lib/webhooks.js';
+import { APP_VERSION } from '../lib/version.js';
 import { resetStatsCache } from '../routes/health.js';
 import { server } from '../stellar/client.js';
+
+import { expectHealthBody } from './health-body.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const SECOND_CLINIC = 'GDRHSGBLCHN4DNXQMIHWR3XJH4JM4ZNEIZGURNG42KSQVYULDW3PQH3I';
@@ -46,6 +50,15 @@ async function get(url: string) {
     headers: { 'x-forwarded-for': nextTestClientIp() },
   });
   return { status: res.statusCode, body: res.json() };
+}
+
+async function getWithHeaders(url: string) {
+  const res = await app.inject({
+    method: 'GET',
+    url,
+    headers: { 'x-forwarded-for': nextTestClientIp() },
+  });
+  return { status: res.statusCode, body: res.json(), headers: res.headers };
 }
 
 async function getCsv(url: string) {
@@ -408,7 +421,57 @@ describe('OpenAPI spec', () => {
 
 describe('GET /health and /stats', () => {
   it('reports liveness', async () => {
-    expect(await get('/health')).toEqual({ status: 200, body: { status: 'ok' } });
+    const { status, body } = await get('/health');
+    expect(status).toBe(200);
+    expectHealthBody(body);
+  });
+
+  it('reports the running build, commit and whole-second uptime (#223)', async () => {
+    const previous = {
+      render: process.env.RENDER_GIT_COMMIT,
+      git: process.env.GIT_COMMIT,
+    };
+    process.env.GIT_COMMIT = 'deadbeef';
+    delete process.env.RENDER_GIT_COMMIT;
+    try {
+      const { status, body } = await get('/v1/health');
+      expect(status).toBe(200);
+      expectHealthBody(body);
+      expect(body).toMatchObject({
+        version: APP_VERSION,
+        commit: 'deadbeef',
+        uptimeSeconds: expect.any(Number),
+      });
+      expect(Number.isInteger(body.uptimeSeconds)).toBe(true);
+    } finally {
+      if (previous.render === undefined) delete process.env.RENDER_GIT_COMMIT;
+      else process.env.RENDER_GIT_COMMIT = previous.render;
+      if (previous.git === undefined) delete process.env.GIT_COMMIT;
+      else process.env.GIT_COMMIT = previous.git;
+    }
+  });
+
+  it('never reads the database or RPC to answer a liveness probe (#223)', async () => {
+    const rpc = vi.spyOn(server, 'getLatestLedger').mockRejectedValue(new Error('rpc down'));
+    // The handler is deliberately a plain object, unlike /ready below. Read
+    // its source rather than spying on a Prisma delegate: restoring a spy on a
+    // generated delegate leaves later route tests with a broken `count`.
+    const source = readFileSync(new URL('../routes/health.ts', import.meta.url), 'utf8');
+    const handler = source.slice(
+      source.indexOf("app.get(\n    '/health'"),
+      source.indexOf("app.get(\n    '/version'"),
+    );
+    expect(handler).not.toContain('prisma');
+    expect(handler).not.toContain('server.');
+
+    try {
+      const { status, body } = await get('/health');
+      expect(status).toBe(200);
+      expectHealthBody(body);
+      expect(rpc).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('counts providers, vouchers and settled value', async () => {
@@ -755,6 +818,303 @@ describe('GET /stats/funnel', () => {
     const { status, body } = await get('/stats/funnel?country=ZZZ');
     expect(status).toBe(400);
     expect(body.error).toBe('bad_request');
+  });
+});
+
+describe('GET /stats/disputes (#245)', () => {
+  const resolvedAt = (hours: number) =>
+    new Date(Date.parse('2026-01-01T00:00:00Z') + hours * 3_600_000);
+
+  it('counts disputes, the rate against attestation, reasons, outcomes and median time', async () => {
+    await prisma.voucher.deleteMany();
+    await prisma.voucher.createMany({
+      data: [
+        // Resolved for the funder: status moved on, so only the reason column
+        // proves it was ever disputed. Attestation time is the resolution
+        // clock, not creation (which is 100 hours earlier).
+        {
+          id: 'dispute-funder',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '1000000',
+          status: 'Refunded',
+          createdAt: resolvedAt(-100),
+          expiresAt: resolvedAt(48),
+          attestedAt: resolvedAt(0),
+          disputeReason: 1,
+          disputeResolvedAt: resolvedAt(10),
+          disputeResolvedBy: ADMIN,
+          disputeOutcome: 'Funder',
+        },
+        // Resolved for the provider, 20 hours after attestation.
+        {
+          id: 'dispute-provider',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '1000000',
+          status: 'Settled',
+          createdAt: resolvedAt(-100),
+          expiresAt: resolvedAt(48),
+          attestedAt: resolvedAt(0),
+          disputeReason: 2,
+          disputeResolvedAt: resolvedAt(20),
+          disputeResolvedBy: ADMIN,
+          disputeOutcome: 'Provider',
+        },
+        // Still open: neither outcome, so it has to be counted as unresolved.
+        {
+          id: 'dispute-open',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '1000000',
+          status: 'Disputed',
+          createdAt: resolvedAt(-100),
+          expiresAt: resolvedAt(48),
+          attestedAt: resolvedAt(0),
+          disputeReason: 2,
+        },
+        // Attested, never disputed: denominator without a numerator.
+        {
+          id: 'attested-only',
+          funder: FUNDER,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '1000000',
+          status: 'Attested',
+          createdAt: resolvedAt(-100),
+          expiresAt: resolvedAt(48),
+          attestedAt: resolvedAt(0),
+        },
+      ],
+    });
+
+    const { status, body } = await get('/stats/disputes');
+    expect(status).toBe(200);
+    expect(body.count).toBe(3);
+    expect(body.attestedVouchers).toBe(4);
+    // A string, fixed to four places, so 3/4 is 0.7500 and never
+    // engine-dependent numeric formatting.
+    expect(body.rate).toBe('0.7500');
+    expect(body.byReason).toEqual({ '1': 1, '2': 2 });
+    expect(body.byOutcome).toEqual({ Funder: 1, Provider: 1, Unresolved: 1 });
+    // Median of the two resolved disputes: (10 + 20) / 2, measured from
+    // attestation rather than creation.
+    expect(body.medianResolutionHours).toBe(15);
+  });
+
+  it('rounds the rate half up at the last fixed digit', async () => {
+    await prisma.voucher.deleteMany();
+    await prisma.voucher.createMany({
+      data: ['r1', 'r2'].map((id) => ({
+        id,
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '1000000',
+        status: 'Disputed',
+        createdAt: resolvedAt(-1),
+        expiresAt: resolvedAt(48),
+        attestedAt: resolvedAt(0),
+        disputeReason: 3,
+      })),
+    });
+    // Two disputed of three attested: 0.6666... rounds to 0.6667.
+    await prisma.voucher.create({
+      data: {
+        id: 'r3',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '1000000',
+        status: 'Attested',
+        createdAt: resolvedAt(-1),
+        expiresAt: resolvedAt(48),
+        attestedAt: resolvedAt(0),
+      },
+    });
+
+    const { body } = await get('/stats/disputes');
+    expect(body.rate).toBe('0.6667');
+  });
+
+  it('reports zeros and a null median on an empty read model', async () => {
+    await prisma.voucher.deleteMany();
+
+    const { status, body } = await get('/stats/disputes');
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      count: 0,
+      attestedVouchers: 0,
+      rate: '0.0000',
+      byReason: {},
+      byOutcome: { Funder: 0, Provider: 0, Unresolved: 0 },
+      medianResolutionHours: null,
+    });
+  });
+});
+
+describe('GET /funders/:address (#246)', () => {
+  it('returns counts and exact value per status in one request', async () => {
+    const { status, body } = await get(`/funders/${FUNDER}`);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      address: FUNDER,
+      vouchers: 5,
+      totalValue: '150000000',
+      totalValueDisplay: '15.0000000',
+      byStatus: { Funded: 1, Claimed: 1, Attested: 1, Settled: 1, Disputed: 1, Refunded: 0 },
+      valueByStatus: {
+        Funded: '10000000',
+        Claimed: '50000000',
+        Attested: '30000000',
+        Settled: '30000000',
+        Disputed: '30000000',
+        Refunded: '0',
+      },
+    });
+  });
+
+  it('returns all zeros for a funder with no vouchers, not a 404', async () => {
+    const { status, body } = await get(`/funders/${SECOND_CLINIC}`);
+    expect(status).toBe(200);
+    expect(body.vouchers).toBe(0);
+    expect(body.totalValue).toBe('0');
+    expect(body.totalValueDisplay).toBe('0.0000000');
+    // Every status is present, so a dashboard renders the same table shape.
+    expect(Object.values(body.byStatus)).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(Object.values(body.valueByStatus)).toEqual(['0', '0', '0', '0', '0', '0']);
+  });
+
+  it('sums past 2^53 with BigInt, exactly', async () => {
+    await prisma.voucher.createMany({
+      data: [
+        {
+          id: 'funder-big-1',
+          funder: SECOND_CLINIC,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '9007199254740993',
+          status: 'Funded',
+          createdAt: new Date(),
+          expiresAt: new Date(Date.now() + DAY),
+        },
+        {
+          id: 'funder-big-2',
+          funder: SECOND_CLINIC,
+          beneficiaryRef: REF,
+          providerAddress: CLINIC,
+          serviceCode: 101,
+          amount: '9007199254740995',
+          status: 'Funded',
+          createdAt: new Date(),
+          expiresAt: new Date(Date.now() + DAY),
+        },
+      ],
+    });
+
+    const { body } = await get(`/funders/${SECOND_CLINIC}`);
+    expect(body.totalValue).toBe('18014398509481988');
+    expect(body.byStatus.Funded).toBe(2);
+    expect(body.valueByStatus.Funded).toBe('18014398509481988');
+  });
+
+  it('rejects an address that is not a valid Stellar account', async () => {
+    const { status, body } = await get('/funders/not-an-address');
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+});
+
+describe('?count and pagination links (#247, #248)', () => {
+  it('omits total from every list route unless count=true', async () => {
+    const plain = await get(`/vouchers?funder=${FUNDER}`);
+    expect(plain.body).not.toHaveProperty('total');
+
+    const falsey = await get(`/vouchers?funder=${FUNDER}&count=false`);
+    expect(falsey.body).not.toHaveProperty('total');
+
+    expect((await get('/providers')).body).not.toHaveProperty('total');
+    expect((await get(`/receipts?beneficiaryRef=${REF}`)).body).not.toHaveProperty('total');
+    expect((await get('/services')).body).not.toHaveProperty('total');
+
+    expect((await get(`/vouchers?funder=${FUNDER}&count=true`)).body.total).toBe(5);
+    expect((await get('/providers?count=true')).body.total).toBe(3);
+    expect((await get(`/receipts?beneficiaryRef=${REF}&count=true`)).body.total).toBe(2);
+    // Three catalogue entries: codes 101, 202 and 404.
+    expect((await get('/services?count=true')).body.total).toBe(3);
+  });
+
+  it('counts the whole filtered set, not the cursor page', async () => {
+    const page = await get(`/vouchers?funder=${FUNDER}&limit=2&count=true`);
+    expect(page.body.total).toBe(5);
+    expect(page.body.nextCursor).toBeTruthy();
+
+    const next = await get(
+      `/vouchers?funder=${FUNDER}&limit=2&count=true&cursor=${page.body.nextCursor}`,
+    );
+    expect(next.status).toBe(200);
+    expect(next.body.vouchers).toHaveLength(2);
+    expect(next.body.total).toBe(5);
+  });
+
+  it('rejects a count that is not true or false', async () => {
+    const { status, body } = await get('/vouchers?count=yes');
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+
+  it('sends an RFC 8288 next link that keeps every filter', async () => {
+    const { status, headers } = await getWithHeaders(
+      `/vouchers?funder=${FUNDER}&beneficiaryRef=${REF}&limit=1`,
+    );
+    expect(status).toBe(200);
+    const link = String(headers.link);
+    expect(link).toContain('rel="next"');
+
+    const target = /<([^>]+)>; rel="next"/.exec(link);
+    expect(target).not.toBeNull();
+    const next = new URL(target![1]!, 'http://localhost');
+    // The next link stays on the path the caller used, so following it does
+    // not silently move a legacy client onto another version.
+    expect(next.pathname).toBe('/vouchers');
+    expect(next.searchParams.get('funder')).toBe(FUNDER);
+    expect(next.searchParams.get('beneficiaryRef')).toBe(REF);
+    expect(next.searchParams.get('limit')).toBe('1');
+    expect(next.searchParams.get('cursor')).toBeTruthy();
+  });
+
+  it('omits the link on the last page', async () => {
+    const { headers } = await getWithHeaders(`/vouchers?funder=${FUNDER}&limit=100`);
+    // No next page, so no rel="next"; the legacy alias's successor link may
+    // still be present.
+    expect(String(headers.link ?? '')).not.toContain('rel="next"');
+  });
+
+  it('exposes Link to browser clients across origins', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/vouchers?funder=${FUNDER}&limit=1`,
+      headers: { origin: 'https://clinic.example', 'x-forwarded-for': nextTestClientIp() },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['access-control-expose-headers']).toContain('Link');
+  });
+
+  it('keeps rel=next beside the /v1 successor link on the legacy alias', async () => {
+    const { headers } = await getWithHeaders(`/vouchers?funder=${FUNDER}&limit=2`);
+    const link = String(headers.link);
+    expect(link).toContain('rel="next"');
+    expect(link).toContain('rel="successor-version"');
   });
 });
 
@@ -1169,7 +1529,7 @@ describe('GET /providers', () => {
   });
 
   it('filters by status and lists only active services', async () => {
-    const { body } = await get('/providers?status=Active');
+    const { body } = await get('/providers?status=Active&count=true');
     expect(body.total).toBe(2);
     expect(body.providers[0].name).toBe('Ikeja General Clinic');
     expect(body.providers[0].services.map((s: { code: number }) => s.code)).toEqual([101, 202]);
@@ -1210,7 +1570,7 @@ describe('GET /providers sorting and service filter (#237, #238)', () => {
     ]);
 
     // 303 is delisted at CLINIC, so it is not an offering there.
-    const paused = await get('/providers?serviceCode=303');
+    const paused = await get('/providers?serviceCode=303&count=true');
     expect(paused.body.total).toBe(0);
   });
 
@@ -1710,6 +2070,58 @@ describe('GET /stats/daily', () => {
     expect((await get('/stats/daily?days=366')).status).toBe(400);
     expect((await get('/stats/daily?days=week')).status).toBe(400);
   });
+
+  // #243 — a year-long chart needs 12 points, not 365.
+  it('aggregates into ISO weeks and months whose sums equal the daily ones', async () => {
+    const { body: daily } = await get('/stats/daily?days=90');
+    const { body: weekly } = await get('/stats/daily?days=90&granularity=week');
+    const { body: monthly } = await get('/stats/daily?days=90&granularity=month');
+
+    expect(weekly.granularity).toBe('week');
+    expect(weekly.series.length).toBeLessThan(daily.series.length);
+    for (const point of weekly.series as { date: string }[]) {
+      // Every label is a Monday in UTC (ISO 8601 weeks).
+      expect(new Date(`${point.date}T00:00:00Z`).getUTCDay()).toBe(1);
+    }
+    for (const key of ['funded', 'settled', 'refunded']) {
+      expect(sum(weekly, key)).toEqual(sum(daily, key));
+    }
+
+    expect(monthly.granularity).toBe('month');
+    for (const point of monthly.series as { date: string }[]) {
+      expect(point.date.endsWith('-01')).toBe(true);
+    }
+    for (const key of ['funded', 'settled', 'refunded']) {
+      expect(sum(monthly, key)).toEqual(sum(daily, key));
+    }
+  });
+
+  // #244 — gaps are filled by default; clients that want only activity can
+  // ask for the sparse form instead.
+  it('fill=false returns only periods with activity', async () => {
+    const { body: filled } = await get('/stats/daily?days=30');
+    const { body: sparse } = await get('/stats/daily?days=30&fill=false');
+
+    expect(filled.fill).toBe(true);
+    expect(sparse.fill).toBe(false);
+    expect(sparse.series.length).toBeGreaterThan(0);
+    expect(sparse.series.length).toBeLessThan(filled.series.length);
+    for (const point of sparse.series as {
+      funded: { count: number };
+      settled: { count: number };
+      refunded: { count: number };
+    }[]) {
+      expect(point.funded.count + point.settled.count + point.refunded.count).toBeGreaterThan(0);
+    }
+    for (const key of ['funded', 'settled', 'refunded']) {
+      expect(sum(sparse, key)).toEqual(sum(filled, key));
+    }
+  });
+
+  it('rejects an unknown granularity or fill value', async () => {
+    expect((await get('/stats/daily?granularity=quarter')).status).toBe(400);
+    expect((await get('/stats/daily?fill=maybe')).status).toBe(400);
+  });
 });
 
 describe('GET /vouchers', () => {
@@ -1725,7 +2137,7 @@ describe('GET /vouchers', () => {
   });
 
   it('lists by funder, newest first, with pagination metadata', async () => {
-    const { body } = await get(`/vouchers?funder=${FUNDER}&limit=2`);
+    const { body } = await get(`/vouchers?funder=${FUNDER}&limit=2&count=true`);
     expect(body.total).toBe(5);
     expect(body.limit).toBe(2);
     expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual(['5', '4']);
@@ -1776,7 +2188,7 @@ describe('GET /vouchers', () => {
     const from = encodeURIComponent(new Date(Date.now() - 6 * DAY).toISOString());
     const to = encodeURIComponent(new Date(Date.now() - 20 * DAY).toISOString());
 
-    const recent = await get(`/vouchers?createdFrom=${from}`);
+    const recent = await get(`/vouchers?createdFrom=${from}&count=true`);
     expect(recent.body.total).toBe(2);
     expect(recent.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['5', '4']);
 
@@ -1786,7 +2198,7 @@ describe('GET /vouchers', () => {
 
   it('compares amounts numerically, not as strings', async () => {
     // 10,000,000 sorts before 9,000,000 as a string but not numerically.
-    const { body } = await get('/vouchers?minAmount=9000000');
+    const { body } = await get('/vouchers?minAmount=9000000&count=true');
     expect(body.total).toBe(5);
     expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual(['5', '4', '1', '3', '2']);
 
@@ -1845,7 +2257,7 @@ describe('GET /vouchers sort', () => {
       },
     });
 
-    const { body } = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=asc`);
+    const { body } = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=asc&count=true`);
     expect(body.total).toBe(6);
     expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual([
       'cheap',
@@ -1868,7 +2280,9 @@ describe('GET /vouchers sort', () => {
   });
 
   it('paginates after sorting by amount', async () => {
-    const { body } = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=asc&limit=2&offset=1`);
+    const { body } = await get(
+      `/vouchers?funder=${FUNDER}&sort=amount&order=asc&limit=2&offset=1&count=true`,
+    );
     expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual(['1', '4']);
     expect(body.limit).toBe(2);
     expect(body.offset).toBe(1);
@@ -1895,7 +2309,7 @@ describe('GET /vouchers sort', () => {
     const row = await prisma.voucher.findUnique({ where: { id: 'huge' } });
     expect(row?.amountKey).toBe(huge);
 
-    const desc = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=desc&limit=2`);
+    const desc = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=desc&limit=2&count=true`);
     expect(desc.body.total).toBe(6);
     expect(desc.body.vouchers.map((v: { id: string }) => v.id)).toEqual(['huge', '3']);
 
@@ -1908,8 +2322,12 @@ describe('GET /vouchers sort', () => {
 
     // A bound wider than any i128 compares as a number would.
     const wide = '1' + '0'.repeat(40);
-    expect((await get(`/vouchers?funder=${FUNDER}&minAmount=${wide}`)).body.total).toBe(0);
-    expect((await get(`/vouchers?funder=${FUNDER}&maxAmount=${wide}`)).body.total).toBe(6);
+    expect((await get(`/vouchers?funder=${FUNDER}&minAmount=${wide}&count=true`)).body.total).toBe(
+      0,
+    );
+    expect((await get(`/vouchers?funder=${FUNDER}&maxAmount=${wide}&count=true`)).body.total).toBe(
+      6,
+    );
   });
 
   it('orders by the stored amount key, in the database (#96)', async () => {
@@ -1917,7 +2335,9 @@ describe('GET /vouchers sort', () => {
     // `amountKey` puts voucher 2 (the cheapest) first; an in-memory sort on
     // `amount` would not.
     await prisma.voucher.updateMany({ where: { id: '2' }, data: { amountKey: '9'.repeat(39) } });
-    const { body } = await get(`/vouchers?funder=${FUNDER}&sort=amount&order=desc&limit=1`);
+    const { body } = await get(
+      `/vouchers?funder=${FUNDER}&sort=amount&order=desc&limit=1&count=true`,
+    );
     expect(body.vouchers.map((v: { id: string }) => v.id)).toEqual(['2']);
     expect(body.total).toBe(5);
   });
@@ -2378,7 +2798,7 @@ describe('GET /attesters/:address/stats', () => {
 
 describe('GET /receipts', () => {
   it('returns care history and total spend for one beneficiary', async () => {
-    const { body } = await get(`/receipts?beneficiaryRef=${REF}`);
+    const { body } = await get(`/receipts?beneficiaryRef=${REF}&count=true`);
     expect(body.total).toBe(2);
     expect(body.totalSpend).toBe('40000000');
     expect(body.totalSpendDisplay).toBe('4.0000000');
@@ -2387,7 +2807,7 @@ describe('GET /receipts', () => {
   });
 
   it('returns nothing for a reference with no receipts', async () => {
-    const { body } = await get(`/receipts?beneficiaryRef=${OTHER_REF}`);
+    const { body } = await get(`/receipts?beneficiaryRef=${OTHER_REF}&count=true`);
     expect(body).toMatchObject({ total: 0, totalSpend: '0', receipts: [] });
   });
 
@@ -2397,7 +2817,7 @@ describe('GET /receipts', () => {
   });
 
   it('lists receipts by provider, omitting beneficiaryRef', async () => {
-    const { body } = await get(`/receipts?provider=${CLINIC}`);
+    const { body } = await get(`/receipts?provider=${CLINIC}&count=true`);
     expect(body.total).toBe(2);
     expect(body.totalSpend).toBe('40000000');
     expect(body.receipts.map((r: { voucherId: string }) => r.voucherId)).toEqual(['9', '1']);
@@ -2491,6 +2911,169 @@ describe('GET /receipts', () => {
       provider: { address: UNREGISTERED_CLINIC, name: null, country: null },
     });
   });
+
+  // #241 — a clinic reconciling a month needs that month, not every receipt
+  // with the right provider.
+  it('applies an inclusive from and exclusive to on settledAt', async () => {
+    const { body: all } = await get(`/receipts?beneficiaryRef=${REF}`);
+    const receipts = all.receipts as { voucherId: string; settledAt: string; amount: string }[];
+    const [older, newer] = [...receipts].sort(
+      (a, b) => Date.parse(a.settledAt) - Date.parse(b.settledAt),
+    );
+
+    // Both bounds are the receipt instants themselves: `from` includes the
+    // older one, `to` excludes the newer one.
+    const { body: ranged } = await get(
+      `/receipts?beneficiaryRef=${REF}&from=${older!.settledAt}&to=${newer!.settledAt}&count=true`,
+    );
+    expect(ranged.receipts.map((r: { voucherId: string }) => r.voucherId)).toEqual([
+      older!.voucherId,
+    ]);
+    // The totals describe the filtered set, not the whole history.
+    expect(ranged.total).toBe(1);
+    expect(ranged.totalSpend).toBe(older!.amount);
+
+    // One millisecond later the newer receipt is inside the window, which
+    // shows the end bound is exclusive rather than merely rounded.
+    const to = new Date(Date.parse(newer!.settledAt) + 1).toISOString();
+    const { body: both } = await get(
+      `/receipts?beneficiaryRef=${REF}&from=${older!.settledAt}&to=${to}&count=true`,
+    );
+    expect(both.receipts.map((r: { voucherId: string }) => r.voucherId)).toEqual([
+      newer!.voucherId,
+      older!.voucherId,
+    ]);
+  });
+
+  it('orders oldest first and pages in that order', async () => {
+    const { body: desc } = await get(`/receipts?beneficiaryRef=${REF}`);
+    const { body: asc } = await get(`/receipts?beneficiaryRef=${REF}&order=asc`);
+
+    const descIds = desc.receipts.map((r: { voucherId: string }) => r.voucherId);
+    const ascIds = asc.receipts.map((r: { voucherId: string }) => r.voucherId);
+    expect(ascIds).toEqual([...descIds].reverse());
+
+    const { body: page1 } = await get(`/receipts?beneficiaryRef=${REF}&order=asc&limit=1`);
+    expect(page1.receipts).toHaveLength(1);
+    const { body: page2 } = await get(
+      `/receipts?beneficiaryRef=${REF}&order=asc&limit=1&cursor=${page1.nextCursor}`,
+    );
+    expect(page2.receipts[0].voucherId).not.toBe(page1.receipts[0].voucherId);
+
+    // A cursor encodes the order that produced it; using the ascending one
+    // for a descending page would skip rows rather than fail.
+    const { status, body } = await get(
+      `/receipts?beneficiaryRef=${REF}&order=desc&limit=1&cursor=${page1.nextCursor}`,
+    );
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_cursor');
+  });
+
+  it('rejects invalid or reversed dates with 400', async () => {
+    expect((await get(`/receipts?beneficiaryRef=${REF}&from=not-a-date`)).status).toBe(400);
+    expect((await get(`/receipts?beneficiaryRef=${REF}&to=2026-13-01`)).status).toBe(400);
+
+    const { status, body } = await get(
+      `/receipts?beneficiaryRef=${REF}&from=${new Date().toISOString()}&to=${new Date(
+        Date.now() - DAY,
+      ).toISOString()}`,
+    );
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+});
+
+// #242 — an accountant wants the same filtered rows in a spreadsheet, without
+// the server ever holding the whole export.
+describe('GET /receipts.csv', () => {
+  it('streams the filtered receipts with no beneficiary column', async () => {
+    const { status, body, headers } = await getCsv(`/receipts.csv?beneficiaryRef=${REF}`);
+    expect(status).toBe(200);
+    expect(headers['content-type']).toContain('text/csv');
+    expect(headers['content-disposition']).toBe('attachment; filename="receipts.csv"');
+
+    const rows = parseCsv(body);
+    expect(rows[0]).toEqual([
+      'voucherId',
+      'providerAddress',
+      'providerName',
+      'providerCountry',
+      'serviceCode',
+      'serviceLabel',
+      'amount',
+      'amountDisplay',
+      'settledAt',
+    ]);
+    // Ascending by settledAt by default, so the older receipt comes first.
+    expect(rows.slice(1).map((r) => r[0])).toEqual(['1', '9']);
+    expect(rows[1]).toEqual([
+      '1',
+      CLINIC,
+      'Ikeja General Clinic',
+      'NG',
+      '101',
+      'Outpatient consult',
+      '30000000',
+      '3.0000000',
+      expect.any(String),
+    ]);
+    // The patient reference is deliberately absent from a file that leaves
+    // the service.
+    expect(rows[0]).not.toContain('beneficiaryRef');
+  });
+
+  it('requires exactly one of beneficiaryRef or provider', async () => {
+    expect((await getCsv('/receipts.csv')).status).toBe(400);
+    expect((await getCsv(`/receipts.csv?beneficiaryRef=${REF}&provider=${CLINIC}`)).status).toBe(
+      400,
+    );
+  });
+
+  it('takes the same half-open settledAt range as the list route', async () => {
+    const from = new Date(Date.now() - 4 * DAY).toISOString();
+    const { body } = await getCsv(`/receipts.csv?beneficiaryRef=${REF}&from=${from}`);
+    const rows = parseCsv(body);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]![0]).toBe('9');
+  });
+
+  it('neutralises cells a spreadsheet would evaluate as a formula', async () => {
+    await prisma.receipt.create({
+      data: {
+        voucherId: '=2+2',
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '10000000',
+        settledAt: new Date(Date.now() - 2 * DAY),
+      },
+    });
+
+    const { body } = await getCsv(`/receipts.csv?beneficiaryRef=${REF}`);
+    const rows = parseCsv(body);
+    expect(rows.some((r) => r[0] === "'=2+2")).toBe(true);
+  });
+
+  it('streams past a batch boundary without skipping or repeating rows', async () => {
+    // One more than the export's batch size, so the second round trip is
+    // exercised with the compound (settledAt, voucherId) boundary.
+    const settledAt = new Date(Date.now() - DAY);
+    await prisma.receipt.createMany({
+      data: Array.from({ length: 501 }, (_, index) => ({
+        voucherId: `bulk-${String(index).padStart(4, '0')}`,
+        beneficiaryRef: OTHER_REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '1000000',
+        settledAt,
+      })),
+    });
+
+    const { body } = await getCsv(`/receipts.csv?beneficiaryRef=${OTHER_REF}`);
+    const rows = parseCsv(body);
+    expect(rows).toHaveLength(502);
+    expect(new Set(rows.slice(1).map((r) => r[0])).size).toBe(501);
+  });
 });
 
 // #53: one call that answers "how much care has this reference had, where
@@ -2501,7 +3084,7 @@ describe('GET /receipts/summary', () => {
     // The expectations are derived from GET /receipts itself, the source of
     // truth the issue names ("Summary values match the receipts"), not from
     // re-running the aggregation in the test.
-    const { body: list } = await get(`/receipts?beneficiaryRef=${REF}`);
+    const { body: list } = await get(`/receipts?beneficiaryRef=${REF}&count=true`);
     expect(list.receipts).toHaveLength(2);
 
     const { status, body } = await get(`/receipts/summary?beneficiaryRef=${REF}`);
@@ -3154,7 +3737,7 @@ describe('GET /services filters and sorting (#239, #240)', () => {
     const upper = await get('/services?q=MALARIA');
     expect(upper.body.services.map((s: { code: number }) => s.code)).toEqual([202]);
 
-    const none = await get('/services?q=no-such-service');
+    const none = await get('/services?q=no-such-service&count=true');
     expect(none.body.total).toBe(0);
   });
 
@@ -3190,7 +3773,7 @@ describe('GET /services filters and sorting (#239, #240)', () => {
   it('filters by price range without losing the rest of the catalogue', async () => {
     // 202 costs 10,000,000–15,000,000, so a 16,000,000 budget covers it while
     // 101 (30,000,000–40,000,000) is out of range.
-    const { body } = await get('/services?minPrice=12000000&maxPrice=16000000');
+    const { body } = await get('/services?minPrice=12000000&maxPrice=16000000&count=true');
     expect(body.services.map((s: { code: number }) => s.code)).toEqual([202]);
     expect(body.total).toBe(1);
   });
@@ -3266,7 +3849,7 @@ describe('response hardening', () => {
   it('gzip-compresses responses above the threshold when asked', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: `/vouchers?funder=${FUNDER}`,
+      url: `/vouchers?funder=${FUNDER}&count=true`,
       headers: {
         'accept-encoding': 'gzip',
         'x-forwarded-for': nextTestClientIp(),

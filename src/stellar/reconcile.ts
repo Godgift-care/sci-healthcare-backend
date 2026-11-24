@@ -3,6 +3,7 @@ import { nativeToScVal, type xdr } from '@stellar/stellar-sdk';
 
 import { prisma } from '../db.js';
 import { env } from '../env.js';
+import { recordReconcileMismatches } from '../lib/metrics.js';
 import { ContractReadError, readContract } from './client.js';
 import { asAddress, asAmount, asHex, asNumber, voucherStatusName } from './events.js';
 
@@ -418,6 +419,7 @@ export async function reconcile({
   }
 
   result.openMismatches = await prisma.reconcileMismatch.count();
+  recordReconcileMismatches(result.openMismatches);
   return result;
 }
 

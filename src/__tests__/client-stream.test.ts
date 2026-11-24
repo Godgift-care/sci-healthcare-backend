@@ -260,6 +260,32 @@ describe('Client#stream', () => {
     await until(() => server.requests.length >= 2);
   });
 
+  it('clears the cursor when the server says reset', async () => {
+    const server = await startServer((_req, res) => {
+      const conn = openSse(res);
+      conn.write(`id: 41\ndata: ${SETTLED}\n\n`);
+      conn.write('event: reset\ndata: {"type":"reset","reason":"last_event_id_expired"}\n\n');
+      if (server.requests.length === 1) conn.end();
+    });
+
+    const client = createClient({ baseUrl: server.baseUrl });
+    const resets: string[] = [];
+    const handle = client.stream(
+      { voucher: '5001' },
+      { onReset: (reset) => resets.push(reset.reason) },
+      { minBackoffMs: 5, random: () => 1 },
+    );
+    handles.push(handle);
+
+    await until(() => resets.length === 1);
+    expect(resets).toEqual(['last_event_id_expired']);
+
+    // Re-sending the rejected id would only be reset again, so the reconnect
+    // starts from the live edge and the caller refetches the JSON routes.
+    await until(() => server.requests.length >= 2);
+    expect(server.requests[1]?.lastEventId).toBeNull();
+  });
+
   it('reports a malformed frame without losing the feed', async () => {
     const server = await startServer((_req, res) => {
       const conn = openSse(res);
@@ -453,6 +479,7 @@ describe('Client#stream against the real /stream route', () => {
       await until(() => opened);
       const published = publishVoucherSignals([
         {
+          id: 'client-stream-settled',
           type: 'voucher_settled',
           voucherId: '77001',
           providerAddress: CLINIC,
@@ -462,6 +489,7 @@ describe('Client#stream against the real /stream route', () => {
           at: '2026-11-19T00:00:00.000Z',
         },
         {
+          id: 'client-stream-claimed',
           type: 'voucher_claimed',
           voucherId: '77002',
           providerAddress: CLINIC,
@@ -480,6 +508,7 @@ describe('Client#stream against the real /stream route', () => {
       // frame carries no beneficiary reference for the client to leak.
       expect(events).toEqual([
         {
+          id: 'client-stream-settled',
           type: 'voucher_settled',
           voucherId: '77001',
           providerAddress: CLINIC,

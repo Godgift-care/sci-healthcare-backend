@@ -36,13 +36,17 @@
         "tags": [
           "health"
         ],
+        "description": "Reports that the process is up, which build and commit are serving, and how long this process has been running. It never reads the database or RPC, so it stays green while either dependency is down.",
         "responses": {
           "200": {
             "description": "The process is up. Never reads the database, so it stays green while a query would fail.",
             "content": {
               "application/json": {
                 "example": {
-                  "status": "ok"
+                  "status": "ok",
+                  "version": "0.2.0",
+                  "commit": "a1b2c3d",
+                  "uptimeSeconds": 3600
                 }
               }
             }
@@ -468,6 +472,173 @@
         }
       }
     },
+    "/v1/stats/disputes": {
+      "get": {
+        "summary": "Dispute counts, rate, breakdowns and median resolution time",
+        "tags": [
+          "health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Dispute counts, the rate against attested vouchers, breakdowns by the contract reason code and by outcome, and the median hours from attestation to resolution. `rate` is a fixed four-decimal string; `Unresolved` counts disputes with no outcome yet, and `medianResolutionHours` is `null` before anything resolves.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Vouchers that were ever disputed."
+                    },
+                    "attestedVouchers": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Vouchers that reached attestation, the denominator of the rate."
+                    },
+                    "rate": {
+                      "type": "string",
+                      "description": "Disputes divided by attested vouchers, fixed to 4 decimal places."
+                    },
+                    "byReason": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "description": "Disputed vouchers keyed by the contract reason code."
+                    },
+                    "byOutcome": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "description": "Resolved disputes keyed by Funder or Provider, plus unresolved disputes."
+                    },
+                    "medianResolutionHours": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Median hours from attestation (or creation when never attested) to dispute resolution; null when none resolved."
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "attestedVouchers",
+                    "rate",
+                    "byReason",
+                    "byOutcome",
+                    "medianResolutionHours"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "count": 206,
+                  "attestedVouchers": 1346,
+                  "rate": "0.1530",
+                  "byReason": {
+                    "1": 56,
+                    "2": 44,
+                    "3": 51,
+                    "4": 55
+                  },
+                  "byOutcome": {
+                    "Funder": 0,
+                    "Provider": 0,
+                    "Unresolved": 206
+                  },
+                  "medianResolutionHours": null
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "database_unavailable",
+                  "message": "Database is unavailable, retry in 5 seconds"
+                }
+              }
+            },
+            "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/stats/funnel": {
       "get": {
         "summary": "Voucher funnel counts and median stage times",
@@ -753,11 +924,13 @@
       "get": {
         "responses": {
           "200": {
-            "description": "One row per UTC day in the window, days with no activity included, so a chart does not have to fill gaps itself.",
+            "description": "Protocol activity bucketed by UTC day, ISO week (Monday start) or calendar month. Days with no activity are included and zeroed unless `fill=false`, so a chart does not have to fill gaps itself.",
             "content": {
               "application/json": {
                 "example": {
                   "days": 3,
+                  "granularity": "day",
+                  "fill": true,
                   "from": "2026-11-16T00:00:00.000Z",
                   "to": "2026-11-18T00:00:00.000Z",
                   "series": [
@@ -834,7 +1007,7 @@
                 }
               }
             },
-            "description": "`error: invalid_query` for a `days` value outside 1–365. Note the key: this route reports the failing parameters under `issues`, where every other route uses `details`."
+            "description": "`error: invalid_query` for a `days` value outside 1–365, a `granularity` other than `day`, `week` or `month`, or a `fill` other than `true` or `false`. Note the key: this route reports the failing parameters under `issues`, where every other route uses `details`."
           },
           "429": {
             "content": {
@@ -2563,6 +2736,195 @@
         }
       }
     },
+    "/v1/funders/{address}": {
+      "get": {
+        "summary": "A funder's voucher counts and value by status",
+        "tags": [
+          "vouchers"
+        ],
+        "description": "Every status is present, zero included. Amounts are exact base-unit decimal strings summed with BigInt, so the answer is identical on SQLite and Postgres. An address with no vouchers returns zeros.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A funder's voucher count and exact value in one request, broken down by status. Every status is present with zero when unused; amounts are base-unit i128 decimal strings summed with BigInt, so SQLite and Postgres answer identically. An address with no vouchers answers zeros, not 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "vouchers": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "totalValue": {
+                      "type": "string",
+                      "description": "Exact base-unit decimal string across every status."
+                    },
+                    "totalValueDisplay": {
+                      "type": "string"
+                    },
+                    "byStatus": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "valueByStatus": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "vouchers",
+                    "totalValue",
+                    "totalValueDisplay",
+                    "byStatus",
+                    "valueByStatus"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "address": "GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP",
+                  "vouchers": 12,
+                  "totalValue": "480000000",
+                  "totalValueDisplay": "48.0000000",
+                  "byStatus": {
+                    "Funded": 3,
+                    "Claimed": 1,
+                    "Attested": 2,
+                    "Settled": 4,
+                    "Disputed": 1,
+                    "Refunded": 1
+                  },
+                  "valueByStatus": {
+                    "Funded": "60000000",
+                    "Claimed": "20000000",
+                    "Attested": "40000000",
+                    "Settled": "300000000",
+                    "Disputed": "30000000",
+                    "Refunded": "30000000"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "code": "custom",
+                      "path": [
+                        "address"
+                      ],
+                      "message": "must be a valid Stellar account address"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` when the address is not a valid Stellar account: a checksum failure, or a string that is not 56 characters. `details` names the offending parameter."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 30
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "database_unavailable",
+                  "message": "Database is unavailable, retry in 5 seconds"
+                }
+              }
+            },
+            "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/vouchers": {
       "get": {
         "summary": "List vouchers, optionally embedding their receipt and clinic",
@@ -3253,7 +3615,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "Settled visits, newest first, for exactly one beneficiary reference or one clinic. `totalSpend` is the whole filtered set, not the page.",
+            "description": "Settled visits for exactly one beneficiary reference or one clinic, newest first by default. `from` is inclusive and `to` is exclusive on `settledAt`; `order=asc` walks the same history oldest-first. `totalSpend` is the whole filtered set, not the page.",
             "content": {
               "application/json": {
                 "example": {
@@ -3304,7 +3666,7 @@
                 }
               }
             },
-            "description": "`error: invalid_query` when neither or both of `beneficiaryRef` and `provider` are given, and `invalid_cursor` for a `cursor` this route did not issue. A `beneficiaryRef` that is not 64 hex characters is also a 400."
+            "description": "`error: invalid_query` when neither or both of `beneficiaryRef` and `provider` are given, when `from` or `to` is not a valid date, or when `from` is later than `to`; `invalid_cursor` for a `cursor` this route did not issue, including one issued for the other `order`. A `beneficiaryRef` that is not 64 hex characters is also a 400."
           },
           "429": {
             "content": {
@@ -3333,6 +3695,113 @@
                   "type": "integer"
                 },
                 "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "database_unavailable",
+                  "message": "Database is unavailable, retry in 5 seconds"
+                }
+              }
+            },
+            "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/receipts.csv": {
+      "get": {
+        "summary": "Stream a patient’s or clinic’s receipts as CSV",
+        "description": "The same filters as GET /receipts, without paging. `from` is inclusive and `to` is exclusive on `settledAt`; `order` is `asc` or `desc`.",
+        "responses": {
+          "200": {
+            "description": "The same receipts and filters as `GET /receipts`, as RFC 4180 CSV: one line per receipt, read in keyset batches so the whole export never has to fit in memory. `from` is inclusive and `to` is exclusive on `settledAt`; `order` is `asc` (default) or `desc`. There is no beneficiary-reference column: the file is meant to be forwarded.",
+            "content": {
+              "text/csv": {
+                "example": "voucherId,providerAddress,providerName,providerCountry,serviceCode,serviceLabel,amount,amountDisplay,settledAt\n9100000000002,GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU,Kumasi Community Clinic,GH,201,Routine bloodwork,24375000,2.4375000,2026-06-07T04:03:55.837Z\n"
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "code": "custom",
+                      "path": [
+                        "beneficiaryRef",
+                        "provider"
+                      ],
+                      "message": "Provide exactly one of: beneficiaryRef, provider"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` when neither or exactly both of `beneficiaryRef` and `provider` are given (the export refuses to be an unfiltered dump), when `from` or `to` is not a valid date, or when `from` is later than `to`."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List and export routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 30
               },
               "x-ratelimit-remaining": {
                 "description": "Requests left in the current window.",
@@ -4462,13 +4931,13 @@
         "tags": [
           "stream"
         ],
-        "description": "Streams voucher state transitions as the indexer commits them. Requires exactly one of `voucher` or `provider`. Each `data:` frame is one JSON object with `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at`; it never contains a beneficiary reference. Comment lines are heartbeats.",
+        "description": "Streams voucher state transitions as the indexer commits them. Requires exactly one of `voucher` or `provider`. Each frame carries the on-chain event id in an `id:` line; send it back as the `Last-Event-ID` header on reconnect to replay up to 500 later events in order before going live. If that cursor is too old to replay, the server sends one `event: reset` frame with `{\"type\":\"reset\",\"reason\":...}` and the client must refetch. Each `data:` frame is one JSON object with `id`, `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at`; it never contains a beneficiary reference. Comment lines are heartbeats.",
         "responses": {
           "200": {
-            "description": "A server-sent event stream: one `data:` frame per committed voucher state change matching the filter, comment lines as heartbeats. A frame is `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at` — the same facts the JSON routes expose for that transition, and never a beneficiary reference. There is no delivery guarantee and no replay: a client that reconnects catches up from the JSON routes. The example shows a first connect, one frame and a heartbeat.",
+            "description": "A server-sent event stream: one frame per committed voucher state change matching the filter, comment lines as heartbeats. A frame carries the on-chain event id in an `id:` line and a JSON object with `id`, `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at` — the same facts the JSON routes expose for that transition, and never a beneficiary reference. Send the last `id:` back as `Last-Event-ID` to replay up to 500 later events in order before going live; if the cursor is too old, one `event: reset` frame says to refetch. The example shows a first connect, one frame and a heartbeat.",
             "content": {
               "text/event-stream": {
-                "example": ": connected\n\ndata: {\"type\":\"voucher_settled\",\"voucherId\":\"9100000000002\",\"providerAddress\":\"GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU\",\"status\":\"Settled\",\"ledger\":5612039,\"txHash\":\"3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f\",\"at\":\"2026-11-18T22:31:04.000Z\"}\n\n: heartbeat\n\n"
+                "example": ": connected\n\nid: 0000000005612039-0000000001\ndata: {\"id\":\"0000000005612039-0000000001\",\"type\":\"voucher_settled\",\"voucherId\":\"9100000000002\",\"providerAddress\":\"GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU\",\"status\":\"Settled\",\"ledger\":5612039,\"txHash\":\"3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f\",\"at\":\"2026-11-18T22:31:04.000Z\"}\n\n: heartbeat\n\n"
               }
             }
           },
@@ -4563,13 +5032,17 @@
         "tags": [
           "health"
         ],
+        "description": "Reports that the process is up, which build and commit are serving, and how long this process has been running. It never reads the database or RPC, so it stays green while either dependency is down.",
         "responses": {
           "200": {
             "description": "The process is up. Never reads the database, so it stays green while a query would fail.",
             "content": {
               "application/json": {
                 "example": {
-                  "status": "ok"
+                  "status": "ok",
+                  "version": "0.2.0",
+                  "commit": "a1b2c3d",
+                  "uptimeSeconds": 3600
                 }
               }
             }
@@ -4995,6 +5468,173 @@
         }
       }
     },
+    "/stats/disputes": {
+      "get": {
+        "summary": "Dispute counts, rate, breakdowns and median resolution time",
+        "tags": [
+          "health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Dispute counts, the rate against attested vouchers, breakdowns by the contract reason code and by outcome, and the median hours from attestation to resolution. `rate` is a fixed four-decimal string; `Unresolved` counts disputes with no outcome yet, and `medianResolutionHours` is `null` before anything resolves.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Vouchers that were ever disputed."
+                    },
+                    "attestedVouchers": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Vouchers that reached attestation, the denominator of the rate."
+                    },
+                    "rate": {
+                      "type": "string",
+                      "description": "Disputes divided by attested vouchers, fixed to 4 decimal places."
+                    },
+                    "byReason": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "description": "Disputed vouchers keyed by the contract reason code."
+                    },
+                    "byOutcome": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "description": "Resolved disputes keyed by Funder or Provider, plus unresolved disputes."
+                    },
+                    "medianResolutionHours": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Median hours from attestation (or creation when never attested) to dispute resolution; null when none resolved."
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "attestedVouchers",
+                    "rate",
+                    "byReason",
+                    "byOutcome",
+                    "medianResolutionHours"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "count": 206,
+                  "attestedVouchers": 1346,
+                  "rate": "0.1530",
+                  "byReason": {
+                    "1": 56,
+                    "2": 44,
+                    "3": 51,
+                    "4": 55
+                  },
+                  "byOutcome": {
+                    "Funder": 0,
+                    "Provider": 0,
+                    "Unresolved": 206
+                  },
+                  "medianResolutionHours": null
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "database_unavailable",
+                  "message": "Database is unavailable, retry in 5 seconds"
+                }
+              }
+            },
+            "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
     "/stats/funnel": {
       "get": {
         "summary": "Voucher funnel counts and median stage times",
@@ -5280,11 +5920,13 @@
       "get": {
         "responses": {
           "200": {
-            "description": "One row per UTC day in the window, days with no activity included, so a chart does not have to fill gaps itself.",
+            "description": "Protocol activity bucketed by UTC day, ISO week (Monday start) or calendar month. Days with no activity are included and zeroed unless `fill=false`, so a chart does not have to fill gaps itself.",
             "content": {
               "application/json": {
                 "example": {
                   "days": 3,
+                  "granularity": "day",
+                  "fill": true,
                   "from": "2026-11-16T00:00:00.000Z",
                   "to": "2026-11-18T00:00:00.000Z",
                   "series": [
@@ -5361,7 +6003,7 @@
                 }
               }
             },
-            "description": "`error: invalid_query` for a `days` value outside 1–365. Note the key: this route reports the failing parameters under `issues`, where every other route uses `details`."
+            "description": "`error: invalid_query` for a `days` value outside 1–365, a `granularity` other than `day`, `week` or `month`, or a `fill` other than `true` or `false`. Note the key: this route reports the failing parameters under `issues`, where every other route uses `details`."
           },
           "429": {
             "content": {
@@ -7090,6 +7732,195 @@
         }
       }
     },
+    "/funders/{address}": {
+      "get": {
+        "summary": "A funder's voucher counts and value by status",
+        "tags": [
+          "vouchers"
+        ],
+        "description": "Every status is present, zero included. Amounts are exact base-unit decimal strings summed with BigInt, so the answer is identical on SQLite and Postgres. An address with no vouchers returns zeros.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A funder's voucher count and exact value in one request, broken down by status. Every status is present with zero when unused; amounts are base-unit i128 decimal strings summed with BigInt, so SQLite and Postgres answer identically. An address with no vouchers answers zeros, not 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "vouchers": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "totalValue": {
+                      "type": "string",
+                      "description": "Exact base-unit decimal string across every status."
+                    },
+                    "totalValueDisplay": {
+                      "type": "string"
+                    },
+                    "byStatus": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "valueByStatus": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "vouchers",
+                    "totalValue",
+                    "totalValueDisplay",
+                    "byStatus",
+                    "valueByStatus"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "address": "GBMZYSMAWP7GMGBKYH5URN4KQNF3RI77VW2KDBX6JHL6PTLMQAAPGWHP",
+                  "vouchers": 12,
+                  "totalValue": "480000000",
+                  "totalValueDisplay": "48.0000000",
+                  "byStatus": {
+                    "Funded": 3,
+                    "Claimed": 1,
+                    "Attested": 2,
+                    "Settled": 4,
+                    "Disputed": 1,
+                    "Refunded": 1
+                  },
+                  "valueByStatus": {
+                    "Funded": "60000000",
+                    "Claimed": "20000000",
+                    "Attested": "40000000",
+                    "Settled": "300000000",
+                    "Disputed": "30000000",
+                    "Refunded": "30000000"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "code": "custom",
+                      "path": [
+                        "address"
+                      ],
+                      "message": "must be a valid Stellar account address"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` when the address is not a valid Stellar account: a checksum failure, or a string that is not 56 characters. `details` names the offending parameter."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 30
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "database_unavailable",
+                  "message": "Database is unavailable, retry in 5 seconds"
+                }
+              }
+            },
+            "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
     "/vouchers": {
       "get": {
         "summary": "List vouchers, optionally embedding their receipt and clinic",
@@ -7780,7 +8611,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "Settled visits, newest first, for exactly one beneficiary reference or one clinic. `totalSpend` is the whole filtered set, not the page.",
+            "description": "Settled visits for exactly one beneficiary reference or one clinic, newest first by default. `from` is inclusive and `to` is exclusive on `settledAt`; `order=asc` walks the same history oldest-first. `totalSpend` is the whole filtered set, not the page.",
             "content": {
               "application/json": {
                 "example": {
@@ -7831,7 +8662,7 @@
                 }
               }
             },
-            "description": "`error: invalid_query` when neither or both of `beneficiaryRef` and `provider` are given, and `invalid_cursor` for a `cursor` this route did not issue. A `beneficiaryRef` that is not 64 hex characters is also a 400."
+            "description": "`error: invalid_query` when neither or both of `beneficiaryRef` and `provider` are given, when `from` or `to` is not a valid date, or when `from` is later than `to`; `invalid_cursor` for a `cursor` this route did not issue, including one issued for the other `order`. A `beneficiaryRef` that is not 64 hex characters is also a 400."
           },
           "429": {
             "content": {
@@ -7860,6 +8691,113 @@
                   "type": "integer"
                 },
                 "example": 120
+              },
+              "x-ratelimit-remaining": {
+                "description": "Requests left in the current window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 0
+              },
+              "x-ratelimit-reset": {
+                "description": "Seconds until the window restarts.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "database_unavailable",
+                  "message": "Database is unavailable, retry in 5 seconds"
+                }
+              }
+            },
+            "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 5
+              }
+            }
+          }
+        }
+      }
+    },
+    "/receipts.csv": {
+      "get": {
+        "summary": "Stream a patient’s or clinic’s receipts as CSV",
+        "description": "The same filters as GET /receipts, without paging. `from` is inclusive and `to` is exclusive on `settledAt`; `order` is `asc` or `desc`.",
+        "responses": {
+          "200": {
+            "description": "The same receipts and filters as `GET /receipts`, as RFC 4180 CSV: one line per receipt, read in keyset batches so the whole export never has to fit in memory. `from` is inclusive and `to` is exclusive on `settledAt`; `order` is `asc` (default) or `desc`. There is no beneficiary-reference column: the file is meant to be forwarded.",
+            "content": {
+              "text/csv": {
+                "example": "voucherId,providerAddress,providerName,providerCountry,serviceCode,serviceLabel,amount,amountDisplay,settledAt\n9100000000002,GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU,Kumasi Community Clinic,GH,201,Routine bloodwork,24375000,2.4375000,2026-06-07T04:03:55.837Z\n"
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "invalid_query",
+                  "message": "Invalid query parameters",
+                  "details": [
+                    {
+                      "code": "custom",
+                      "path": [
+                        "beneficiaryRef",
+                        "provider"
+                      ],
+                      "message": "Provide exactly one of: beneficiaryRef, provider"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`error: invalid_query` when neither or exactly both of `beneficiaryRef` and `provider` are given (the export refuses to be an unfiltered dump), when `from` or `to` is not a valid date, or when `from` is later than `to`."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                },
+                "example": {
+                  "error": "rate_limited",
+                  "message": "Too many requests"
+                }
+              }
+            },
+            "description": "This IP has spent the route’s request budget. List and export routes allow 30 requests a minute and everything else 120; the `Retry-After` header says how long is left. Reading `Retry-After` is the whole recovery: the budget refills on its own.",
+            "headers": {
+              "retry-after": {
+                "description": "Seconds until the budget refills.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 29
+              },
+              "x-ratelimit-limit": {
+                "description": "Requests allowed for this route in the window.",
+                "schema": {
+                  "type": "integer"
+                },
+                "example": 30
               },
               "x-ratelimit-remaining": {
                 "description": "Requests left in the current window.",
@@ -8989,13 +9927,13 @@
         "tags": [
           "stream"
         ],
-        "description": "Streams voucher state transitions as the indexer commits them. Requires exactly one of `voucher` or `provider`. Each `data:` frame is one JSON object with `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at`; it never contains a beneficiary reference. Comment lines are heartbeats.",
+        "description": "Streams voucher state transitions as the indexer commits them. Requires exactly one of `voucher` or `provider`. Each frame carries the on-chain event id in an `id:` line; send it back as the `Last-Event-ID` header on reconnect to replay up to 500 later events in order before going live. If that cursor is too old to replay, the server sends one `event: reset` frame with `{\"type\":\"reset\",\"reason\":...}` and the client must refetch. Each `data:` frame is one JSON object with `id`, `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at`; it never contains a beneficiary reference. Comment lines are heartbeats.",
         "responses": {
           "200": {
-            "description": "A server-sent event stream: one `data:` frame per committed voucher state change matching the filter, comment lines as heartbeats. A frame is `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at` — the same facts the JSON routes expose for that transition, and never a beneficiary reference. There is no delivery guarantee and no replay: a client that reconnects catches up from the JSON routes. The example shows a first connect, one frame and a heartbeat.",
+            "description": "A server-sent event stream: one frame per committed voucher state change matching the filter, comment lines as heartbeats. A frame carries the on-chain event id in an `id:` line and a JSON object with `id`, `type`, `voucherId`, `providerAddress`, `status`, `ledger`, `txHash` and `at` — the same facts the JSON routes expose for that transition, and never a beneficiary reference. Send the last `id:` back as `Last-Event-ID` to replay up to 500 later events in order before going live; if the cursor is too old, one `event: reset` frame says to refetch. The example shows a first connect, one frame and a heartbeat.",
             "content": {
               "text/event-stream": {
-                "example": ": connected\n\ndata: {\"type\":\"voucher_settled\",\"voucherId\":\"9100000000002\",\"providerAddress\":\"GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU\",\"status\":\"Settled\",\"ledger\":5612039,\"txHash\":\"3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f\",\"at\":\"2026-11-18T22:31:04.000Z\"}\n\n: heartbeat\n\n"
+                "example": ": connected\n\nid: 0000000005612039-0000000001\ndata: {\"id\":\"0000000005612039-0000000001\",\"type\":\"voucher_settled\",\"voucherId\":\"9100000000002\",\"providerAddress\":\"GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU\",\"status\":\"Settled\",\"ledger\":5612039,\"txHash\":\"3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f\",\"at\":\"2026-11-18T22:31:04.000Z\"}\n\n: heartbeat\n\n"
               }
             }
           },

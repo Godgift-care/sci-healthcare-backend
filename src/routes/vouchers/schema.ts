@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { isValidRef } from '../../lib/beneficiary.js';
-import { cursorParam, limitParam } from '../../lib/cursor.js';
+import { countParam, cursorParam, limitParam } from '../../lib/cursor.js';
 import { accountAddress } from '../../lib/stellar-address.js';
 
 export const STATUSES = [
@@ -122,6 +122,7 @@ export const listQuery = z
     offset: z.coerce.number().int().min(0).default(0),
     fields: z.string().max(512).optional(),
     include: includeParam,
+    count: countParam,
   })
   .refine(
     (q) => !q.createdFrom || !q.createdTo || Date.parse(q.createdFrom) <= Date.parse(q.createdTo),

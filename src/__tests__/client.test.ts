@@ -11,6 +11,8 @@ import {
   type Provider,
 } from '../../packages/client/dist/index.js';
 
+import { expectHealthBody } from './health-body.js';
+
 describe('@sci-healthcare/client', () => {
   let app: FastifyInstance;
   let client: ReturnType<typeof createClient>;
@@ -79,7 +81,7 @@ describe('@sci-healthcare/client', () => {
 
   it('queries health and version information', async () => {
     const health = await client.health();
-    expect(health).toEqual({ status: 'ok' });
+    expectHealthBody(health);
 
     const version = await client.version();
     expect(version.version).toBeDefined();

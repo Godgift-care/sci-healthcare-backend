@@ -132,6 +132,16 @@ describe('indexer logs', () => {
 });
 
 describe('RPC retention gap', () => {
+  it('passes the configured page size to RPC event collection', async () => {
+    stubEvents([], 100);
+    await new Indexer(fakeLog(), { pageSize: 25 }).tick();
+
+    expect(collectEvents).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pageSize: 25 }),
+    );
+  });
+
   it('marks the indexer as degraded when cursor is older than oldestLedger', async () => {
     vi.spyOn(server, 'getHealth').mockResolvedValue({
       oldestLedger: 200,

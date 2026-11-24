@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { compareBaseUnits, fromBaseUnits, isBaseUnitAmount } from '../lib/amounts.js';
 import { lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
+import { countParam } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
 import {
   serviceKey,
@@ -50,6 +51,7 @@ const catalogueQuery = z
     maxPrice: priceParam.optional(),
     sort: z.enum(CATALOGUE_SORTS).default('code'),
     order: z.enum(['asc', 'desc']).default('asc'),
+    count: countParam,
   })
   .refine(
     (query) =>
@@ -170,7 +172,7 @@ export function serviceRoutes(app: FastifyInstance): void {
       if (!parsed.success) {
         throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
       }
-      const { q, minPrice, maxPrice, sort, order } = parsed.data;
+      const { q, minPrice, maxPrice, sort, order, count } = parsed.data;
 
       const rows = await prisma.service.findMany({
         where: { active: true, provider: { status: 'Active' } },
@@ -221,7 +223,9 @@ export function serviceRoutes(app: FastifyInstance): void {
         .filter((entry) => matchesSearch(entry, q) && inPriceRange(entry, minPrice, maxPrice))
         .sort((a, b) => compareEntries(a, b, sort, order));
 
-      return { total: services.length, services };
+      // #247: the catalogue is one page today, but its size is still only
+      // reported when the caller asks, matching the cursor list routes.
+      return { ...(count ? { total: services.length } : {}), services };
     },
   );
 

@@ -8,7 +8,9 @@ import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, {
+  LogController,
   type FastifyInstance,
+  type FastifyReply,
   type FastifyRequest,
   type FastifyServerOptions,
 } from 'fastify';
@@ -61,6 +63,67 @@ function genReqId(req: IncomingMessage): string {
   const header = req.headers['x-request-id'];
   const value = Array.isArray(header) ? header[0] : header;
   return typeof value === 'string' && REQUEST_ID_PATTERN.test(value) ? value : randomUUID();
+}
+
+/**
+ * Paths whose 2xx responses are pure probe traffic (#224).
+ *
+ * Exact matches, with the query string removed: `/health?verbose=1` is still a
+ * probe, while `/health/extra` is not. `/metrics` is registered at the root
+ * only, but `/v1/metrics` is listed so a future alias cannot silently become
+ * noisy.
+ */
+const QUIET_PROBE_PATHS = new Set([
+  '/health',
+  '/v1/health',
+  '/ready',
+  '/v1/ready',
+  '/metrics',
+  '/v1/metrics',
+]);
+
+function isQuietProbePath(request: FastifyRequest): boolean {
+  const path = request.raw.url?.split('?')[0]?.split('#')[0] ?? '';
+  return QUIET_PROBE_PATHS.has(path);
+}
+
+/**
+ * Suppresses the two request lines for a *successful* probe, without hiding a
+ * failure (#224).
+ *
+ * Fastify's `disableRequestLogging` is evaluated on the incoming request,
+ * before the status code exists, and route-level `logLevel: 'silent'` would
+ * also hide a 503 from `/ready`. Both are unacceptable: a failed probe is the
+ * one we need in the log. So the incoming line is withheld for probe paths and
+ * replayed from `requestCompleted` only when the response was not 2xx. Every
+ * other request keeps Fastify's default two lines, including the custom
+ * serializer below.
+ */
+class QuietProbeLogController extends LogController {
+  override incomingRequest(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    metadata?: Record<string, unknown>,
+  ): void {
+    if (isQuietProbePath(request)) return;
+    super.incomingRequest(request, reply, metadata);
+  }
+
+  override requestCompleted(
+    error: Error | null | undefined,
+    request: FastifyRequest,
+    reply: FastifyReply,
+    metadata?: Record<string, unknown>,
+  ): void {
+    if (!isQuietProbePath(request)) {
+      super.requestCompleted(error, request, reply, metadata);
+      return;
+    }
+    if (!error && reply.statusCode >= 200 && reply.statusCode < 300) return;
+
+    super.incomingRequest(request, reply, metadata);
+    super.requestCompleted(error, request, reply, metadata);
+  }
 }
 
 export type BuildAppOptions = {
@@ -125,6 +188,7 @@ export async function buildApp(
 ): Promise<FastifyInstance> {
   const app = Fastify({
     logger: withRedactedLogging(opts.logger),
+    logController: new QuietProbeLogController(),
     trustProxy: true,
     genReqId,
   });
@@ -206,7 +270,9 @@ export async function buildApp(
   await app.register(cors, {
     origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()),
     methods: ['GET'],
-    exposedHeaders: ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
+    // `Link` carries the RFC 8288 `rel="next"` page on list routes (#248), so
+    // browser clients must be able to read it.
+    exposedHeaders: ['Link', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
   });
 
   await app.register(compress);
@@ -379,7 +445,14 @@ export async function buildApp(
   await app.register(async (legacy) => {
     legacy.addHook('onSend', async (req, reply, payload) => {
       reply.header('deprecation', 'true');
-      reply.header('link', `<${v1Path(req.url)}>; rel="successor-version"`);
+      // A list route may already have set `rel="next"` (#248); keep it and
+      // append the alias's successor link instead of replacing the page link.
+      const successor = `<${v1Path(req.url)}>; rel="successor-version"`;
+      const existing = reply.getHeader('link');
+      reply.header(
+        'link',
+        existing === undefined ? successor : `${String(existing)}, ${successor}`,
+      );
       return payload;
     });
     await registerRoutes(legacy);

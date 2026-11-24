@@ -10,6 +10,7 @@ import {
   indexerLagLedgers,
   markIndexerSuccess,
   recordEventLatency,
+  recordIndexerPaused,
 } from '../lib/metrics.js';
 import { server, validateContractIds } from './client.js';
 import { asId, decodeEvent, serialiseEventData, type DecodedEvent } from './events.js';
@@ -195,7 +196,7 @@ export type IndexerOptions = {
   optionsReader?: VoucherOptionsReader;
   /** Optional RPC server interface (for fake RPC testing or custom RPC endpoints). */
   rpcServer?: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
-  /** Batch page size passed to collectEvents (default: 200). */
+  /** Batch page size passed to collectEvents. */
   pageSize?: number;
 };
 
@@ -238,7 +239,7 @@ export class Indexer {
     this.optionsReader =
       opts.optionsReader ?? (env.NODE_ENV === 'test' ? undefined : readVoucherOptionsFromChain);
     this.rpcServer = opts.rpcServer ?? server;
-    this.pageSize = opts.pageSize ?? 200;
+    this.pageSize = opts.pageSize ?? env.INDEXER_PAGE_SIZE;
   }
 
   async start(): Promise<void> {
@@ -514,6 +515,7 @@ export class Indexer {
       const providerAddress = p.providerAddress ?? providerById.get(p.voucherId);
       if (!providerAddress) continue;
       signals.push({
+        id: p.id,
         type: p.type,
         voucherId: p.voucherId,
         providerAddress,
@@ -546,6 +548,7 @@ export class Indexer {
     this.hasMore = false;
 
     const state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
+    recordIndexerPaused(state.paused);
     if (state.paused) {
       this.hasMore = false;
       return 0;
@@ -648,7 +651,12 @@ export class Indexer {
 
           await tx.indexerState.update({
             where: { id: 1 },
-            data: { lastLedger: advanceTo },
+            data: {
+              lastLedger: advanceTo,
+              ...(advanceTo >= health.oldestLedger
+                ? { gap: false, gapOldestLedger: null, gapCursorLedger: null }
+                : {}),
+            },
           });
         },
         // Sized for a busy range on a remote database, not the 5s default.

@@ -9,6 +9,8 @@ import { ApiError } from './client.js';
  * should appear.
  */
 export type VoucherStreamEvent = {
+  /** On-chain event id, also framed as the SSE `id:` used to resume. */
+  id: string;
   /** Contract event name, e.g. `voucher_settled`. */
   type: string;
   voucherId: string;
@@ -22,6 +24,17 @@ export type VoucherStreamEvent = {
 };
 
 /** Which transitions the caller wants. Exactly one must be set. */
+/**
+ * Sent as an SSE `event: reset` frame when a `Last-Event-ID` is too old to
+ * replay. The gap cannot be filled from the stream, so the caller must refetch
+ * the JSON routes; the handle clears its cursor so the next reconnect starts
+ * live rather than asking for the same unusable id forever.
+ */
+export type StreamResetEvent = {
+  type: 'reset';
+  reason: string;
+};
+
 export type StreamFilters = {
   voucher?: string;
   provider?: string;
@@ -40,6 +53,11 @@ export type StreamHandlers = {
   /** One per connection that reached the server, including the first. */
   onOpen?: () => void;
   onReconnect?: (info: StreamReconnectInfo) => void;
+  /**
+   * The server could not replay from the cursor the handle sent. Refetch the
+   * JSON routes; the stream itself stays open and live from here.
+   */
+  onReset?: (reset: StreamResetEvent) => void;
   /**
    * A connection dropped, a frame failed to parse, or the server answered an
    * error. The stream keeps running after everything except a `fatal` error;
@@ -81,8 +99,8 @@ export type StreamHandle = {
   readonly closed: boolean;
   /**
    * The most recent SSE `id:` the server sent, resent as `Last-Event-ID` on
-   * the next reconnect. Always `null` against this backend, which frames no
-   * id — see `subscribe()` for what resume can and cannot mean there.
+   * the next reconnect so the route can replay what was missed. Cleared when
+   * the server answers with a `reset` event, because that cursor is unusable.
    */
   readonly lastEventId: string | null;
 };
@@ -195,12 +213,12 @@ class FrameParser {
  * `baseUrl` is already trailing-slash-trimmed by `Client`. The returned handle
  * is synchronous so a caller can close it before the first connect resolves.
  *
- * Resume is best effort by necessity: this resends the last `id:` it was
- * given, but the route emits no `id:` line, so against this backend
- * `lastEventId` stays null and a gap between a drop and the reconnect is
- * filled by re-reading the JSON routes, not by replay. Frames are only ever
- * written after the transaction that produced them commits, so the state the
- * routes serve is never behind the last frame seen.
+ * Resume resends the last `id:` it was given. The route replays the events
+ * committed after it (bounded) before going live, and answers a cursor too old
+ * for that window with a `reset` event, at which point the caller refetches
+ * the JSON routes. Frames are only ever written after the transaction that
+ * produced them commits, so the state those routes serve is never behind the
+ * last frame seen.
  */
 export function subscribe(
   baseUrl: string,
@@ -262,6 +280,19 @@ export function subscribe(
   const url = `${baseUrl}/stream?${params.toString()}`;
 
   const handle = (frame: string, eventType: string): void => {
+    if (eventType === 'reset') {
+      let reset: StreamResetEvent;
+      try {
+        reset = JSON.parse(frame) as StreamResetEvent;
+      } catch {
+        reset = { type: 'reset', reason: 'unreadable_reset' };
+      }
+      // Sending the same stale cursor again would produce the same reset, so
+      // the next reconnect starts from the live edge instead.
+      lastEventId = null;
+      if (handlers.onReset) handlers.onReset(reset);
+      return;
+    }
     if (eventType && eventType !== 'message') return;
     let event: VoucherStreamEvent;
     try {

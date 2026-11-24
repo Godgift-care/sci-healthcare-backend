@@ -100,32 +100,39 @@ type LiveStream = {
 };
 
 /** Opens `GET /stream<path>` and resolves once the response headers arrive. */
-function openStream(path: string, targetPort = port): Promise<LiveStream> {
+function openStream(
+  path: string,
+  targetPort = port,
+  headers: Record<string, string> = {},
+): Promise<LiveStream> {
   return new Promise((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port: targetPort, path, method: 'GET' }, (res) => {
-      const stream: LiveStream = {
-        status: res.statusCode ?? 0,
-        headers: res.headers,
-        body: '',
-        ended: false,
-        close: () => req.destroy(),
-      };
-      live.push(stream);
-      res.setEncoding('utf8');
-      res.on('data', (chunk: string) => {
-        stream.body += chunk;
-      });
-      res.on('end', () => {
-        stream.ended = true;
-      });
-      res.on('close', () => {
-        stream.ended = true;
-      });
-      // A stream destroyed by `close()` errors by definition; the test that
-      // did it is already done with this one.
-      res.on('error', () => {});
-      resolve(stream);
-    });
+    const req = request(
+      { host: '127.0.0.1', port: targetPort, path, method: 'GET', headers },
+      (res) => {
+        const stream: LiveStream = {
+          status: res.statusCode ?? 0,
+          headers: res.headers,
+          body: '',
+          ended: false,
+          close: () => req.destroy(),
+        };
+        live.push(stream);
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          stream.body += chunk;
+        });
+        res.on('end', () => {
+          stream.ended = true;
+        });
+        res.on('close', () => {
+          stream.ended = true;
+        });
+        // A stream destroyed by `close()` errors by definition; the test that
+        // did it is already done with this one.
+        res.on('error', () => {});
+        resolve(stream);
+      },
+    );
     req.on('error', reject);
     req.end();
   });
@@ -141,8 +148,29 @@ async function readJson(stream: LiveStream): Promise<Record<string, unknown>> {
 function frames(stream: LiveStream): string[] {
   return stream.body
     .split('\n\n')
-    .filter((part) => part.startsWith('data: '))
-    .map((part) => part.slice('data: '.length));
+    .filter((part) => !part.startsWith('event: reset'))
+    .map((part) => part.split('\n').find((line) => line.startsWith('data: ')))
+    .filter((line): line is string => line !== undefined)
+    .map((line) => line.slice('data: '.length));
+}
+
+/** The SSE `id:` of every frame that carries one, oldest first. */
+function frameIds(stream: LiveStream): string[] {
+  return stream.body
+    .split('\n\n')
+    .filter((part) => part.startsWith('id: '))
+    .map((part) => part.slice('id: '.length, part.indexOf('\n')));
+}
+
+/** The reasons of every `event: reset` frame, oldest first. */
+function resetReasons(stream: LiveStream): string[] {
+  return stream.body
+    .split('\n\n')
+    .filter((part) => part.startsWith('event: reset\n'))
+    .map((part) => {
+      const data = part.split('\n').find((line) => line.startsWith('data: ')) ?? 'data: {}';
+      return (JSON.parse(data.slice('data: '.length)) as { reason?: string }).reason ?? '';
+    });
 }
 
 async function seedVoucher(id: string): Promise<void> {
@@ -194,6 +222,7 @@ beforeEach(async () => {
   // foreign key to `Provider`, so the clinic a leftover row from the previous
   // test file points at cannot be deleted out from under it.
   await prisma.receipt.deleteMany();
+  await prisma.contractEvent.deleteMany();
   await prisma.voucher.deleteMany();
   await prisma.service.deleteMany();
   await prisma.provider.deleteMany();
@@ -283,6 +312,186 @@ describe('GET /stream', () => {
     });
   });
 
+  it('frames every event with the on-chain id a client resumes from', async () => {
+    await seedVoucher('5001');
+    const stream = await openStream('/v1/stream?voucher=5001');
+
+    stubEvents(
+      [
+        rawEvent('voucher_settled', 101, { voucher_id: 5001n, net: 1n, fee: 1n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
+      ],
+      101,
+    );
+    await new Indexer(fakeLog()).tick();
+
+    await vi.waitFor(() => expect(frames(stream)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
+    expect(frameIds(stream)).toEqual(['voucher_settled-101']);
+    expect(JSON.parse(frames(stream)[0]!)).toMatchObject({ id: 'voucher_settled-101' });
+  });
+
+  it('replays the events after Last-Event-ID, in order, before going live', async () => {
+    await seedVoucher('5001');
+
+    // The history happens while no stream is connected.
+    stubEvents(
+      [
+        rawEvent(
+          'voucher_created',
+          101,
+          {
+            voucher_id: 5001n,
+            created_at: 1_760_000_000n,
+            expires_at: 1_770_000_000n,
+            amount: 30_000_000n,
+            service_code: 101n,
+          },
+          [
+            Address.fromString(FUNDER).toScVal(),
+            Address.fromString(CLINIC).toScVal(),
+            nativeToScVal(Buffer.from(REF, 'hex'), { type: 'bytes' }),
+          ],
+        ),
+      ],
+      101,
+    );
+    await new Indexer(fakeLog()).tick();
+    stubEvents(
+      [
+        rawEvent('voucher_claimed', 102, { voucher_id: 5001n, claimed_at: 1_760_000_000n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
+      ],
+      102,
+    );
+    await new Indexer(fakeLog()).tick();
+
+    const resumed = await openStream('/v1/stream?voucher=5001', port, {
+      'last-event-id': 'voucher_created-101',
+    });
+    await vi.waitFor(() => expect(frames(resumed)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
+    expect(frameIds(resumed)).toEqual(['voucher_claimed-102']);
+    expect(JSON.parse(frames(resumed)[0]!)).toMatchObject({
+      type: 'voucher_claimed',
+      status: 'Claimed',
+      voucherId: '5001',
+    });
+
+    // The replay is a prefix, not a replacement: the stream is live after it.
+    stubEvents(
+      [
+        rawEvent('voucher_settled', 103, { voucher_id: 5001n, net: 1n, fee: 1n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
+      ],
+      103,
+    );
+    await new Indexer(fakeLog()).tick();
+    await vi.waitFor(() => expect(frames(resumed)).toHaveLength(2), {
+      timeout: 4_000,
+      interval: 10,
+    });
+    expect(frameIds(resumed)).toEqual(['voucher_claimed-102', 'voucher_settled-103']);
+
+    // No frame is sent twice; the replay and the live hand-off can overlap.
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+    expect(frames(resumed)).toHaveLength(2);
+  });
+
+  it('replays a clinic stream from the same cursor', async () => {
+    await seedVoucher('5001');
+    const first = await openStream(`/v1/stream?provider=${CLINIC}`);
+
+    stubEvents(
+      [
+        rawEvent('voucher_claimed', 101, { voucher_id: 5001n, claimed_at: 1_760_000_000n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
+      ],
+      101,
+    );
+    await new Indexer(fakeLog()).tick();
+    await vi.waitFor(() => expect(frames(first)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
+
+    stubEvents(
+      [
+        rawEvent('voucher_settled', 102, { voucher_id: 5001n, net: 1n, fee: 1n }, [
+          Address.fromString(CLINIC).toScVal(),
+        ]),
+      ],
+      102,
+    );
+    await new Indexer(fakeLog()).tick();
+    await vi.waitFor(() => expect(frames(first)).toHaveLength(2), {
+      timeout: 4_000,
+      interval: 10,
+    });
+    first.close();
+    await vi.waitFor(() => expect(openStreamCount()).toBe(0), { timeout: 4_000, interval: 10 });
+
+    const resumed = await openStream(`/v1/stream?provider=${CLINIC}`, port, {
+      'last-event-id': 'voucher_claimed-101',
+    });
+    await vi.waitFor(() => expect(frames(resumed)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
+    expect(frameIds(resumed)).toEqual(['voucher_settled-102']);
+  });
+
+  it('sends a reset when Last-Event-ID is too old to replay', async () => {
+    const stale = await openStream('/v1/stream?voucher=5001', port, {
+      'last-event-id': 'an-event-that-was-pruned-long-ago',
+    });
+    await vi.waitFor(() => expect(resetReasons(stale)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
+    expect(resetReasons(stale)).toEqual(['last_event_id_expired']);
+    // The client must refetch; replaying a prefix it never asked for would
+    // hide the gap instead.
+    expect(frames(stale)).toHaveLength(0);
+  });
+
+  it('sends a reset rather than an unbounded replay when the gap is too large', async () => {
+    await seedVoucher('5001');
+    const base = Date.parse('2026-10-01T00:00:00Z');
+    // 501 events after the anchor: one more than the route will replay.
+    await prisma.contractEvent.createMany({
+      data: Array.from({ length: 502 }, (_, i) => ({
+        id: `bulk-${String(i).padStart(4, '0')}`,
+        contractId: env.VOUCHER_CONTRACT_ID,
+        contract: 'voucher',
+        name: 'voucher_claimed',
+        ledger: i + 1,
+        txHash: TX_HASH,
+        closedAt: new Date(base + i * 1_000),
+        voucherId: '5001',
+        data: '{}',
+      })),
+    });
+
+    const stale = await openStream('/v1/stream?voucher=5001', port, {
+      'last-event-id': 'bulk-0000',
+    });
+    await vi.waitFor(() => expect(resetReasons(stale)).toHaveLength(1), {
+      timeout: 4_000,
+      interval: 10,
+    });
+    expect(resetReasons(stale)).toEqual(['replay_limit_exceeded']);
+    expect(frames(stale)).toHaveLength(0);
+  });
+
   it('delivers a committed settlement to the voucher it belongs to', async () => {
     await seedVoucher('5001');
     const watching = await openStream('/v1/stream?voucher=5001');
@@ -305,6 +514,7 @@ describe('GET /stream', () => {
     });
     const signal = JSON.parse(frames(watching)[0]!) as Record<string, unknown>;
     expect(signal).toEqual({
+      id: 'voucher_settled-101',
       type: 'voucher_settled',
       voucherId: '5001',
       providerAddress: CLINIC,
@@ -356,6 +566,7 @@ describe('GET /stream', () => {
       interval: 10,
     });
     expect(JSON.parse(frames(stream)[0]!)).toEqual({
+      id: 'voucher_created-101',
       type: 'voucher_created',
       voucherId: '5002',
       providerAddress: CLINIC,
@@ -665,6 +876,7 @@ describe('a slow consumer does not hold up the others (#308)', () => {
   /** One frame a clinic's stream forwards, distinct per ledger. */
   function signal(ledger: number, providerAddress: string) {
     return {
+      id: `voucher_claimed-${ledger}`,
       type: 'voucher_claimed',
       voucherId: '5001',
       providerAddress,
@@ -723,7 +935,7 @@ describe('a slow consumer does not hold up the others (#308)', () => {
     expect(stalled.ended).toBe(true);
     const stalledReceived = stalled.body
       .split('\n\n')
-      .filter((part) => part.startsWith('data: ')).length;
+      .filter((part) => part.includes('\ndata: ') || part.startsWith('data: ')).length;
     expect(stalledReceived).toBeLessThan(stalledFrames);
 
     // Dropping a stalled client is not dropping the subscription: the healthy

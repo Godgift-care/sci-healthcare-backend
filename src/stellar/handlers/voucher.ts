@@ -45,6 +45,7 @@ export function voucherSignal(
   providerAddress: string | null,
 ): PendingSignal {
   return {
+    id: e.id,
     type: e.name,
     voucherId: asId(e.fields.voucher_id),
     status,

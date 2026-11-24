@@ -13,6 +13,128 @@ export function utcDateString(date: Date | string): string {
   return instant.toISOString().slice(0, 10);
 }
 
+/** The bucket size `GET /stats/daily` can answer. */
+export type Granularity = 'day' | 'week' | 'month';
+
+/** One `DailyStat` row, as the aggregation needs it. */
+export type DailyStatRow = {
+  date: string;
+  fundedCount: number;
+  fundedAmount: string;
+  settledCount: number;
+  settledAmount: string;
+  refundedCount: number;
+  refundedAmount: string;
+};
+
+/** One point of the response series. */
+export type DailySeriesPoint = {
+  date: string;
+  funded: { count: number; amount: string };
+  settled: { count: number; amount: string };
+  refunded: { count: number; amount: string };
+};
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * The first day of the bucket a UTC day belongs to.
+ *
+ * Weeks are ISO 8601 weeks, which start on Monday and are computed in UTC so
+ * a server west of Greenwich cannot shift a day into the previous week. The
+ * label of a week is its Monday; the label of a month is its first day.
+ */
+export function periodStart(date: string, granularity: Granularity): string {
+  if (granularity === 'month') return `${date.slice(0, 7)}-01`;
+  if (granularity === 'day') return date;
+
+  const instant = new Date(`${date}T00:00:00.000Z`);
+  const daysSinceMonday = (instant.getUTCDay() + 6) % 7;
+  return new Date(instant.getTime() - daysSinceMonday * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+/**
+ * Sums `DailyStat` rows into day, week or month buckets, exactly.
+ *
+ * Amounts are i128 base-unit strings, so every sum stays in `BigInt`; a
+ * bucket equal to the sum of its underlying days is the acceptance criterion,
+ * and floating-point addition cannot promise that above 2^53.
+ *
+ * With `fill`, every bucket the window touches is returned in ascending date
+ * order, zeroed when no row exists. Without it only buckets backed by at least
+ * one row are returned, which is the sparse shape clients used to receive.
+ */
+export function aggregateDailySeries(
+  rows: readonly DailyStatRow[],
+  fromDate: string,
+  toDate: string,
+  granularity: Granularity,
+  fill: boolean,
+): DailySeriesPoint[] {
+  const buckets = new Map<
+    string,
+    {
+      fundedCount: number;
+      fundedAmount: bigint;
+      settledCount: number;
+      settledAmount: bigint;
+      refundedCount: number;
+      refundedAmount: bigint;
+    }
+  >();
+
+  for (const row of rows) {
+    const key = periodStart(row.date, granularity);
+    const bucket = buckets.get(key) ?? {
+      fundedCount: 0,
+      fundedAmount: 0n,
+      settledCount: 0,
+      settledAmount: 0n,
+      refundedCount: 0,
+      refundedAmount: 0n,
+    };
+    bucket.fundedCount += row.fundedCount;
+    bucket.fundedAmount += BigInt(row.fundedAmount);
+    bucket.settledCount += row.settledCount;
+    bucket.settledAmount += BigInt(row.settledAmount);
+    bucket.refundedCount += row.refundedCount;
+    bucket.refundedAmount += BigInt(row.refundedAmount);
+    buckets.set(key, bucket);
+  }
+
+  const series: DailySeriesPoint[] = [];
+  const start = Date.parse(`${fromDate}T00:00:00.000Z`);
+  const end = Date.parse(`${toDate}T00:00:00.000Z`);
+  const seen = new Set<string>();
+
+  for (let instant = start; instant <= end; instant += MS_PER_DAY) {
+    const date = new Date(instant).toISOString().slice(0, 10);
+    const key = periodStart(date, granularity);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const bucket = buckets.get(key);
+    if (bucket === undefined && !fill) continue;
+    series.push({
+      date: key,
+      funded: {
+        count: bucket?.fundedCount ?? 0,
+        amount: (bucket?.fundedAmount ?? 0n).toString(),
+      },
+      settled: {
+        count: bucket?.settledCount ?? 0,
+        amount: (bucket?.settledAmount ?? 0n).toString(),
+      },
+      refunded: {
+        count: bucket?.refundedCount ?? 0,
+        amount: (bucket?.refundedAmount ?? 0n).toString(),
+      },
+    });
+  }
+
+  return series;
+}
+
 export async function recordDailyStatFunded(
   db: Prisma.TransactionClient,
   date: Date | string,

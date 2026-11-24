@@ -56,6 +56,23 @@ function trimTrailingSlashes(value) {
         end--;
     return value.slice(0, end);
 }
+/**
+ * The first page of a list asks for its count (#247).
+ *
+ * The client has always returned `total`, and making the aggregate query
+ * opt-in on the route would otherwise break every caller that reads it. A
+ * cursor page does not ask: the count is the size of the whole filtered set,
+ * unchanged by paging, and `total` stays absent there, as the response type
+ * says.
+ */
+function firstPageCount(params) {
+    if (params === undefined)
+        return { count: true };
+    const query = { ...params };
+    if (query.cursor === undefined && query.count === undefined)
+        query.count = true;
+    return query;
+}
 class Client {
     baseUrl;
     fetchImpl;
@@ -122,14 +139,17 @@ class Client {
     async ready() {
         return this.request('/ready');
     }
+    async indexer() {
+        return this.request('/indexer');
+    }
     async stats() {
         return this.request('/stats');
     }
-    async dailyStats(days = 30) {
-        return this.request('/stats/daily', { days });
+    async dailyStats(days = 30, options = {}) {
+        return this.request('/stats/daily', { days, ...options });
     }
     async providers(params) {
-        return this.request('/providers', params);
+        return this.request('/providers', firstPageCount(params));
     }
     async provider(address) {
         return this.request(`/providers/${encodeURIComponent(address)}`);
@@ -155,13 +175,13 @@ class Client {
         return this.request('/countries');
     }
     async services() {
-        return this.request('/services');
+        return this.request('/services', { count: true });
     }
     async service(code) {
         return this.request(`/services/${code}`);
     }
     async vouchers(params) {
-        return this.request('/vouchers', params);
+        return this.request('/vouchers', firstPageCount(params));
     }
     async voucher(id) {
         return this.request(`/vouchers/${encodeURIComponent(id)}`);
@@ -192,7 +212,7 @@ class Client {
         return res.text();
     }
     async receipts(params) {
-        return this.request('/receipts', params);
+        return this.request('/receipts', firstPageCount(params));
     }
     async receipt(voucherId) {
         return this.request(`/receipts/${encodeURIComponent(voucherId)}`);
@@ -209,9 +229,10 @@ class Client {
      * `provider` is required, matching the route, and the returned `close()`
      * stops reconnecting for good.
      *
-     * The server frames no SSE `id:` today, so a drop loses whatever happened
-     * while disconnected; re-read the JSON routes after `onReconnect` to be
-     * certain of current state.
+     * Each frame carries the on-chain event id, resent as `Last-Event-ID` on a
+     * reconnect so the server replays what was missed. If that cursor is too old
+     * for the replay window, `onReset` fires and the JSON routes should be
+     * re-read.
      */
     stream(filters, handlers = {}, options = {}) {
         return (0, stream_js_1.subscribe)(this.baseUrl, this.defaultHeaders, this.fetchImpl, filters, handlers, options);
