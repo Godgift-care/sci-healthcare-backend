@@ -593,9 +593,10 @@ export class WebhookDispatcher {
     const startedAt = performance.now();
     // Hash the configured endpoint's numeric index, never its URL or credentials.
     const endpointIndex = this.urls.indexOf(row.url);
-    const endpoint = endpointIndex < 0
-      ? 'unknown'
-      : createHash('sha256').update(String(endpointIndex)).digest('hex').slice(0, 8);
+    const endpoint =
+      endpointIndex < 0
+        ? 'unknown'
+        : createHash('sha256').update(String(endpointIndex)).digest('hex').slice(0, 8);
     let outcome: 'success' | 'http_error' | 'network_error' = 'network_error';
 
     try {
@@ -633,7 +634,10 @@ export class WebhookDispatcher {
       retryable = true;
       this.circuit.recordFailure(row.url);
     } finally {
-      webhookDeliveryDuration.observe({ endpoint, outcome }, Math.max(0, (performance.now() - startedAt) / 1000));
+      webhookDeliveryDuration.observe(
+        { endpoint, outcome },
+        Math.max(0, (performance.now() - startedAt) / 1000),
+      );
       webhookDeliveriesTotal.inc({ endpoint, outcome });
     }
 
