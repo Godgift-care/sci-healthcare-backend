@@ -5,6 +5,7 @@ import type {
   CountryStats,
   CsvVouchersParams,
   DailyStats,
+  DailyStatsQuery,
   DueVouchersParams,
   DueVouchersResponse,
   GovernanceResponse,
@@ -215,8 +216,8 @@ export class Client {
     return this.request<Stats>('/stats');
   }
 
-  async dailyStats(days = 30): Promise<DailyStats> {
-    return this.request<DailyStats>('/stats/daily', { days });
+  async dailyStats(days = 30, options: DailyStatsQuery = {}): Promise<DailyStats> {
+    return this.request<DailyStats>('/stats/daily', { days, ...options });
   }
 
   async providers(params?: ListProvidersParams): Promise<ProvidersResponse> {

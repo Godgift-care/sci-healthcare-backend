@@ -365,5 +365,7 @@ not data.
 | `refundedAmount` | `String` | No | the voucher's stored `amount`, added to the day's total | A refund returns the whole voucher amount, which the event payload does not carry |
 | `updatedAt` | `DateTime` | No | Prisma `@updatedAt` | When the day's row was last touched; useful for spotting a stalled indexer |
 
-`GET /stats/daily` fills any day in the requested window with no row as zero,
-so a gap in this table is not a gap in the API's output.
+`GET /stats/daily` fills any period in the requested window with no row as
+zero, so a gap in this table is not a gap in the API's output. It can aggregate
+these rows by day, ISO week (Monday start, UTC) or calendar month, and
+`fill=false` returns only periods that have at least one row.

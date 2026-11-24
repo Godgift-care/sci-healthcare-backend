@@ -1,38 +1,99 @@
+import { Readable } from 'node:stream';
+
+import type { Prisma } from '@prisma/client';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { fromBaseUnits } from '../lib/amounts.js';
 import { isValidRef } from '../lib/beneficiary.js';
+import { csvRow } from '../lib/csv.js';
 import {
   countParam,
   cursorParam,
   decodeCursor,
-  encodeCursor,
+  decodeSortCursor,
+  encodeSortCursor,
   limitParam,
   nextPageLink,
 } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
 import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
 import { providerSummaries, type ProviderSummary } from '../lib/providers.js';
+import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { serialiseReceipt } from '../lib/receipts.js';
 import { serviceLabels } from '../lib/services.js';
 import { accountAddress } from '../lib/stellar-address.js';
 
+/**
+ * A `settledAt` bound: a `YYYY-MM-DD` day or a full ISO 8601 instant.
+ * Anything `Date.parse` cannot read is a 400 rather than a silently ignored
+ * filter, which would answer the wrong month's payouts.
+ */
+const settledBound = z
+  .string()
+  .min(1)
+  .max(40)
+  .refine((value) => !Number.isNaN(Date.parse(value)), 'must be a valid ISO 8601 date');
+
+/** The filters both `/receipts` and `/receipts.csv` accept. */
+const receiptFilters = {
+  beneficiaryRef: z.string().max(64).refine(isValidRef, 'must be 64 hex characters').optional(),
+  provider: accountAddress.optional(),
+  from: settledBound.optional(),
+  to: settledBound.optional(),
+};
+
+const oneOwner = (data: { beneficiaryRef?: string | undefined; provider?: string | undefined }) =>
+  Boolean(data.beneficiaryRef) !== Boolean(data.provider);
+
+/** `from` is inclusive and `to` exclusive; a reversed range is a 400. */
+const orderedRange = (data: { from?: string | undefined; to?: string | undefined }) =>
+  !data.from || !data.to || Date.parse(data.from) <= Date.parse(data.to);
+
 const listQuery = z
   .object({
-    beneficiaryRef: z.string().max(64).refine(isValidRef, 'must be 64 hex characters').optional(),
-    provider: accountAddress.optional(),
+    ...receiptFilters,
+    order: z.enum(['asc', 'desc']).default('desc'),
     cursor: cursorParam,
     limit: limitParam,
     offset: z.coerce.number().int().min(0).default(0),
     fields: z.string().max(512).optional(),
     count: countParam,
   })
-  .refine((data) => Boolean(data.beneficiaryRef) !== Boolean(data.provider), {
+  .refine(oneOwner, {
     message: 'Provide exactly one of: beneficiaryRef, provider',
     path: ['beneficiaryRef', 'provider'],
-  });
+  })
+  .refine(orderedRange, { message: 'from must not be later than to', path: ['from'] });
+
+/** The CSV export takes the filters and order but none of the paging options. */
+const csvQuery = z
+  .object({
+    ...receiptFilters,
+    order: z.enum(['asc', 'desc']).default('asc'),
+  })
+  .refine(oneOwner, {
+    message: 'Provide exactly one of: beneficiaryRef, provider',
+    path: ['beneficiaryRef', 'provider'],
+  })
+  .refine(orderedRange, { message: 'from must not be later than to', path: ['from'] });
+
+/** Columns exported as CSV. Deliberately no beneficiary reference. */
+const CSV_COLUMNS = [
+  'voucherId',
+  'providerAddress',
+  'providerName',
+  'providerCountry',
+  'serviceCode',
+  'serviceLabel',
+  'amount',
+  'amountDisplay',
+  'settledAt',
+];
+
+/** Rows fetched per database round trip; keeps export memory flat. */
+const CSV_BATCH_SIZE = 500;
 
 const voucherIdParam = z.object({
   voucherId: z.string().min(1).max(128),
@@ -147,25 +208,41 @@ async function receiptClinics(
 
 export function receiptRoutes(app: FastifyInstance): void {
   /**
-   * A patient's care history.
+   * A patient's care history, or a clinic's receipts.
    *
    * Requires an exact beneficiary reference. Because that reference is an
    * HMAC computed under a key the patient holds, only someone who already
    * knows the patient's identifier and key can construct it — the endpoint
    * cannot be walked to enumerate patients.
+   *
+   * `from` and `to` bound `settledAt` for a reconciliation period: `from` is
+   * inclusive and `to` is exclusive, so adjacent months never double-count
+   * the receipt settled at exactly midnight. `order` walks the same history
+   * oldest-first; the cursor records which order produced it, so a cursor
+   * from the other order is refused rather than silently skipping rows.
    */
   app.get('/receipts', async (req, reply) => {
     const parsed = listQuery.safeParse(req.query);
     if (!parsed.success) {
       throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
     }
-    const { beneficiaryRef, provider, cursor, limit, offset, fields, count } = parsed.data;
+    const { beneficiaryRef, provider, from, to, order, cursor, limit, offset, fields, count } =
+      parsed.data;
 
     const fieldSet = parseFields(fields, RECEIPT_FIELDS, 'GET /receipts');
     const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
       fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
 
-    const baseWhere = beneficiaryRef ? { beneficiaryRef } : { providerAddress: provider! };
+    const fromDate = from ? new Date(from) : undefined;
+    const toDate = to ? new Date(to) : undefined;
+    const settledAt =
+      fromDate || toDate
+        ? { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lt: toDate } : {}) }
+        : undefined;
+    const baseWhere = {
+      ...(beneficiaryRef ? { beneficiaryRef } : { providerAddress: provider! }),
+      ...(settledAt ? { settledAt } : {}),
+    };
 
     const isProviderView = Boolean(provider);
 
@@ -183,22 +260,40 @@ export function receiptRoutes(app: FastifyInstance): void {
     };
 
     if (cursor) {
-      const decoded = decodeCursor(cursor);
-      if (!decoded) {
+      const decoded = decodeSortCursor(cursor);
+      let cursorDate: Date;
+      let cursorId: string;
+
+      if (decoded) {
+        if (decoded.sort !== 'settledAt' || decoded.order !== order) {
+          throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
+        }
+        cursorDate = new Date(decoded.value);
+        cursorId = decoded.id;
+      } else {
+        // Cursors issued before ordering existed describe newest-first only.
+        const legacy = decodeCursor(cursor);
+        if (!legacy || order !== 'desc') {
+          throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
+        }
+        cursorDate = new Date(legacy.createdAt);
+        cursorId = legacy.id;
+      }
+
+      if (Number.isNaN(cursorDate.getTime())) {
         throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
       }
-      const cursorDate = new Date(decoded.createdAt);
+
+      const settledBoundary = order === 'asc' ? { gt: cursorDate } : { lt: cursorDate };
+      const idBoundary = order === 'asc' ? { gt: cursorId } : { lt: cursorId };
       const where = {
         ...baseWhere,
-        OR: [
-          { settledAt: { lt: cursorDate } },
-          { settledAt: cursorDate, voucherId: { lt: decoded.id } },
-        ],
+        OR: [{ settledAt: settledBoundary }, { settledAt: cursorDate, voucherId: idBoundary }],
       };
       const rows = (await prisma.receipt.findMany({
         where,
         select: receiptSelect(fieldSet, isProviderView),
-        orderBy: [{ settledAt: 'desc' }, { voucherId: 'desc' }],
+        orderBy: [{ settledAt: order }, { voucherId: order }],
         take: limit + 1,
       })) as unknown as ListRow[];
       const hasNext = rows.length > limit;
@@ -208,7 +303,10 @@ export function receiptRoutes(app: FastifyInstance): void {
         receiptClinics(page, fieldSet),
       ]);
       const last = page[page.length - 1];
-      const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : null;
+      const nextCursor =
+        hasNext && last
+          ? encodeSortCursor(last.settledAt, last.voucherId, 'settledAt', order)
+          : null;
       const link = nextPageLink(req.url, nextCursor);
       if (link) reply.header('link', link);
       // #247: the count uses the same filters as the page, without the cursor.
@@ -225,7 +323,7 @@ export function receiptRoutes(app: FastifyInstance): void {
       prisma.receipt.findMany({
         where: baseWhere,
         select: receiptSelect(fieldSet, isProviderView),
-        orderBy: [{ settledAt: 'desc' }, { voucherId: 'desc' }],
+        orderBy: [{ settledAt: order }, { voucherId: order }],
         take: limit + 1,
         skip: offset,
       }) as unknown as Promise<ListRow[]>,
@@ -244,7 +342,10 @@ export function receiptRoutes(app: FastifyInstance): void {
       receiptClinics(page, fieldSet),
     ]);
     const last = page[page.length - 1];
-    const nextCursor = hasNext && last ? encodeCursor(last.settledAt, last.voucherId) : undefined;
+    const nextCursor =
+      hasNext && last
+        ? encodeSortCursor(last.settledAt, last.voucherId, 'settledAt', order)
+        : undefined;
     const link = nextPageLink(req.url, nextCursor);
     if (link) reply.header('link', link);
     const totalSpend = spend.reduce((acc, r) => acc + BigInt(r.amount), 0n).toString();
@@ -259,6 +360,56 @@ export function receiptRoutes(app: FastifyInstance): void {
       receipts: project(page.map((r) => formatReceipt(r, labels, clinics))),
     };
   });
+
+  /**
+   * The same receipts as JSON `GET /receipts`, as a streamed CSV download.
+   *
+   * The filters are the list route's, including the half-open `settledAt`
+   * range, so a clinic can export exactly the month it is reconciling. Rows
+   * are read in keyset batches and written as they arrive, so memory stays
+   * flat however many receipts match. There is deliberately no beneficiary
+   * reference column: an export is a spreadsheet that will be forwarded.
+   */
+  app.get(
+    '/receipts.csv',
+    {
+      schema: {
+        summary: 'Stream a patient’s or clinic’s receipts as CSV',
+        description:
+          'The same filters as GET /receipts, without paging. `from` is inclusive and ' +
+          '`to` is exclusive on `settledAt`; `order` is `asc` or `desc`.',
+      },
+      config: { rateLimit: LIST_ROUTE_RATE_LIMIT },
+    },
+    async (req, reply) => {
+      const parsed = csvQuery.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
+      }
+      const { beneficiaryRef, provider, from, to, order } = parsed.data;
+
+      const fromDate = from ? new Date(from) : undefined;
+      const toDate = to ? new Date(to) : undefined;
+      const where: Prisma.ReceiptWhereInput = {
+        ...(beneficiaryRef ? { beneficiaryRef } : { providerAddress: provider! }),
+        ...(fromDate || toDate
+          ? {
+              settledAt: {
+                ...(fromDate ? { gte: fromDate } : {}),
+                ...(toDate ? { lt: toDate } : {}),
+              },
+            }
+          : {}),
+      };
+
+      reply
+        .header('content-type', 'text/csv; charset=utf-8')
+        .header('content-disposition', 'attachment; filename="receipts.csv"')
+        .header('cache-control', 'no-store');
+
+      return reply.send(Readable.from(receiptCsv(where, order), { objectMode: false }));
+    },
+  );
 
   /**
    * Care summary for one patient reference (#53).
@@ -401,4 +552,64 @@ export function receiptRoutes(app: FastifyInstance): void {
     // exact object, so the two endpoints cannot drift apart.
     return serialiseReceipt(receipt, labels, clinics);
   });
+}
+
+/**
+ * Yields the CSV one line at a time. Rows are paged by (settledAt, voucherId),
+ * the same total order the list route sorts by, so a batch boundary can never
+ * skip or duplicate a row while the export streams.
+ */
+async function* receiptCsv(
+  where: Prisma.ReceiptWhereInput,
+  order: 'asc' | 'desc',
+): AsyncGenerator<string> {
+  yield `${csvRow(CSV_COLUMNS)}\r\n`;
+
+  let boundary: { settledAt: Date; voucherId: string } | undefined;
+  for (;;) {
+    const after = boundary;
+    const batch = await prisma.receipt.findMany({
+      where: after
+        ? {
+            AND: [
+              where,
+              {
+                OR: [
+                  {
+                    settledAt: order === 'asc' ? { gt: after.settledAt } : { lt: after.settledAt },
+                  },
+                  {
+                    settledAt: after.settledAt,
+                    voucherId: order === 'asc' ? { gt: after.voucherId } : { lt: after.voucherId },
+                  },
+                ],
+              },
+            ],
+          }
+        : where,
+      orderBy: [{ settledAt: order }, { voucherId: order }],
+      take: CSV_BATCH_SIZE,
+    });
+    if (batch.length === 0) return;
+
+    const [labels, clinics] = await Promise.all([serviceLabels(batch), providerSummaries(batch)]);
+    for (const row of batch) {
+      const receipt = serialiseReceipt(row, labels, clinics);
+      yield `${csvRow([
+        receipt.voucherId,
+        receipt.providerAddress,
+        receipt.provider.name,
+        receipt.provider.country,
+        receipt.serviceCode,
+        receipt.serviceLabel,
+        receipt.amount,
+        receipt.amountDisplay,
+        receipt.settledAt,
+      ])}\r\n`;
+    }
+
+    if (batch.length < CSV_BATCH_SIZE) return;
+    const last = batch[batch.length - 1]!;
+    boundary = { settledAt: last.settledAt, voucherId: last.voucherId };
+  }
 }

@@ -2016,6 +2016,58 @@ describe('GET /stats/daily', () => {
     expect((await get('/stats/daily?days=366')).status).toBe(400);
     expect((await get('/stats/daily?days=week')).status).toBe(400);
   });
+
+  // #243 — a year-long chart needs 12 points, not 365.
+  it('aggregates into ISO weeks and months whose sums equal the daily ones', async () => {
+    const { body: daily } = await get('/stats/daily?days=90');
+    const { body: weekly } = await get('/stats/daily?days=90&granularity=week');
+    const { body: monthly } = await get('/stats/daily?days=90&granularity=month');
+
+    expect(weekly.granularity).toBe('week');
+    expect(weekly.series.length).toBeLessThan(daily.series.length);
+    for (const point of weekly.series as { date: string }[]) {
+      // Every label is a Monday in UTC (ISO 8601 weeks).
+      expect(new Date(`${point.date}T00:00:00Z`).getUTCDay()).toBe(1);
+    }
+    for (const key of ['funded', 'settled', 'refunded']) {
+      expect(sum(weekly, key)).toEqual(sum(daily, key));
+    }
+
+    expect(monthly.granularity).toBe('month');
+    for (const point of monthly.series as { date: string }[]) {
+      expect(point.date.endsWith('-01')).toBe(true);
+    }
+    for (const key of ['funded', 'settled', 'refunded']) {
+      expect(sum(monthly, key)).toEqual(sum(daily, key));
+    }
+  });
+
+  // #244 — gaps are filled by default; clients that want only activity can
+  // ask for the sparse form instead.
+  it('fill=false returns only periods with activity', async () => {
+    const { body: filled } = await get('/stats/daily?days=30');
+    const { body: sparse } = await get('/stats/daily?days=30&fill=false');
+
+    expect(filled.fill).toBe(true);
+    expect(sparse.fill).toBe(false);
+    expect(sparse.series.length).toBeGreaterThan(0);
+    expect(sparse.series.length).toBeLessThan(filled.series.length);
+    for (const point of sparse.series as {
+      funded: { count: number };
+      settled: { count: number };
+      refunded: { count: number };
+    }[]) {
+      expect(point.funded.count + point.settled.count + point.refunded.count).toBeGreaterThan(0);
+    }
+    for (const key of ['funded', 'settled', 'refunded']) {
+      expect(sum(sparse, key)).toEqual(sum(filled, key));
+    }
+  });
+
+  it('rejects an unknown granularity or fill value', async () => {
+    expect((await get('/stats/daily?granularity=quarter')).status).toBe(400);
+    expect((await get('/stats/daily?fill=maybe')).status).toBe(400);
+  });
 });
 
 describe('GET /vouchers', () => {
@@ -2804,6 +2856,169 @@ describe('GET /receipts', () => {
     expect(orphan).toMatchObject({
       provider: { address: UNREGISTERED_CLINIC, name: null, country: null },
     });
+  });
+
+  // #241 — a clinic reconciling a month needs that month, not every receipt
+  // with the right provider.
+  it('applies an inclusive from and exclusive to on settledAt', async () => {
+    const { body: all } = await get(`/receipts?beneficiaryRef=${REF}`);
+    const receipts = all.receipts as { voucherId: string; settledAt: string; amount: string }[];
+    const [older, newer] = [...receipts].sort(
+      (a, b) => Date.parse(a.settledAt) - Date.parse(b.settledAt),
+    );
+
+    // Both bounds are the receipt instants themselves: `from` includes the
+    // older one, `to` excludes the newer one.
+    const { body: ranged } = await get(
+      `/receipts?beneficiaryRef=${REF}&from=${older!.settledAt}&to=${newer!.settledAt}&count=true`,
+    );
+    expect(ranged.receipts.map((r: { voucherId: string }) => r.voucherId)).toEqual([
+      older!.voucherId,
+    ]);
+    // The totals describe the filtered set, not the whole history.
+    expect(ranged.total).toBe(1);
+    expect(ranged.totalSpend).toBe(older!.amount);
+
+    // One millisecond later the newer receipt is inside the window, which
+    // shows the end bound is exclusive rather than merely rounded.
+    const to = new Date(Date.parse(newer!.settledAt) + 1).toISOString();
+    const { body: both } = await get(
+      `/receipts?beneficiaryRef=${REF}&from=${older!.settledAt}&to=${to}&count=true`,
+    );
+    expect(both.receipts.map((r: { voucherId: string }) => r.voucherId)).toEqual([
+      newer!.voucherId,
+      older!.voucherId,
+    ]);
+  });
+
+  it('orders oldest first and pages in that order', async () => {
+    const { body: desc } = await get(`/receipts?beneficiaryRef=${REF}`);
+    const { body: asc } = await get(`/receipts?beneficiaryRef=${REF}&order=asc`);
+
+    const descIds = desc.receipts.map((r: { voucherId: string }) => r.voucherId);
+    const ascIds = asc.receipts.map((r: { voucherId: string }) => r.voucherId);
+    expect(ascIds).toEqual([...descIds].reverse());
+
+    const { body: page1 } = await get(`/receipts?beneficiaryRef=${REF}&order=asc&limit=1`);
+    expect(page1.receipts).toHaveLength(1);
+    const { body: page2 } = await get(
+      `/receipts?beneficiaryRef=${REF}&order=asc&limit=1&cursor=${page1.nextCursor}`,
+    );
+    expect(page2.receipts[0].voucherId).not.toBe(page1.receipts[0].voucherId);
+
+    // A cursor encodes the order that produced it; using the ascending one
+    // for a descending page would skip rows rather than fail.
+    const { status, body } = await get(
+      `/receipts?beneficiaryRef=${REF}&order=desc&limit=1&cursor=${page1.nextCursor}`,
+    );
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_cursor');
+  });
+
+  it('rejects invalid or reversed dates with 400', async () => {
+    expect((await get(`/receipts?beneficiaryRef=${REF}&from=not-a-date`)).status).toBe(400);
+    expect((await get(`/receipts?beneficiaryRef=${REF}&to=2026-13-01`)).status).toBe(400);
+
+    const { status, body } = await get(
+      `/receipts?beneficiaryRef=${REF}&from=${new Date().toISOString()}&to=${new Date(
+        Date.now() - DAY,
+      ).toISOString()}`,
+    );
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_query');
+  });
+});
+
+// #242 — an accountant wants the same filtered rows in a spreadsheet, without
+// the server ever holding the whole export.
+describe('GET /receipts.csv', () => {
+  it('streams the filtered receipts with no beneficiary column', async () => {
+    const { status, body, headers } = await getCsv(`/receipts.csv?beneficiaryRef=${REF}`);
+    expect(status).toBe(200);
+    expect(headers['content-type']).toContain('text/csv');
+    expect(headers['content-disposition']).toBe('attachment; filename="receipts.csv"');
+
+    const rows = parseCsv(body);
+    expect(rows[0]).toEqual([
+      'voucherId',
+      'providerAddress',
+      'providerName',
+      'providerCountry',
+      'serviceCode',
+      'serviceLabel',
+      'amount',
+      'amountDisplay',
+      'settledAt',
+    ]);
+    // Ascending by settledAt by default, so the older receipt comes first.
+    expect(rows.slice(1).map((r) => r[0])).toEqual(['1', '9']);
+    expect(rows[1]).toEqual([
+      '1',
+      CLINIC,
+      'Ikeja General Clinic',
+      'NG',
+      '101',
+      'Outpatient consult',
+      '30000000',
+      '3.0000000',
+      expect.any(String),
+    ]);
+    // The patient reference is deliberately absent from a file that leaves
+    // the service.
+    expect(rows[0]).not.toContain('beneficiaryRef');
+  });
+
+  it('requires exactly one of beneficiaryRef or provider', async () => {
+    expect((await getCsv('/receipts.csv')).status).toBe(400);
+    expect((await getCsv(`/receipts.csv?beneficiaryRef=${REF}&provider=${CLINIC}`)).status).toBe(
+      400,
+    );
+  });
+
+  it('takes the same half-open settledAt range as the list route', async () => {
+    const from = new Date(Date.now() - 4 * DAY).toISOString();
+    const { body } = await getCsv(`/receipts.csv?beneficiaryRef=${REF}&from=${from}`);
+    const rows = parseCsv(body);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]![0]).toBe('9');
+  });
+
+  it('neutralises cells a spreadsheet would evaluate as a formula', async () => {
+    await prisma.receipt.create({
+      data: {
+        voucherId: '=2+2',
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '10000000',
+        settledAt: new Date(Date.now() - 2 * DAY),
+      },
+    });
+
+    const { body } = await getCsv(`/receipts.csv?beneficiaryRef=${REF}`);
+    const rows = parseCsv(body);
+    expect(rows.some((r) => r[0] === "'=2+2")).toBe(true);
+  });
+
+  it('streams past a batch boundary without skipping or repeating rows', async () => {
+    // One more than the export's batch size, so the second round trip is
+    // exercised with the compound (settledAt, voucherId) boundary.
+    const settledAt = new Date(Date.now() - DAY);
+    await prisma.receipt.createMany({
+      data: Array.from({ length: 501 }, (_, index) => ({
+        voucherId: `bulk-${String(index).padStart(4, '0')}`,
+        beneficiaryRef: OTHER_REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '1000000',
+        settledAt,
+      })),
+    });
+
+    const { body } = await getCsv(`/receipts.csv?beneficiaryRef=${OTHER_REF}`);
+    const rows = parseCsv(body);
+    expect(rows).toHaveLength(502);
+    expect(new Set(rows.slice(1).map((r) => r[0])).size).toBe(501);
   });
 });
 
