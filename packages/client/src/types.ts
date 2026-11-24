@@ -341,6 +341,12 @@ export type GovernanceResponse = {
 
 export type HealthStatus = {
   status: string;
+  /** Package version of the running build. */
+  version: string;
+  /** Deployed commit, or null when the platform does not expose one. */
+  commit: string | null;
+  /** Whole seconds since this process started. */
+  uptimeSeconds: number;
 };
 
 export type VersionInfo = {
