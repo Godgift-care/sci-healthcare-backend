@@ -163,7 +163,10 @@ const CSV_COLUMNS = [
 ] as const;
 
 const CONTRACTS = {
-  Health: { present: ['status'], absent: [] },
+  Health: {
+    present: ['status', 'version', 'commit', 'uptimeSeconds'],
+    absent: [],
+  },
   Version: {
     present: [
       'version',

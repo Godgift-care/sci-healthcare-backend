@@ -1,5 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { prisma } from '../db.js';
+import { indexerPaused, reconcileMismatches } from '../lib/metrics.js';
 
 /**
  * `ops/alerts.yml` is operator-facing configuration, so its acceptance
@@ -53,7 +57,7 @@ function declaredMetrics(): string[] {
 function appMetricRefs(expr: string): string[] {
   return [...expr.matchAll(/\b([a-z][a-z0-9_]*)\b/g)]
     .map((m) => m[1] as string)
-    .filter((token) => /^(http|indexer|events|stream|webhook)_/.test(token))
+    .filter((token) => /^(http|indexer|events|stream|webhook|reconcile)_/.test(token))
     .map((token) => token.replace(/_(bucket|sum|count)$/, ''));
 }
 
@@ -65,17 +69,32 @@ describe('ops/alerts.yml', () => {
     expect(alerts.map((a) => a.name)).toContain('SciIndexerLagging');
   });
 
-  it('has the alerts this issue asks for (#131)', () => {
+  it('has the alerts this issue asks for (#131, #220)', () => {
     const names = alerts.map((a) => a.name);
-    // Indexer lag, failed events, 5xx rate and the webhook backlog (#130).
+    // Indexer lag, failed events, 5xx rate, webhook backlog (#130) and the
+    // two quiet states from #220.
     for (const required of [
       'SciIndexerLagging',
       'SciFailedEvents',
       'SciHigh5xxRate',
       'SciWebhookBacklog',
+      'SciReconcileMismatches',
+      'SciIndexerPausedTooLong',
     ]) {
       expect(names, `missing alert ${required}`).toContain(required);
     }
+  });
+
+  it('fires on reconciliation drift and on a pause held for over an hour (#220)', () => {
+    const mismatches = alerts.find((a) => a.name === 'SciReconcileMismatches');
+    const paused = alerts.find((a) => a.name === 'SciIndexerPausedTooLong');
+
+    expect(exprOf(mismatches?.body ?? '')).toContain('reconcile_mismatches > 0');
+    expect(mismatches?.body).toMatch(/^\s+for: \d+[smh]$/m);
+
+    expect(exprOf(paused?.body ?? '')).toContain('indexer_paused > 0');
+    // The whole point of the rule: a short, planned pause must not page.
+    expect(paused?.body).toMatch(/^\s+for: 1h$/m);
   });
 
   it('gives every rule an expression, a duration, a severity and a summary', () => {
@@ -108,5 +127,81 @@ describe('ops/alerts.yml', () => {
     // and the indexer series only in the process running the indexer; an
     // alert on a series nobody scrapes can never fire.
     expect(alertsText).toMatch(/combined mode, or the worker/);
+  });
+
+  it('updates both gauges in the code that changes the underlying state (#220)', () => {
+    const source = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
+    expect(source('../stellar/reconcile.ts')).toContain('recordReconcileMismatches');
+    expect(source('../scripts/indexer-pause.ts')).toContain('recordIndexerPaused(true)');
+    expect(source('../scripts/indexer-resume.ts')).toContain('recordIndexerPaused(false)');
+    expect(source('../stellar/indexer.ts')).toContain('recordIndexerPaused(state.paused)');
+  });
+});
+
+describe('#220 operational gauges', () => {
+  // Every vitest file shares one Prisma client and one database. Snapshot the
+  // cursor instead of deleting it, and never disconnect here: a later file
+  // would then fail every readiness query with a closed client.
+  let originalState: Awaited<ReturnType<typeof prisma.indexerState.findUnique>> = null;
+
+  beforeAll(async () => {
+    originalState = await prisma.indexerState.findUnique({ where: { id: 1 } });
+  });
+
+  afterAll(async () => {
+    if (originalState === null) {
+      await prisma.indexerState.deleteMany({ where: { id: 1 } });
+    } else {
+      await prisma.indexerState.update({
+        where: { id: 1 },
+        data: {
+          lastLedger: originalState.lastLedger,
+          paused: originalState.paused,
+          gap: originalState.gap,
+          gapOldestLedger: originalState.gapOldestLedger,
+          gapCursorLedger: originalState.gapCursorLedger,
+          leaseOwner: originalState.leaseOwner,
+          leaseExpiresAt: originalState.leaseExpiresAt,
+        },
+      });
+    }
+  });
+
+  async function gaugeValue(
+    gauge: typeof reconcileMismatches | typeof indexerPaused,
+  ): Promise<number> {
+    const metric = await gauge.get();
+    return Number(metric.values[0]?.value ?? 0);
+  }
+
+  it('reflects the number of open reconciliation mismatch rows', async () => {
+    const voucherId = randomUUID();
+    const before = await prisma.reconcileMismatch.count();
+
+    await prisma.reconcileMismatch.create({
+      data: {
+        voucherId,
+        kind: 'field_mismatch',
+        fields: JSON.stringify([{ field: 'status', db: 'Funded', chain: 'Settled' }]),
+        firstSeen: new Date(),
+        lastSeen: new Date(),
+      },
+    });
+    expect(await gaugeValue(reconcileMismatches)).toBe(before + 1);
+
+    await prisma.reconcileMismatch.delete({ where: { voucherId } });
+    expect(await gaugeValue(reconcileMismatches)).toBe(before);
+  });
+
+  it('reads the persisted pause flag rather than a process-local default', async () => {
+    if (originalState === null) {
+      await prisma.indexerState.create({ data: { id: 1, lastLedger: 100, paused: false } });
+    } else {
+      await prisma.indexerState.update({ where: { id: 1 }, data: { paused: false } });
+    }
+    expect(await gaugeValue(indexerPaused)).toBe(0);
+
+    await prisma.indexerState.update({ where: { id: 1 }, data: { paused: true } });
+    expect(await gaugeValue(indexerPaused)).toBe(1);
   });
 });

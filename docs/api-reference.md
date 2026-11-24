@@ -223,7 +223,7 @@ composed or sent, and refuse a payload that carries a beneficiary reference.
   curl http://localhost:8080/health
   ```
   ```json
-  { "status": "ok", "time": "2026-09-02T12:00:00.000Z" }
+  { "status": "ok", "version": "0.2.0", "commit": "a1b2c3d", "uptimeSeconds": 3600 }
   ```
 - **`GET /ready`**: Readiness probe checking database connectivity and indexer sync lag.
   ```bash
