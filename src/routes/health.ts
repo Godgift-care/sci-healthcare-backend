@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { env, WEBHOOKS_ENABLED } from '../env.js';
 import { clearLedgerMemos, lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
+import { aggregateDailySeries, utcDateString } from '../lib/daily-stats.js';
 import { isPostgres } from '../lib/database.js';
 import { webhookBacklog, webhookCircuitSnapshot } from '../lib/webhooks.js';
 import { APP_VERSION, deployedCommit, STARTED_AT } from '../lib/version.js';
@@ -14,6 +15,11 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const dailyQuery = z.object({
   days: z.coerce.number().int().min(1).max(365).default(30),
+  granularity: z.enum(['day', 'week', 'month']).default('day'),
+  fill: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
 });
 
 const funnelQuery = z.object({
@@ -89,21 +95,6 @@ const funnelResponse = z.object({
     attestedToSettled: z.number().nonnegative().nullable(),
   }),
 });
-
-/** Count and summed base units for one activity type on one day. */
-type DailyBucket = { count: number; amount: string };
-
-type DailyRow = {
-  date: string;
-  funded: DailyBucket;
-  settled: DailyBucket;
-  refunded: DailyBucket;
-};
-
-/** The `YYYY-MM-DD` UTC day a timestamp falls on. */
-function utcDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
 
 /** Median elapsed hours; incomplete and reversed timestamps are excluded. */
 function medianHours(values: number[]): number | null {
@@ -675,14 +666,16 @@ export function healthRoutes(app: FastifyInstance): void {
   );
 
   /**
-   * Protocol activity as a per-UTC-day time series.
+   * Protocol activity as a time series.
    *
    * Counters are cumulative, which hides whether anything happened this
    * month. This is the same funded / settled / refunded split as the totals,
-   * but bucketed by day so growth is visible.
+   * bucketed by UTC day, ISO week (Monday start) or calendar month, so a
+   * year-long chart can ask for 12 points instead of 365.
    *
-   * Days with no activity are present with zero counts and a "0" amount, so
-   * a chart does not have to fill gaps itself. Amounts are exact base-unit
+   * Days with no activity are present with zero counts and a "0" amount by
+   * default, so a chart does not have to fill gaps itself; `fill=false`
+   * returns only buckets that have a row. Amounts are exact base-unit
    * strings, summed with BigInt — never floats.
    */
   app.get('/stats/daily', async (req, reply) => {
@@ -690,17 +683,16 @@ export function healthRoutes(app: FastifyInstance): void {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_query', issues: parsed.error.issues });
     }
-    const { days } = parsed.data;
+    const { days, granularity, fill } = parsed.data;
 
     // Anchor the window to UTC midnight so a day boundary is a day boundary
     // regardless of the server's timezone. `to` is exclusive for the query.
     const now = new Date();
     const todayUtcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
     const fromMs = todayUtcMs - (days - 1) * MS_PER_DAY;
-    const from = new Date(fromMs);
 
-    const fromDateStr = utcDate(from);
-    const toDateStr = utcDate(new Date(todayUtcMs));
+    const fromDateStr = utcDateString(new Date(fromMs));
+    const toDateStr = utcDateString(new Date(todayUtcMs));
 
     const stats = await prisma.dailyStat.findMany({
       where: {
@@ -709,39 +701,16 @@ export function healthRoutes(app: FastifyInstance): void {
           lte: toDateStr,
         },
       },
+      orderBy: { date: 'asc' },
     });
-
-    const byDate = new Map<string, (typeof stats)[number]>();
-    for (const s of stats) {
-      byDate.set(s.date, s);
-    }
-
-    const series: DailyRow[] = [];
-    for (let i = 0; i < days; i += 1) {
-      const dateStr = utcDate(new Date(fromMs + i * MS_PER_DAY));
-      const stat = byDate.get(dateStr);
-      series.push({
-        date: dateStr,
-        funded: {
-          count: stat?.fundedCount ?? 0,
-          amount: stat?.fundedAmount ?? '0',
-        },
-        settled: {
-          count: stat?.settledCount ?? 0,
-          amount: stat?.settledAmount ?? '0',
-        },
-        refunded: {
-          count: stat?.refundedCount ?? 0,
-          amount: stat?.refundedAmount ?? '0',
-        },
-      });
-    }
 
     return {
       days,
-      from: from.toISOString(),
+      granularity,
+      fill,
+      from: new Date(fromMs).toISOString(),
       to: new Date(todayUtcMs).toISOString(),
-      series,
+      series: aggregateDailySeries(stats, fromDateStr, toDateStr, granularity, fill),
     };
   });
 }

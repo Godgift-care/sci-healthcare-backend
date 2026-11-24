@@ -139,8 +139,8 @@ export class Client {
     async stats() {
         return this.request('/stats');
     }
-    async dailyStats(days = 30) {
-        return this.request('/stats/daily', { days });
+    async dailyStats(days = 30, options = {}) {
+        return this.request('/stats/daily', { days, ...options });
     }
     async providers(params) {
         return this.request('/providers', firstPageCount(params));

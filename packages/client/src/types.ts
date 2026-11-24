@@ -292,8 +292,18 @@ export type DailyRow = {
   refunded: DailyBucket;
 };
 
+export type DailyGranularity = 'day' | 'week' | 'month';
+
+export type DailyStatsQuery = {
+  granularity?: DailyGranularity;
+  /** Default true; false returns only periods with a row. */
+  fill?: boolean;
+};
+
 export type DailyStats = {
   days: number;
+  granularity: DailyGranularity;
+  fill: boolean;
   from: string;
   to: string;
   series: DailyRow[];

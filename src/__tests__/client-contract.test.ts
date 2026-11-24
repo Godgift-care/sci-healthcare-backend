@@ -243,7 +243,7 @@ const CONTRACTS = {
     ],
     absent: [],
   },
-  DailyStats: { present: ['days', 'from', 'to', 'series'], absent: [] },
+  DailyStats: { present: ['days', 'granularity', 'fill', 'from', 'to', 'series'], absent: [] },
   DailyRow: { present: ['date', 'funded', 'settled', 'refunded'], absent: [] },
   DailyBucket: { present: ['count', 'amount'], absent: [] },
   ProvidersResponse: {
