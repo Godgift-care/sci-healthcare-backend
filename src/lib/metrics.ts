@@ -126,3 +126,20 @@ export const webhookCircuitConsecutiveFailures = new Gauge({
   labelNames: ['endpoint'],
   registers: [registry],
 });
+
+/** Delivery attempts by outcome, using only bounded non-sensitive labels. */
+export const webhookDeliveriesTotal = new Counter({
+  name: 'webhook_deliveries_total',
+  help: 'Webhook HTTP delivery attempts by outcome',
+  labelNames: ['endpoint', 'outcome'],
+  registers: [registry],
+});
+
+/** Wall-clock duration of webhook HTTP attempts, including failed requests. */
+export const webhookDeliveryDuration = new Histogram({
+  name: 'webhook_delivery_duration_seconds',
+  help: 'Webhook HTTP delivery attempt duration in seconds',
+  labelNames: ['endpoint', 'outcome'],
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+  registers: [registry],
+});
