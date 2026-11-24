@@ -9,7 +9,8 @@ import { WebhookCircuit, WebhookDispatcher } from '../lib/webhooks.js';
 const SLOW = 'https://slow.example.test/hooks?token=private-slow-secret';
 const FAIL = 'https://fail.example.test/hooks?token=private-fail-secret';
 const urls = [SLOW, FAIL];
-const endpointHash = (index: number) => createHash('sha256').update(String(index)).digest('hex').slice(0, 8);
+const endpointHash = (index: number) =>
+  createHash('sha256').update(String(index)).digest('hex').slice(0, 8);
 
 beforeEach(async () => {
   webhookDeliveriesTotal.reset();
@@ -30,7 +31,12 @@ async function enqueue(id: string, url: string): Promise<void> {
       voucherId: id,
       status: 'Funded',
       ledger: 1,
-      payload: JSON.stringify({ event: 'voucher_created', voucherId: id, status: 'Funded', ledger: 1 }),
+      payload: JSON.stringify({
+        event: 'voucher_created',
+        voucherId: id,
+        status: 'Funded',
+        ledger: 1,
+      }),
       nextAttemptAt: new Date(Date.now() - 1000),
     },
   });
@@ -47,8 +53,18 @@ describe('webhook delivery metrics (#217)', () => {
       }
       return new Response('unavailable', { status: 503 });
     }) as unknown as typeof fetch;
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger;
-    const dispatcher = new WebhookDispatcher(log, { urls, secret: 'metric-test-secret', fetchImpl, circuit: new WebhookCircuit() });
+    const log = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+    const dispatcher = new WebhookDispatcher(log, {
+      urls,
+      secret: 'metric-test-secret',
+      fetchImpl,
+      circuit: new WebhookCircuit(),
+    });
 
     expect(await dispatcher.deliverPending()).toBe(1);
     const metrics = await registry.metrics();
@@ -62,13 +78,17 @@ describe('webhook delivery metrics (#217)', () => {
     expect(metrics).not.toContain('private-fail-secret');
     expect(metrics).not.toContain('metric-test-secret');
     const observations = await webhookDeliveryDuration.get();
-    expect(observations.values.some((v) => v.metricName.endsWith('_sum') && v.value >= 0.025)).toBe(true);
+    expect(
+      observations.values.some((v) => v.metricName.endsWith('_sum') && v.value >= 0.025),
+    ).toBe(true);
   });
 
   it('counts rejected network attempts as network_error', async () => {
     await enqueue('network', SLOW);
     const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger;
-    const fetchImpl = vi.fn(async () => { throw new Error('offline'); }) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('offline');
+    }) as unknown as typeof fetch;
     const dispatcher = new WebhookDispatcher(log, { urls, secret: 'metric-test-secret', fetchImpl, circuit: new WebhookCircuit() });
     expect(await dispatcher.deliverPending()).toBe(0);
     const metrics = await registry.metrics();
