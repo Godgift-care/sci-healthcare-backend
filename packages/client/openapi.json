@@ -36,13 +36,17 @@
         "tags": [
           "health"
         ],
+        "description": "Reports that the process is up, which build and commit are serving, and how long this process has been running. It never reads the database or RPC, so it stays green while either dependency is down.",
         "responses": {
           "200": {
             "description": "The process is up. Never reads the database, so it stays green while a query would fail.",
             "content": {
               "application/json": {
                 "example": {
-                  "status": "ok"
+                  "status": "ok",
+                  "version": "0.2.0",
+                  "commit": "a1b2c3d",
+                  "uptimeSeconds": 3600
                 }
               }
             }
@@ -4925,13 +4929,17 @@
         "tags": [
           "health"
         ],
+        "description": "Reports that the process is up, which build and commit are serving, and how long this process has been running. It never reads the database or RPC, so it stays green while either dependency is down.",
         "responses": {
           "200": {
             "description": "The process is up. Never reads the database, so it stays green while a query would fail.",
             "content": {
               "application/json": {
                 "example": {
-                  "status": "ok"
+                  "status": "ok",
+                  "version": "0.2.0",
+                  "commit": "a1b2c3d",
+                  "uptimeSeconds": 3600
                 }
               }
             }

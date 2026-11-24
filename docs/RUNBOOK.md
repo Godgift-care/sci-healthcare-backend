@@ -543,7 +543,7 @@ Two layers watch the deployed service, and they answer different questions:
 | --- | --- | --- |
 | The `Uptime monitor` GitHub workflow (committed in this repo) | `/ready` every 30 minutes | A failed run and a red README badge |
 | An external monitor (UptimeRobot below) | `/ready` every 5 minutes | Email to the alert contact |
-| Prometheus rules in `ops/alerts.yml` | `/metrics` series | Indexer lag or stall, failed events, 5xx rate, webhook backlog |
+| Prometheus rules in `ops/alerts.yml` | `/metrics` series | Indexer lag or stall, failed events, reconciliation drift, a pause held over an hour, 5xx rate, webhook backlog |
 
 Neither of these can see the service get *slow*; they only prove `/ready`
 stays green. A paging on latency would need response-time alerting, which

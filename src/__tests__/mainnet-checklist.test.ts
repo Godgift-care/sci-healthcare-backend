@@ -311,8 +311,8 @@ describe('names used in the checklist still exist', () => {
     const defined = [...repoFile('ops/alerts.yml').matchAll(/- alert: (\w+)/g)].map(
       (m) => m[1] ?? '',
     );
-    expect(defined.length).toBe(6);
-    expect(checklist).toContain('six rules');
+    expect(defined.length).toBe(8);
+    expect(checklist).toContain('eight rules');
     for (const name of checklist.match(/\bSci\w+\b/g) ?? []) {
       expect(defined, `${name} is not an alert this repository ships`).toContain(name);
     }
