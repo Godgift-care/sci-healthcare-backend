@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { Prisma } from '@prisma/client';
 import type { Span } from '@opentelemetry/api';
@@ -11,6 +11,8 @@ import {
   webhookCircuitState,
   webhookDeliveriesAbandoned,
   webhookDeliveriesPending,
+  webhookDeliveriesTotal,
+  webhookDeliveryDuration,
 } from './metrics.js';
 import { signWebhook, WEBHOOK_SIGNATURE_HEADER } from './webhook-signature.js';
 import { isTracingEnabled, traceparentHeader, withSpan } from '../tracing.js';
@@ -588,9 +590,17 @@ export class WebhookDispatcher {
     const attempts = row.attempts + 1;
     let error: string | null = null;
     let retryable = true;
+    const startedAt = performance.now();
+    // Hash the configured endpoint's numeric index, never its URL or credentials.
+    const endpointIndex = this.urls.indexOf(row.url);
+    const endpoint = endpointIndex < 0
+      ? 'unknown'
+      : createHash('sha256').update(String(endpointIndex)).digest('hex').slice(0, 8);
+    let outcome: 'success' | 'http_error' | 'network_error' = 'network_error';
 
     try {
       const res = await this.post(row, attempts);
+      outcome = res.ok ? 'success' : 'http_error';
 
       if (res.ok) {
         this.circuit.recordSuccess(row.url);
@@ -622,6 +632,9 @@ export class WebhookDispatcher {
       error = (err as Error).message;
       retryable = true;
       this.circuit.recordFailure(row.url);
+    } finally {
+      webhookDeliveryDuration.observe({ endpoint, outcome }, Math.max(0, (performance.now() - startedAt) / 1000));
+      webhookDeliveriesTotal.inc({ endpoint, outcome });
     }
 
     const abandoned = !retryable || attempts >= this.maxAttempts;
