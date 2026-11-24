@@ -10,6 +10,7 @@ import {
   indexerLagLedgers,
   markIndexerSuccess,
   recordEventLatency,
+  recordIndexerPaused,
 } from '../lib/metrics.js';
 import { server, validateContractIds } from './client.js';
 import { asId, decodeEvent, serialiseEventData, type DecodedEvent } from './events.js';
@@ -526,6 +527,7 @@ export class Indexer {
     this.hasMore = false;
 
     const state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
+    recordIndexerPaused(state.paused);
     if (state.paused) {
       this.hasMore = false;
       return 0;

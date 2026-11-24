@@ -82,8 +82,8 @@ the ledger behind it may already have left RPC retention.
 
 | # | Item | Verify by |
 | --- | --- | --- |
-| 5.1 | `ops/alerts.yml` is loaded by the Prometheus that actually runs | `promtool check rules ops/alerts.yml` (the CI `alerts` job) passes, and the six rules show up on the Prometheus server's own rules page |
-| 5.2 | Every alert in that file has a route to a human | Stop the indexer in test (`npm run indexer:pause`) and confirm `SciIndexerLagging` from `ops/alerts.yml` pages somebody. The six rules in that file cover lag, a stalled poller, failed events, 5xx rate, webhook backlog and abandoned deliveries |
+| 5.1 | `ops/alerts.yml` is loaded by the Prometheus that actually runs | `promtool check rules ops/alerts.yml` (the CI `alerts` job) passes, and the eight rules show up on the Prometheus server's own rules page |
+| 5.2 | Every alert in that file has a route to a human | Stop the indexer in test (`npm run indexer:pause`) and confirm `SciIndexerLagging` from `ops/alerts.yml` pages somebody. The eight rules in that file cover lag, a stalled poller, failed events, reconciliation drift, a pause held for over an hour, 5xx rate, webhook backlog and abandoned deliveries; `SciReconcileMismatches` and `SciIndexerPausedTooLong` need an owner too |
 | 5.3 | `/ready` is probed from outside, on a schedule | `.github/workflows/monitor.yml` runs and the external monitor ([RUNBOOK.md § Uptime monitoring](RUNBOOK.md#uptime-monitoring)) is pointed at `/ready`, not `/health` — `/health` answers while the read model is stale |
 | 5.4 | The metric that matters has a threshold someone chose | `READY_MAX_LAG_LEDGERS` (default 120 ledgers) and the webhook freshness window, `READY_WEBHOOK_MAX_AGE_MS` (default 15 minutes): write the number down with the reason |
 | 5.5 | Logs go somewhere searchable | [logging.md](logging.md): one request is one line, findable by `x-request-id`, and the retention window covers an incident review |
