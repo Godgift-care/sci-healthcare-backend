@@ -76,3 +76,31 @@ export function decodeSortCursor(cursor: string): SortCursorPayload | null {
 
 export const cursorParam = z.string().min(1).max(256).optional();
 export const limitParam = z.coerce.number().int().min(1).max(100).default(50);
+
+/**
+ * `?count=true` asks a list route to count the filtered rows (#247).
+ *
+ * Counting is opt-in because it is an extra aggregate query on every page,
+ * and the answer is only needed by a table showing "1 to 20 of 1,234". A
+ * string enum rather than `z.coerce.boolean()`: `Boolean('false')` is true,
+ * so coercion would silently turn `count=false` into a count.
+ */
+export const countParam = z
+  .enum(['true', 'false'])
+  .optional()
+  .transform((value) => value === 'true');
+
+/**
+ * The RFC 8288 `rel="next"` link for a cursor page (#248).
+ *
+ * The cursor is the only parameter replaced: every filter, sort and field
+ * selection the caller sent stays in the URL, so following the header asks
+ * the same question for the next page. Returns null on the last page, where
+ * there is nothing to follow and no header should be sent.
+ */
+export function nextPageLink(url: string, nextCursor: string | null | undefined): string | null {
+  if (!nextCursor) return null;
+  const parsed = new URL(url, 'http://localhost');
+  parsed.searchParams.set('cursor', nextCursor);
+  return `<${parsed.pathname}${parsed.search}>; rel="next"`;
+}

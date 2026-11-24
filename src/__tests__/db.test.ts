@@ -1,6 +1,38 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDatabaseUrl } from '../db.js';
+import { buildDatabaseUrl, waitForDatabase } from '../db.js';
+
+describe('waitForDatabase', () => {
+  it('succeeds after repeated failures', async () => {
+    let attempts = 0;
+    const waits: number[] = [];
+    const client = {
+      $connect: async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error(`offline ${attempts}`);
+      },
+    };
+
+    await waitForDatabase(client, 10_000, async (ms) => {
+      waits.push(ms);
+    });
+
+    expect(attempts).toBe(3);
+    expect(waits).toEqual([1000, 2000]);
+  });
+
+  it('fails once with a clear deadline error', async () => {
+    const client = {
+      $connect: async () => {
+        throw new Error('database refused connection');
+      },
+    };
+
+    await expect(waitForDatabase(client, 150, async () => {})).rejects.toThrow(
+      'Database did not become reachable within 150ms',
+    );
+  });
+});
 
 describe('buildDatabaseUrl', () => {
   it('applies connection_limit and statement_timeout to a Postgres URL', () => {

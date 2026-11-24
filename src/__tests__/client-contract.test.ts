@@ -247,7 +247,7 @@ const CONTRACTS = {
     ],
     absent: [],
   },
-  DailyStats: { present: ['days', 'from', 'to', 'series'], absent: [] },
+  DailyStats: { present: ['days', 'granularity', 'fill', 'from', 'to', 'series'], absent: [] },
   DailyRow: { present: ['date', 'funded', 'settled', 'refunded'], absent: [] },
   DailyBucket: { present: ['count', 'amount'], absent: [] },
   ProvidersResponse: {
@@ -481,7 +481,7 @@ const CONTRACTS = {
    * push channel is the one thing `stream.ts` says must never happen.
    */
   VoucherStreamEvent: {
-    present: ['at', 'ledger', 'providerAddress', 'status', 'txHash', 'type', 'voucherId'],
+    present: ['at', 'id', 'ledger', 'providerAddress', 'status', 'txHash', 'type', 'voucherId'],
     absent: [],
   },
 } as const satisfies { [N in keyof Shapes]: Contract<Shapes[N]> };
@@ -1075,6 +1075,7 @@ describe('@sci-healthcare/client contract (#310)', () => {
 
     const voucherId = 'contract-streamed';
     const signal: VoucherSignal = {
+      id: 'contract-streamed-event',
       type: 'voucher_settled',
       voucherId,
       providerAddress: CLINIC,
@@ -1132,6 +1133,7 @@ describe('@sci-healthcare/client contract (#310)', () => {
     const live = createClient({ baseUrl: await liveBase() });
     const voucherId = 'contract-stream-events';
     const signal: VoucherSignal = {
+      id: 'contract-stream-events-event',
       type: 'voucher_settled',
       voucherId,
       providerAddress: CLINIC,

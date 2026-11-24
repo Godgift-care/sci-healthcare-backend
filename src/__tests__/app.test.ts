@@ -168,7 +168,10 @@ describe('error envelope', () => {
       new Error('connection reset by peer at 10.0.0.7'),
     );
 
-    const res = await app.inject({ method: 'GET', url: `/vouchers?funder=${FUNDER}` });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/vouchers?funder=${FUNDER}&count=true`,
+    });
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ error: 'internal_error', message: 'Internal server error' });
   });

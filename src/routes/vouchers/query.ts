@@ -102,7 +102,8 @@ export async function pageByWhere(
   limit: number,
   offset: number,
   fieldSet: readonly string[] | null,
-): Promise<{ rows: Row[]; total: number }> {
+  count: boolean,
+): Promise<{ rows: Row[]; total: number | undefined }> {
   const primary =
     sort === 'createdAt'
       ? { createdAt: order }
@@ -119,7 +120,8 @@ export async function pageByWhere(
       take: limit,
       skip: offset,
     }),
-    prisma.voucher.count({ where }),
+    // #247: skipped entirely unless `?count=true` asked for it.
+    count ? prisma.voucher.count({ where }) : Promise.resolve(undefined),
   ]);
   return { rows: rows as unknown as Row[], total };
 }

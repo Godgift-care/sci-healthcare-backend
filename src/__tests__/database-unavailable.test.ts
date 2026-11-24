@@ -138,7 +138,7 @@ describe('GET /vouchers while the database is down', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/vouchers?funder=${FUNDER}`,
+      url: `/vouchers?funder=${FUNDER}&count=true`,
       headers: { 'x-forwarded-for': nextIp() },
     });
 
@@ -156,7 +156,7 @@ describe('GET /vouchers while the database is down', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/vouchers?funder=${FUNDER}`,
+      url: `/v1/vouchers?funder=${FUNDER}&count=true`,
       headers: { 'x-forwarded-for': nextIp() },
     });
 
@@ -170,7 +170,7 @@ describe('GET /vouchers while the database is down', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/vouchers?funder=${FUNDER}`,
+      url: `/vouchers?funder=${FUNDER}&count=true`,
       headers: { 'x-forwarded-for': nextIp() },
     });
 

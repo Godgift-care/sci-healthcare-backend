@@ -159,3 +159,38 @@ export function onQuery(listener: (sql: string) => void): () => void {
 export async function disconnect(): Promise<void> {
   await prisma.$disconnect();
 }
+
+export type DatabaseConnector = {
+  $connect: () => Promise<void>;
+};
+
+/**
+ * Wait for the initial database connection to become available.
+ *
+ * Startup outages are bounded instead of causing a tight restart loop. The
+ * delay grows exponentially to 5 seconds, and the total attempt window never
+ * exceeds the configured deadline.
+ */
+export async function waitForDatabase(
+  connector: DatabaseConnector = prisma,
+  timeoutMs: number = env.DATABASE_CONNECT_TIMEOUT_MS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<void> {
+  const startedAt = Date.now();
+  let delayMs = 1000;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await connector.$connect();
+      return;
+    } catch {
+      const remainingMs = timeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) break;
+      const waitMs = Math.min(delayMs, remainingMs);
+      await sleep(waitMs);
+      delayMs = Math.min(5000, delayMs * 2);
+    }
+  }
+
+  throw new Error(`Database did not become reachable within ${timeoutMs}ms`);
+}

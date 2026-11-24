@@ -232,6 +232,33 @@ export type Stats = {
     faucetDrips?: number;
     faucetWallets?: number;
 };
+/** `GET /stats/disputes` (issue #245). */
+export type DisputeStats = {
+    /** Vouchers that were ever disputed. */
+    count: number;
+    /** Vouchers that reached attestation, the rate's denominator. */
+    attestedVouchers: number;
+    /** Disputes / attested vouchers, fixed to four decimal places. */
+    rate: string;
+    /** Disputed vouchers keyed by contract reason code. */
+    byReason: Record<string, number>;
+    /** Resolved disputes by `Funder` / `Provider`, plus `Unresolved`. */
+    byOutcome: Record<string, number>;
+    /** Median hours from attestation (or creation) to resolution; null if none. */
+    medianResolutionHours: number | null;
+};
+/** `GET /funders/:address` (issue #246). */
+export type FunderSummary = {
+    address: string;
+    vouchers: number;
+    /** Exact base-unit decimal string across every status. */
+    totalValue: string;
+    totalValueDisplay: string;
+    /** Every status is present, zero included. */
+    byStatus: Record<string, number>;
+    /** Exact base-unit decimal strings, keyed like `byStatus`. */
+    valueByStatus: Record<string, string>;
+};
 export type DailyBucket = {
     count: number;
     amount: string;
@@ -242,8 +269,16 @@ export type DailyRow = {
     settled: DailyBucket;
     refunded: DailyBucket;
 };
+export type DailyGranularity = 'day' | 'week' | 'month';
+export type DailyStatsQuery = {
+    granularity?: DailyGranularity;
+    /** Default true; false returns only periods with a row. */
+    fill?: boolean;
+};
 export type DailyStats = {
     days: number;
+    granularity: DailyGranularity;
+    fill: boolean;
     from: string;
     to: string;
     series: DailyRow[];
@@ -441,6 +476,8 @@ export type ListProvidersParams = {
     cursor?: string;
     limit?: number;
     offset?: number;
+    /** Ask for `total`; absent otherwise (issue #247). */
+    count?: boolean;
 };
 /**
  * A `GET /providers` page.
@@ -451,7 +488,7 @@ export type ListProvidersParams = {
  * difference rather than pretending it away.
  */
 export type ProvidersResponse = {
-    total: number;
+    total?: number;
     providers: Provider[];
     nextCursor?: string | null;
     limit?: number;
@@ -471,6 +508,8 @@ export type ListVouchersParams = {
     cursor?: string;
     limit?: number;
     offset?: number;
+    /** Ask for `total`; absent otherwise (issue #247). */
+    count?: boolean;
 };
 export type VouchersResponse = {
     total?: number;
@@ -500,9 +539,11 @@ export type ListReceiptsParams = {
     cursor?: string;
     limit?: number;
     offset?: number;
+    /** Ask for `total`; absent otherwise (issue #247). */
+    count?: boolean;
 };
 export type ReceiptsResponse = {
-    total: number;
+    total?: number;
     totalSpend?: string;
     totalSpendDisplay?: string;
     receipts: Receipt[];
@@ -511,6 +552,7 @@ export type ReceiptsResponse = {
     offset?: number;
 };
 export type ServicesResponse = {
-    total: number;
+    /** Present only with `count=true` (issue #247). */
+    total?: number;
     services: ServiceCatalogueItem[];
 };

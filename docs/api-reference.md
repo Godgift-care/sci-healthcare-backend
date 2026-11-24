@@ -60,7 +60,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /ready` | Readiness; 503 once the indexer trails by more than `READY_MAX_LAG_LEDGERS`, a failed event is dead-lettered, or a webhook delivery is stuck in the outbox |
 | `GET /version` | Build version and commit, network, RPC endpoints, contract ids, indexer start ledger and process start time |
 | `GET /stats` | Protocol counters for the dashboard |
-| `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day (`days` 1–365, max 365) |
+| `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day, ISO week or month (`days` 1–365; `granularity=day|week|month`, `fill=false` for sparse) |
 | `GET /stats/funnel` | Voucher counts and median hours between funded, claimed, attested and settled stages; optionally filter by `country` or clinic address |
 | `GET /providers` | Clinics filterable by `status` (`Pending`, `Active`, `Suspended` or `Retired`), `country`, `q` and `serviceCode`, and sortable by `name`, `registered` or `country`; includes `statusReason` and cached off-chain `metadata` |
 | `GET /providers/:address` | One clinic and its service catalogue, plus its `statusReason` and cached off-chain `metadata` |
@@ -81,7 +81,8 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /vouchers/due` | Vouchers needing action soon (expiring, refundable or settleable) within `within`, e.g. `72h` |
 | `GET /vouchers.csv` | Streamed CSV export matching the same filters as `GET /vouchers` |
 | `GET /vouchers/:id` | One voucher, with its care receipt if settled |
-| `GET /receipts?beneficiaryRef=` / `?provider=` | A patient's settled care history, or a clinic's receipts |
+| `GET /receipts?beneficiaryRef=` / `?provider=` | A patient's settled care history, or a clinic's receipts; `from`/`to` on `settledAt` and `order=asc|desc` |
+| `GET /receipts.csv` | Streamed CSV export of the same filtered receipts, without the beneficiary reference |
 | `GET /receipts/:voucherId` | One receipt, for a shareable receipt page |
 | `GET /governance` | Current and pending admin per contract, plus the handover history |
 | `GET /deployments` | Current and historical contract ids with their ledger ranges, ordered by type then starting ledger |
@@ -114,7 +115,9 @@ reference column**.
 
 `GET /vouchers/:id/events` is the receipt trail: each event the indexer processed for that voucher, in ledger order, with the transaction hash that proved it. Events are appended in the same transaction as the state they update and keyed by the RPC event id, so replaying a ledger never duplicates a row.
 
-`/receipts` requires an exact `beneficiaryRef`. Because that value is an HMAC under a key held by the patient, the endpoint cannot be walked to enumerate people.
+`/receipts` requires an exact `beneficiaryRef` (or a `provider` for the clinic view). Because the reference is an HMAC under a key held by the patient, the endpoint cannot be walked to enumerate people. `from` and `to` bound `settledAt` for a reconciliation period: **`from` is inclusive and `to` is exclusive**, so adjacent months never double-count a receipt settled at exactly midnight. `order=asc|desc` walks the history oldest- or newest-first (default `desc`), and `nextCursor` is bound to that order — a cursor from the other order answers `400 invalid_cursor`. An unparseable date, or `from` later than `to`, is a `400 invalid_query`.
+
+`GET /receipts.csv` takes the same filters and `order`, reads rows in keyset batches and streams them as an RFC 4180 download, so the export never has to fit in memory. It deliberately has **no beneficiary reference column**, and every cell is escaped against spreadsheet formula injection.
 
 Every receipt — the patient view, the clinic view and `GET /receipts/:voucherId`
 — carries the clinic that issued it in a `provider` object (`address`, `name`,
@@ -126,11 +129,19 @@ on-chain registry data; no receipt response gains a beneficiary reference.
 
 `GET /stream?voucher=<id>` or `GET /stream?provider=<address>` holds the
 connection open and forwards each voucher transition as the indexer commits it:
-one `data:` frame per event, containing `type`, `voucherId`,
+one `data:` frame per event, containing `id`, `type`, `voucherId`,
 `providerAddress`, `status`, `ledger`, `txHash` and `at`. Exactly one filter is
 required — an unfiltered feed of care-state transitions would be a way to watch
 a clinic's patient volume in real time — and a frame never carries a beneficiary
 reference, only what the JSON routes already expose for the same transition.
+Each frame also carries the on-chain event id in an SSE `id:` line. Send the last
+one you received as `Last-Event-ID` when you reconnect: the server replays the
+events committed after it, in ledger order, before going live, and drops any
+overlap with the live hand-off by id. At most 500 events are replayed. If the
+cursor is no longer in the event log, belongs to another voucher or clinic, or
+has more than 500 events behind it, the server sends one `event: reset` frame
+whose data is `{"type":"reset","reason":...}` instead; refetch the JSON routes
+and reconnect with no cursor.
 Nothing is read from the database to serve the stream, so it cannot become a
 second way to walk the read model: it only reports what just happened.
 
@@ -650,11 +661,15 @@ The fetch is fenced in: http(s) or an `ipfs://` CID through the configured gatew
 
 Amounts are `i128` on chain and are returned as **decimal strings**. Parsing one into a JavaScript number loses precision above 2^53 — use `BigInt`.
 
-`GET /stats/daily` returns one row per UTC day, oldest first, and includes days
-with no activity as zeros so a chart never has to fill gaps. Each row is
+`GET /stats/daily` returns one row per bucket, oldest first, and includes
+periods with no activity as zeros so a chart never has to fill gaps (pass
+`fill=false` for only the periods with a row). `granularity=day` (default)
+buckets per UTC day, `week` per ISO 8601 week starting Monday in UTC, and
+`month` per calendar month; a bucket's `date` is its first day. Each row is
 `{ date, funded, settled, refunded }`, where each bucket is `{ count, amount }`
-and `amount` is exact base units. Funded is bucketed by voucher `createdAt`,
-settled by receipt `settledAt`, and refunded by a voucher's `refundedAt`.
+and `amount` is exact base units, summed with `BigInt`. Funded is bucketed by
+voucher `createdAt`, settled by receipt `settledAt`, and refunded by a voucher's
+`refundedAt`.
 
 `GET /stats/funnel` returns `counts` for funded, claimed, attested and settled
 vouchers plus `medianHours` for `fundedToClaimed`, `claimedToAttested` and

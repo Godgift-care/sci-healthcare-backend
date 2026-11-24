@@ -193,7 +193,7 @@ export type IndexerOptions = {
   voucherReader?: VoucherReader;
   /** Optional RPC server interface (for fake RPC testing or custom RPC endpoints). */
   rpcServer?: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
-  /** Batch page size passed to collectEvents (default: 200). */
+  /** Batch page size passed to collectEvents. */
   pageSize?: number;
   /** Interval for scheduled reconciliation; defaults to RECONCILE_INTERVAL_MS. */
   reconcileIntervalMs?: number;
@@ -244,7 +244,7 @@ export class Indexer {
     this.shutdownTimeoutMs = opts.shutdownTimeoutMs ?? env.SHUTDOWN_TIMEOUT_MS;
     this.voucherReader = opts.voucherReader ?? readVoucherFromChain;
     this.rpcServer = opts.rpcServer ?? server;
-    this.pageSize = opts.pageSize ?? 200;
+    this.pageSize = opts.pageSize ?? env.INDEXER_PAGE_SIZE;
     this.reconcileIntervalMs = opts.reconcileIntervalMs ?? env.RECONCILE_INTERVAL_MS ?? 0;
     this.reconciliationRunner = opts.reconciliationRunner ?? reconcile;
   }
@@ -559,6 +559,7 @@ export class Indexer {
       const providerAddress = p.providerAddress ?? providerById.get(p.voucherId);
       if (!providerAddress) continue;
       signals.push({
+        id: p.id,
         type: p.type,
         voucherId: p.voucherId,
         providerAddress,
@@ -689,7 +690,12 @@ export class Indexer {
 
           await tx.indexerState.update({
             where: { id: 1 },
-            data: { lastLedger: advanceTo },
+            data: {
+              lastLedger: advanceTo,
+              ...(advanceTo >= health.oldestLedger
+                ? { gap: false, gapOldestLedger: null, gapCursorLedger: null }
+                : {}),
+            },
           });
         },
         // Sized for a busy range on a remote database, not the 5s default.

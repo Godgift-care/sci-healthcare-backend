@@ -8,6 +8,8 @@ export type Db = Prisma.TransactionClient;
  * A committed voucher event waiting to be handed to open streams.
  */
 export type PendingSignal = {
+  /** On-chain contract event id, the SSE `id:` used to resume a stream. */
+  id: string;
   type: string;
   voucherId: string;
   status: string;
