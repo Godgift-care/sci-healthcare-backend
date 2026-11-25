@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { afterAll, beforeAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { prisma } from '../db.js';
 import { indexerGap } from '../lib/metrics.js';
-import { describe, expect, it } from 'vitest';
 
 /**
  * `ops/alerts.yml` is operator-facing configuration, so its acceptance
