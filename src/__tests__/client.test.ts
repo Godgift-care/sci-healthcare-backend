@@ -11,6 +11,8 @@ import {
   type Provider,
 } from '../../packages/client/dist/index.js';
 
+import { expectHealthBody } from './health-body.js';
+
 describe('@sci-healthcare/client', () => {
   let app: FastifyInstance;
   let client: ReturnType<typeof createClient>;
@@ -79,7 +81,7 @@ describe('@sci-healthcare/client', () => {
 
   it('queries health and version information', async () => {
     const health = await client.health();
-    expect(health).toEqual({ status: 'ok' });
+    expectHealthBody(health);
 
     const version = await client.version();
     expect(version.version).toBeDefined();
@@ -103,6 +105,34 @@ describe('@sci-healthcare/client', () => {
     const provider = await client.provider(first.address);
     expect(provider.address).toBe(first.address);
     expect(provider.name).toBe(first.name);
+  });
+
+  it('fetches a clinic price list as its own resource (#314)', async () => {
+    const res = await client.providers({ status: 'Active' });
+    const address = res.providers[0]!.address;
+
+    const list = await client.providerServices(address);
+    expect(list).toMatchObject({ providerAddress: address });
+    expect(list.total).toBe(list.services.length);
+    expect(list.services.length).toBeGreaterThan(0);
+
+    const byPrice = await client.providerServices(address, { sort: 'price', order: 'asc' });
+    const prices = byPrice.services.map((s) => BigInt(s.price));
+    expect(prices).toEqual([...prices].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+
+    const byCode = await client.providerServices(address, { sort: 'code', order: 'desc' });
+    const codes = byCode.services.map((s) => s.code);
+    expect(codes).toEqual([...codes].sort((a, b) => b - a));
+
+    const delisted = await client.providerServices(address, { active: false });
+    expect(delisted.services.every((s) => s.active === false)).toBe(true);
+    const stillOn = await client.providerServices(address, { active: true });
+    expect(stillOn.services.every((s) => s.active)).toBe(true);
+    expect(stillOn.total + delisted.total).toBe(list.total);
+
+    await expect(
+      client.providerServices('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+    ).rejects.toThrow(ApiError);
   });
 
   it('queries services catalogue and single service by code', async () => {
@@ -165,8 +195,11 @@ describe('@sci-healthcare/client', () => {
       name: 'Test Clinic',
       country: 'KE',
       status: 'Active',
+      statusReason: null,
       registeredAt: new Date().toISOString(),
       services: [],
+      capacity: null,
+      openVouchers: 0,
       location: { lat: -1.286389, lng: 36.817223 },
     };
     expect(providerLocation(valid)).toEqual({ lat: -1.286389, lng: 36.817223 });
@@ -176,8 +209,11 @@ describe('@sci-healthcare/client', () => {
       name: 'Test Clinic',
       country: 'KE',
       status: 'Active',
+      statusReason: null,
       registeredAt: new Date().toISOString(),
       services: [],
+      capacity: null,
+      openVouchers: 0,
       metadata: { location: { lat: 0.5, lng: 35.2 } },
     };
     expect(providerLocation(metadataLocation)).toEqual({ lat: 0.5, lng: 35.2 });
@@ -194,5 +230,24 @@ describe('@sci-healthcare/client', () => {
       metadata: null,
     };
     expect(providerLocation(noLocation)).toBeNull();
+  });
+
+  it('normalizes a very long trailing slash run in linear time', async () => {
+    const baseUrl = `https://api.example.test/v1${'/'.repeat(100_000)}`;
+    let requestedUrl = '';
+    const fetchImpl: typeof fetch = async (input) => {
+      requestedUrl = typeof input === 'string' ? input : input.toString();
+      return new Response(JSON.stringify({ status: 'ok' }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    const startedAt = performance.now();
+    const longBaseUrlClient = createClient({ baseUrl, fetch: fetchImpl });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(100);
+    await longBaseUrlClient.health();
+    expect(requestedUrl).toBe('https://api.example.test/v1/health');
   });
 });

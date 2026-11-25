@@ -1,0 +1,70 @@
+name: Nightly read-model snapshot
+
+on:
+  schedule:
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  snapshot:
+    name: export read-model snapshot
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check database secret
+        id: database
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::DATABASE_URL secret is not configured; skipping the snapshot export."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.database.outputs.configured == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.database.outputs.configured == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.database.outputs.configured == 'true'
+        run: npm ci
+
+      - name: Generate the Postgres client
+        if: steps.database.outputs.configured == 'true'
+        run: |
+          ./scripts/use-postgres.sh
+          npx prisma generate
+
+      - name: Build snapshot exporter
+        if: steps.database.outputs.configured == 'true'
+        run: npm run build
+
+      - name: Export read model
+        if: steps.database.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+          NETWORK_PASSPHRASE: Test SDF Network ; September 2015
+          REGISTRY_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M
+          VOUCHER_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M
+          RECEIPT_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M
+        run: npm run snapshot:export -- --out sci-healthcare-snapshot.json.gz
+
+      - uses: actions/upload-artifact@v4
+        if: steps.database.outputs.configured == 'true'
+        with:
+          name: read-model-snapshot
+          path: sci-healthcare-snapshot.json.gz
+          if-no-files-found: error
+          retention-days: 30

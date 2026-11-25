@@ -1,24 +1,52 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import type { Prisma } from '@prisma/client';
+
 import { prisma } from '../db.js';
-import { fromBaseUnits } from '../lib/amounts.js';
+import { compareBaseUnits, fromBaseUnits } from '../lib/amounts.js';
+import { env } from '../env.js';
+import { negotiateLanguage } from '../lib/i18n.js';
 import { isPostgres } from '../lib/database.js';
-import { cursorParam, decodeCursor, encodeCursor, limitParam } from '../lib/cursor.js';
+import {
+  countParam,
+  cursorParam,
+  decodeCursor,
+  decodeSortCursor,
+  encodeSortCursor,
+  limitParam,
+  nextPageLink,
+} from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
 import { applyFields, columnSelect, includesField, parseFields } from '../lib/fields.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
-import { providerMetadataOf } from '../lib/provider-metadata.js';
+import {
+  providerMetadataErrorOf,
+  providerMetadataOf,
+  storedMetadataStatus,
+} from '../lib/provider-metadata.js';
 import { serialiseProviderDetail, openVoucherCounts } from '../lib/providers.js';
+import { formatServicePrice, type ScheduledPriceRow } from '../lib/services.js';
+
+/** The orderings `GET /providers` can page through (#237). */
+const PROVIDER_SORTS = ['name', 'registered', 'country'] as const;
+type ProviderSort = (typeof PROVIDER_SORTS)[number];
+type SortDirection = 'asc' | 'desc';
 
 const listQuery = z.object({
-  status: z.enum(['Pending', 'Active', 'Suspended']).optional(),
+  status: z.enum(['Pending', 'Active', 'Suspended', 'Retired']).optional(),
   country: z.string().length(2).optional(),
   q: z.string().min(1).max(64).optional(),
+  // A clinic is listed only when it has this service active: a code the
+  // clinic paused or removed is not an offering (#238).
+  serviceCode: z.coerce.number().int().min(0).max(2_147_483_647).optional(),
+  sort: z.enum(PROVIDER_SORTS).default('registered'),
+  order: z.enum(['asc', 'desc']).optional(),
   cursor: cursorParam,
   limit: limitParam,
   offset: z.coerce.number().int().min(0).default(0),
   fields: z.string().max(512).optional(),
+  count: countParam,
 });
 
 /** Top-level keys the provider list items emit: the allow-list for `?fields=` (#166). */
@@ -27,11 +55,17 @@ const PROVIDER_FIELDS = [
   'name',
   'country',
   'status',
+  'statusReason',
   'registeredAt',
   // The cached off-chain document (#159): requestable like any other
   // field, so a clinic card asking only for hours and a phone number
   // does not also download every service price.
   'metadata',
+  // The fetch state beside it (#271): `pending`, `ok` or `failed`, and a
+  // short error code the clinic can act on. Requestable like any other
+  // field, so a status banner does not download the document.
+  'metadataStatus',
+  'metadataError',
   // Clinic capacity read model (#316): the cap indexed from the registry and
   // the live count of open (Funded + Claimed) vouchers, so a funder can see
   // a clinic is full before funding it.
@@ -85,7 +119,13 @@ function providerSelect(fieldSet: readonly string[] | null) {
       ? {
           services: {
             where: { active: true },
-            select: { code: true, label: true, price: true },
+            select: {
+              code: true,
+              label: true,
+              price: true,
+              upcomingPrice: true,
+              upcomingFrom: true,
+            },
           },
         }
       : {}),
@@ -108,26 +148,35 @@ type DirectoryRow = {
   name: string;
   country: string;
   status: string;
+  statusReason?: number | null;
   registeredAt: Date;
   metadata: string | null;
+  /** Absent on a page whose fieldset left the metadata status out (#271). */
+  metadataStatus?: string | null;
+  metadataError?: string | null;
   /** Absent on a page whose fieldset left `capacity` out (#321). */
   capacity?: number | null;
   /** Absent on a page whose fieldset left `services` out (#321). */
-  services?: { code: number; label: string; price: string }[];
+  services?: (ScheduledPriceRow & { code: number; label: string })[];
 };
 
 /** One clinic as the directory lists it. */
-function formatProvider(p: DirectoryRow, openVouchers: number) {
+function formatProvider(p: DirectoryRow, openVouchers: number, now: Date) {
   return {
     address: p.address,
     name: p.name,
     country: p.country,
     status: p.status,
+    statusReason: p.statusReason ?? null,
     registeredAt: p.registeredAt,
     // The cached, validated document the clinic published off chain
     // (#159); null until one was fetched, so clients treat it as
     // optional rather than a second request they must make.
     metadata: providerMetadataOf(p),
+    // #271: the last fetch state and its short error code, so a clinic can
+    // see a broken link on its own page instead of silently serving nothing.
+    metadataStatus: storedMetadataStatus(p.metadataStatus ?? null),
+    metadataError: providerMetadataErrorOf({ metadataError: p.metadataError ?? null }),
     // #316: the cap indexed from the registry (`0` means unlimited, null
     // when the clinic has never set one) and the vouchers open against it.
     capacity: p.capacity ?? null,
@@ -135,8 +184,7 @@ function formatProvider(p: DirectoryRow, openVouchers: number) {
     services: (p.services ?? []).map((s) => ({
       code: s.code,
       label: s.label,
-      price: s.price,
-      priceDisplay: fromBaseUnits(s.price),
+      ...formatServicePrice(s, now),
     })),
   };
 }
@@ -175,6 +223,99 @@ const providerStatsResponses = {
   404: z.object({ error: z.literal('provider_not_found') }),
 };
 
+/**
+ * One entry of `GET /providers/:address/services` (#314).
+ *
+ * `price` is what the service costs now — the scheduled price once its time
+ * has come, which is why `upcomingPrice` is null from that moment on (#315).
+ */
+const clinicServiceEntry = z.object({
+  code: z.number().int().nonnegative(),
+  label: z.string(),
+  price: z.string().describe('Price in effect, as a base-unit decimal string.'),
+  priceDisplay: z.string(),
+  active: z.boolean().describe('False once the clinic delisted the service.'),
+  upcomingPrice: z
+    .string()
+    .nullable()
+    .describe('Price scheduled to take effect, or null when nothing is pending.'),
+  upcomingFrom: z
+    .string()
+    .nullable()
+    .describe('ISO instant `upcomingPrice` takes effect; null with no pending schedule.'),
+});
+
+const clinicServicesResponse = z.object({
+  providerAddress: z.string(),
+  name: z.string(),
+  total: z.number().int().nonnegative().describe('Entries matching the filters.'),
+  services: z.array(clinicServiceEntry),
+});
+
+/**
+ * The query filters `GET /providers/:address/services` accepts (#314), in one
+ * place so the parser and the OpenAPI fragment cannot drift apart.
+ *
+ * `active` is absent by default — the route can then replace the array
+ * embedded in `GET /providers/:address` without changing what a client sees.
+ * Prices are i128 decimal strings, so the price sort runs in memory on BigInt
+ * rather than in the database, where `"900000000"` sorts above `"30000000000"`.
+ */
+const CLINIC_SERVICE_FILTERS = {
+  active: ['true', 'false'],
+  sort: ['price', 'code'],
+  order: ['asc', 'desc'],
+} as const;
+
+const clinicServicesQuery = z.object({
+  active: z.enum(CLINIC_SERVICE_FILTERS.active).optional(),
+  sort: z.enum(CLINIC_SERVICE_FILTERS.sort).default('price'),
+  order: z.enum(CLINIC_SERVICE_FILTERS.order).default('asc'),
+});
+
+/** The default direction matches the route's historical newest-first order. */
+function directionOf(sort: ProviderSort, order: SortDirection | undefined): SortDirection {
+  return order ?? (sort === 'registered' ? 'desc' : 'asc');
+}
+
+/** The keyset order for a provider page, always unique on `address`. */
+function providerOrderBy(
+  sort: ProviderSort,
+  order: SortDirection,
+): Prisma.ProviderOrderByWithRelationInput[] {
+  const direction = order;
+  if (sort === 'name') return [{ name: direction }, { address: direction }];
+  if (sort === 'country') return [{ country: direction }, { address: direction }];
+  return [{ registeredAt: direction }, { address: direction }];
+}
+
+/** The column value a cursor stores for this ordering. */
+function sortKeyOf(row: DirectoryRow, sort: ProviderSort): string | Date {
+  return sort === 'registered' ? row.registeredAt : row[sort];
+}
+
+/**
+ * The rows after a cursor for the chosen ordering. `address` is the unique
+ * tie-break, so equal names, countries or registration instants page without
+ * gaps or repeats.
+ */
+function providerKeyset(
+  sort: ProviderSort,
+  order: SortDirection,
+  value: string,
+  address: string,
+): Prisma.ProviderWhereInput {
+  const comparison = order === 'asc' ? 'gt' : 'lt';
+  const equality = sort === 'registered' ? new Date(value) : value;
+  const column = sort === 'registered' ? 'registeredAt' : sort;
+  return {
+    OR: [
+      { [column]: { [comparison]: equality } },
+      { [column]: equality, address: { [comparison]: address } },
+    ],
+  };
+}
+
 /** Numeric median; keep fractional seconds when averaging an even sample. */
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -191,78 +332,132 @@ function nameContains(q: string): { contains: string; mode?: string } {
 }
 
 export function providerRoutes(app: FastifyInstance): void {
-  app.get('/providers', { config: { rateLimit: LIST_ROUTE_RATE_LIMIT } }, async (req) => {
-    const parsed = listQuery.safeParse(req.query);
-    if (!parsed.success) {
-      throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
-    }
-    const { status, country, q, cursor, limit, offset, fields } = parsed.data;
-
-    const fieldSet = parseFields(fields, PROVIDER_FIELDS, 'GET /providers');
-    const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
-      fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
-
-    // One grouped count for the whole page, never one per clinic (#316) — and
-    // only when the fieldset actually carries the count (#321).
-    const formatPage = async (page: DirectoryRow[]) => {
-      const openBy = includesField(fieldSet, 'openVouchers')
-        ? await openVoucherCounts(page.map((p) => p.address))
-        : new Map<string, number>();
-      return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0));
-    };
-
-    if (cursor) {
-      const decoded = decodeCursor(cursor);
-      if (!decoded) {
-        throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
+  app.get(
+    '/providers',
+    {
+      schema: {
+        summary: 'List clinics, optionally filtered by service and sortable',
+        description:
+          'Filters: `status`, `country`, `q` (name contains, case-insensitive) and ' +
+          '`serviceCode` (clinics with that service active). Sorts by `sort=name`, ' +
+          '`registered` (default) or `country`, with `order=asc` or `desc` ' +
+          '(default: `desc` for `registered`, `asc` otherwise). The sort and ' +
+          'order are encoded in `nextCursor`; a cursor from another ordering is ' +
+          '`400 invalid_cursor`.',
+      },
+      config: { rateLimit: LIST_ROUTE_RATE_LIMIT },
+    },
+    async (req, reply) => {
+      const parsed = listQuery.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
       }
-      const cursorDate = new Date(decoded.createdAt);
-      const where = {
+      const { status, country, q, serviceCode, sort, cursor, limit, offset, fields, count } =
+        parsed.data;
+      const order = directionOf(sort, parsed.data.order);
+      const filter = {
         ...(status ? { status } : {}),
         ...(country ? { country } : {}),
         ...(q ? { name: nameContains(q) } : {}),
-        OR: [
-          { registeredAt: { lt: cursorDate } },
-          { registeredAt: cursorDate, address: { lt: decoded.id } },
-        ],
+        ...(serviceCode === undefined
+          ? {}
+          : { services: { some: { code: serviceCode, active: true } } }),
+      } satisfies Prisma.ProviderWhereInput;
+
+      const fieldSet = parseFields(fields, PROVIDER_FIELDS, 'GET /providers');
+      const project = <T extends Record<string, unknown>>(rows: T[]): Partial<T>[] =>
+        fieldSet ? rows.map((r) => applyFields(r, fieldSet)) : rows;
+
+      // One grouped count for the whole page, never one per clinic (#316) — and
+      // only when the fieldset actually carries the count (#321).
+      const formatPage = async (page: DirectoryRow[]) => {
+        const openBy = includesField(fieldSet, 'openVouchers')
+          ? await openVoucherCounts(page.map((p) => p.address))
+          : new Map<string, number>();
+        // One instant for the page, so two rows cannot disagree about whether a
+        // schedule has taken effect (#315).
+        const now = new Date();
+        return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0, now));
       };
-      const rows = (await prisma.provider.findMany({
-        where,
-        select: providerSelect(fieldSet),
-        orderBy: [{ registeredAt: 'desc' }, { address: 'desc' }],
-        take: limit + 1,
-      })) as unknown as DirectoryRow[];
+
+      if (cursor) {
+        // A cursor issued for another ordering cannot be resumed here: its key
+        // is a different column, so continuing would skip or repeat rows. A
+        // legacy cursor (before sort support) carries no sort and is only valid
+        // for the historical registered/desc order.
+        const sortCursor = decodeSortCursor(cursor);
+        const legacyCursor = sortCursor ? null : decodeCursor(cursor);
+        if (!sortCursor && !legacyCursor) {
+          throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
+        }
+        const cursorSort = sortCursor?.sort ?? 'registered';
+        const cursorOrder = sortCursor?.order ?? 'desc';
+        if (cursorSort !== sort || cursorOrder !== order) {
+          throw new ApiError(400, 'invalid_cursor', 'Cursor belongs to another sort order');
+        }
+        const value = sortCursor?.value ?? legacyCursor!.createdAt;
+        const address = sortCursor?.id ?? legacyCursor!.id;
+        if (sort === 'registered' && Number.isNaN(new Date(value).getTime())) {
+          throw new ApiError(400, 'invalid_cursor', 'Invalid cursor');
+        }
+
+        const where = { ...filter, ...providerKeyset(sort, order, value, address) };
+        const rows = (await prisma.provider.findMany({
+          where,
+          select: providerSelect(fieldSet),
+          orderBy: providerOrderBy(sort, order),
+          take: limit + 1,
+        })) as unknown as DirectoryRow[];
+        const hasNext = rows.length > limit;
+        const page = hasNext ? rows.slice(0, limit) : rows;
+        const last = page[page.length - 1];
+        const nextCursor =
+          hasNext && last
+            ? encodeSortCursor(sortKeyOf(last, sort), last.address, sort, order)
+            : null;
+        const link = nextPageLink(req.url, nextCursor);
+        if (link) reply.header('link', link);
+        // #247: the count is over the same filters, without the cursor.
+        const total = count ? await prisma.provider.count({ where: filter }) : undefined;
+        return {
+          ...(total === undefined ? {} : { total }),
+          limit,
+          nextCursor,
+          providers: project(await formatPage(page)),
+        };
+      }
+
+      const [rows, total] = await Promise.all([
+        prisma.provider.findMany({
+          where: filter,
+          select: providerSelect(fieldSet),
+          orderBy: providerOrderBy(sort, order),
+          take: limit + 1,
+          skip: offset,
+        }) as unknown as Promise<DirectoryRow[]>,
+        // #247: skipped entirely unless `?count=true` asked for it.
+        count ? prisma.provider.count({ where: filter }) : Promise.resolve(undefined),
+      ]);
+
       const hasNext = rows.length > limit;
       const page = hasNext ? rows.slice(0, limit) : rows;
       const last = page[page.length - 1];
-      const nextCursor = hasNext && last ? encodeCursor(last.registeredAt, last.address) : null;
-      return { limit, nextCursor, providers: project(await formatPage(page)) };
-    }
+      const nextCursor =
+        hasNext && last
+          ? encodeSortCursor(sortKeyOf(last, sort), last.address, sort, order)
+          : undefined;
+      const link = nextPageLink(req.url, nextCursor);
+      if (link) reply.header('link', link);
 
-    const where = {
-      ...(status ? { status } : {}),
-      ...(country ? { country } : {}),
-      ...(q ? { name: nameContains(q) } : {}),
-    };
-
-    const [rows, total] = await Promise.all([
-      prisma.provider.findMany({
-        where,
-        select: providerSelect(fieldSet),
-        orderBy: [{ registeredAt: 'desc' }, { address: 'desc' }],
-        take: limit + 1,
-        skip: offset,
-      }) as unknown as Promise<DirectoryRow[]>,
-      prisma.provider.count({ where }),
-    ]);
-
-    const hasNext = rows.length > limit;
-    const page = hasNext ? rows.slice(0, limit) : rows;
-    const last = page[page.length - 1];
-    const nextCursor = hasNext && last ? encodeCursor(last.registeredAt, last.address) : undefined;
-
-    return { total, limit, offset, nextCursor, providers: project(await formatPage(page)) };
-  });
+      return {
+        ...(total === undefined ? {} : { total }),
+        limit,
+        offset,
+        nextCursor,
+        providers: project(await formatPage(page)),
+      };
+    },
+  );
 
   app.get('/providers/:address', async (req) => {
     const { address } = req.params as { address: string };
@@ -278,6 +473,103 @@ export function providerRoutes(app: FastifyInstance): void {
     const openBy = await openVoucherCounts([address]);
     return serialiseProviderDetail(p, openBy.get(address) ?? 0);
   });
+
+  /**
+   * A clinic's price list on its own (#314).
+   *
+   * The same entries `GET /providers/:address` embeds, but fetchable by
+   * themselves: a price list changes far more often than the clinic profile
+   * around it, and a client that only needs the catalogue should not pay for
+   * the rest of the record — or lose the ETag on the big one.
+   *
+   * Sorted by price ascending by default, because the reason to open a price
+   * list is to compare the prices in it. Amounts are i128 decimal strings, so
+   * the comparison is BigInt; a database or string sort would put `900000000`
+   * before `30000000000`.
+   */
+  app.get(
+    '/providers/:address/services',
+    {
+      schema: {
+        tags: ['providers'],
+        summary: "A clinic's services and price list",
+        // The filters are spelled out here rather than declared in
+        // `schema.query`, like every other list route in this API: they are
+        // parsed with `safeParse` below so a bad value answers `invalid_query`
+        // in the house envelope instead of Fastify's generic `bad_request`,
+        // and declaring them would make the framework validate them first.
+        description:
+          'Filters: `active=true` or `active=false` to take only the listed or ' +
+          'only the delisted half of the catalogue (both by default), ' +
+          '`sort=price` (default) or `sort=code`, and `order=asc` (default) or ' +
+          '`desc`. Equal prices always order by code ascending.',
+        response: {
+          200: clinicServicesResponse,
+          404: z.object({ error: z.literal('provider_not_found') }),
+        },
+      },
+    },
+    async (req, reply) => {
+      const { address } = req.params as { address: string };
+      const parsed = clinicServicesQuery.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
+      }
+      const { active, sort, order } = parsed.data;
+
+      const provider = await prisma.provider.findUnique({
+        where: { address },
+        select: { address: true, name: true },
+      });
+      if (!provider) return reply.code(404).send({ error: 'provider_not_found' });
+
+      const rows = await prisma.service.findMany({
+        where: {
+          providerAddress: address,
+          ...(active === undefined ? {} : { active: active === 'true' }),
+        },
+        select: {
+          code: true,
+          label: true,
+          price: true,
+          active: true,
+          upcomingPrice: true,
+          upcomingFrom: true,
+        },
+      });
+
+      // One moment for the whole page, so two entries cannot disagree about
+      // whether a schedule has taken effect.
+      const now = new Date();
+      const services = rows
+        .map((row) => {
+          const priced = formatServicePrice(row, now);
+          return {
+            code: row.code,
+            label: row.label,
+            active: row.active,
+            ...priced,
+            // Declared as a string because the response schema is checked on the
+            // way out; `JSON.stringify` sends a Date as the same ISO instant, so
+            // this route and the one that embeds the catalogue are identical.
+            upcomingFrom: priced.upcomingFrom?.toISOString() ?? null,
+          };
+        })
+        .sort((a, b) => {
+          const cmp = sort === 'code' ? a.code - b.code : compareBaseUnits(a.price, b.price);
+          // Tie-break on the code so equal prices keep a stable, repeatable order.
+          const primary = cmp !== 0 ? cmp : a.code - b.code;
+          return order === 'desc' ? -primary : primary;
+        });
+
+      return {
+        providerAddress: provider.address,
+        name: provider.name,
+        total: services.length,
+        services,
+      };
+    },
+  );
 
   /**
    * A clinic's own throughput: how many vouchers it received, in what state,
@@ -402,6 +694,7 @@ export function providerRoutes(app: FastifyInstance): void {
       address,
       history: changes.map((c) => ({
         status: c.status,
+        reasonCode: c.reasonCode,
         ledger: c.ledger,
         changedAt: c.changedAt,
       })),
@@ -439,17 +732,58 @@ export function providerRoutes(app: FastifyInstance): void {
     };
   });
 
-  app.get('/countries', async () => {
+  app.get('/countries', async (req) => {
+    const query = req.query as { lang?: string };
+    const language = query.lang
+      ? negotiateLanguage(query.lang)
+      : negotiateLanguage(req.headers['accept-language']);
+
     const grouped = await prisma.provider.groupBy({
       by: ['country'],
       where: { status: 'Active' },
       _count: { _all: true },
     });
 
+    const displayNames = new Intl.DisplayNames([language], { type: 'region' });
+    const minCell = env.STATS_MIN_CELL;
+
+    type CountryRow = {
+      code: string;
+      name: string;
+      clinicCount: number | null;
+      suppressed: boolean;
+    };
+    const rows: CountryRow[] = grouped.map((g) => {
+      const count = g._count._all;
+      const isSuppressed = minCell > 0 && count > 0 && count < minCell;
+      return {
+        code: g.country,
+        name: displayNames.of(g.country) ?? g.country,
+        clinicCount: isSuppressed ? null : count,
+        suppressed: isSuppressed,
+      };
+    });
+
+    // Complementary suppression: if only one entry was primarily suppressed,
+    // suppress the next-smallest revealed entry as well so an operator who
+    // knows the total active-provider count cannot recover the hidden value
+    // by subtraction.
+    if (minCell > 0) {
+      const primaryCount = rows.filter((r) => r.suppressed).length;
+      if (primaryCount === 1 && rows.length >= 3) {
+        const revealed = rows
+          .filter((r) => !r.suppressed)
+          .sort((a, b) => (a.clinicCount ?? 0) - (b.clinicCount ?? 0));
+        if (revealed.length > 0) {
+          const smallest = revealed[0]!;
+          smallest.clinicCount = null;
+          smallest.suppressed = true;
+        }
+      }
+    }
+
     return {
-      countries: grouped
-        .map((g) => ({ code: g.country, clinicCount: g._count._all }))
-        .sort((a, b) => a.code.localeCompare(b.code)),
+      countries: rows.sort((a, b) => a.code.localeCompare(b.code)),
     };
   });
 }

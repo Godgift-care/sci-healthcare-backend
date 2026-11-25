@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { CONTRACTS } from '../env.js';
@@ -22,6 +23,36 @@ type Row = {
  * latest proposal or acceptance decides the current state.
  */
 export function governanceRoutes(app: FastifyInstance): void {
+  app.get(
+    '/deployments',
+    {
+      schema: {
+        tags: ['governance'],
+        summary: 'List contract deployments',
+        description:
+          'Current and historical contract ids with the ledger ranges the indexer follows.',
+        response: {
+          200: z.object({
+            deployments: z.array(
+              z.object({
+                type: z.string().describe('Contract type, such as registry, voucher or receipt.'),
+                contractId: z.string(),
+                fromLedger: z.number().int().nonnegative(),
+                toLedger: z.number().int().nonnegative().nullable(),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    async () => ({
+      deployments: await prisma.deployment.findMany({
+        select: { type: true, contractId: true, fromLedger: true, toLedger: true },
+        orderBy: [{ type: 'asc' }, { fromLedger: 'asc' }],
+      }),
+    }),
+  );
+
   app.get(
     '/governance',
     {

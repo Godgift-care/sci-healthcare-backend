@@ -1,16 +1,24 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 
 import { prisma } from '../db.js';
-import { fromBaseUnits } from '../lib/amounts.js';
+import { compareBaseUnits, fromBaseUnits, isBaseUnitAmount } from '../lib/amounts.js';
 import { lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
+import { countParam } from '../lib/cursor.js';
 import { ApiError } from '../lib/errors.js';
-import { serviceKey, serviceLabels } from '../lib/services.js';
+import {
+  serviceKey,
+  serviceLabels,
+  formatServicePrice,
+  scheduledPriceOf,
+} from '../lib/services.js';
 
 type CatalogueRow = {
   code: number;
   label: string;
-  price: string;
   providerAddress: string;
+  /** The price in effect, after any schedule that has come due (#315). */
+  price: string;
 };
 
 /**
@@ -22,6 +30,87 @@ type CatalogueRow = {
  * and every page size reads from the same answer (#320).
  */
 const serviceStatsMemo = ledgerMemo<Awaited<ReturnType<typeof computeServiceStats>>>();
+
+/** The orderings `GET /services` supports (#240). */
+const CATALOGUE_SORTS = ['price', 'label', 'code'] as const;
+type CatalogueSort = (typeof CATALOGUE_SORTS)[number];
+
+/**
+ * The catalogue filters (#239). Prices are base-unit decimal strings, so they
+ * are validated as non-negative integers and compared with `BigInt`, never
+ * parsed as JavaScript numbers.
+ */
+const priceParam = z
+  .string()
+  .refine(isBaseUnitAmount, 'must be a non-negative base-unit amount of at most 39 digits');
+
+const catalogueQuery = z
+  .object({
+    q: z.string().min(1).max(64).optional(),
+    minPrice: priceParam.optional(),
+    maxPrice: priceParam.optional(),
+    sort: z.enum(CATALOGUE_SORTS).default('code'),
+    order: z.enum(['asc', 'desc']).default('asc'),
+    count: countParam,
+  })
+  .refine(
+    (query) =>
+      query.minPrice === undefined ||
+      query.maxPrice === undefined ||
+      BigInt(query.minPrice) <= BigInt(query.maxPrice),
+    { message: 'minPrice must not exceed maxPrice', path: ['minPrice'] },
+  );
+
+type CatalogueEntry = {
+  code: number;
+  labels: string[];
+  clinicCount: number;
+  minPrice: string;
+  maxPrice: string;
+  medianPrice: string;
+  minPriceDisplay: string;
+  maxPriceDisplay: string;
+  medianPriceDisplay: string;
+};
+
+/**
+ * A label hit is case-insensitive on both engines because it runs here, not in
+ * SQL: SQLite and Postgres disagree about case folding above ASCII.
+ */
+function matchesSearch(entry: CatalogueEntry, q: string | undefined): boolean {
+  if (q === undefined) return true;
+  const needle = q.toLowerCase();
+  return entry.labels.some((label) => label.toLowerCase().includes(needle));
+}
+
+/**
+ * A price filter selects a service whose band overlaps the requested range:
+ * `maxPrice` is a budget, so a service is included when at least one clinic
+ * charges at or below it, and `minPrice` when at least one charges at or above
+ * it. The comparison is exact for i128-sized values.
+ */
+function inPriceRange(entry: CatalogueEntry, min: string | undefined, max: string | undefined) {
+  if (min !== undefined && compareBaseUnits(entry.maxPrice, min) < 0) return false;
+  if (max !== undefined && compareBaseUnits(entry.minPrice, max) > 0) return false;
+  return true;
+}
+
+/** Numeric and label orderings, with the code as the unique, repeatable tie-break. */
+function compareEntries(
+  a: CatalogueEntry,
+  b: CatalogueEntry,
+  sort: CatalogueSort,
+  order: 'asc' | 'desc',
+): number {
+  const primary =
+    sort === 'price'
+      ? compareBaseUnits(a.minPrice, b.minPrice)
+      : sort === 'label'
+        ? a.labels[0]!.toLowerCase().localeCompare(b.labels[0]!.toLowerCase())
+        : a.code - b.code;
+  const cmp = primary !== 0 ? primary : a.code - b.code;
+  return order === 'desc' ? -cmp : cmp;
+}
 
 async function computeServiceStats() {
   const vouchers = await prisma.voucher.findMany({
@@ -64,41 +153,81 @@ async function computeServiceStats() {
 }
 
 export function serviceRoutes(app: FastifyInstance): void {
-  app.get('/services', async () => {
-    const rows = await prisma.service.findMany({
-      where: { active: true, provider: { status: 'Active' } },
-      select: { code: true, label: true, price: true, providerAddress: true },
-    });
+  app.get(
+    '/services',
+    {
+      schema: {
+        summary: 'Service catalogue with search, price range and sorting',
+        description:
+          'Filters: `q` (a service label contains it, case-insensitive, 1–64 ' +
+          'chars), `minPrice` / `maxPrice` (base-unit decimal strings, compared ' +
+          'exactly with BigInt). A price filter includes a service when its ' +
+          'clinic price band overlaps the range, so `maxPrice` is a budget. Sorts ' +
+          'by `sort=code` (default), `price` (cheapest clinic first) or `label`, ' +
+          'with `order=asc` (default) or `desc`.',
+      },
+    },
+    async (req) => {
+      const parsed = catalogueQuery.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
+      }
+      const { q, minPrice, maxPrice, sort, order, count } = parsed.data;
 
-    const byCode = new Map<number, CatalogueRow[]>();
-    for (const row of rows) {
-      const group = byCode.get(row.code);
-      if (group) group.push(row);
-      else byCode.set(row.code, [row]);
-    }
-
-    const services = [...byCode.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([code, group]) => {
-        const prices = group.map((row) => BigInt(row.price));
-        const min = prices.reduce((a, b) => (b < a ? b : a));
-        const max = prices.reduce((a, b) => (b > a ? b : a));
-        const med = median(prices);
-        return {
-          code,
-          labels: [...new Set(group.map((row) => row.label))].sort(),
-          clinicCount: new Set(group.map((row) => row.providerAddress)).size,
-          minPrice: min.toString(),
-          maxPrice: max.toString(),
-          medianPrice: med.toString(),
-          minPriceDisplay: fromBaseUnits(min.toString()),
-          maxPriceDisplay: fromBaseUnits(max.toString()),
-          medianPriceDisplay: fromBaseUnits(med.toString()),
-        };
+      const rows = await prisma.service.findMany({
+        where: { active: true, provider: { status: 'Active' } },
+        select: {
+          code: true,
+          label: true,
+          price: true,
+          upcomingPrice: true,
+          upcomingFrom: true,
+          providerAddress: true,
+        },
       });
 
-    return { total: services.length, services };
-  });
+      // One moment for the whole page, so the band cannot mix a price from
+      // before a schedule with one from after it.
+      const now = new Date();
+      const byCode = new Map<number, CatalogueRow[]>();
+      for (const row of rows) {
+        const entry: CatalogueRow = {
+          code: row.code,
+          label: row.label,
+          providerAddress: row.providerAddress,
+          price: scheduledPriceOf(row, now).price,
+        };
+        const group = byCode.get(entry.code);
+        if (group) group.push(entry);
+        else byCode.set(entry.code, [entry]);
+      }
+
+      const services = [...byCode.entries()]
+        .map(([code, group]) => {
+          const prices = group.map((row) => BigInt(row.price));
+          const min = prices.reduce((a, b) => (b < a ? b : a));
+          const max = prices.reduce((a, b) => (b > a ? b : a));
+          const med = median(prices);
+          return {
+            code,
+            labels: [...new Set(group.map((row) => row.label))].sort(),
+            clinicCount: new Set(group.map((row) => row.providerAddress)).size,
+            minPrice: min.toString(),
+            maxPrice: max.toString(),
+            medianPrice: med.toString(),
+            minPriceDisplay: fromBaseUnits(min.toString()),
+            maxPriceDisplay: fromBaseUnits(max.toString()),
+            medianPriceDisplay: fromBaseUnits(med.toString()),
+          };
+        })
+        .filter((entry) => matchesSearch(entry, q) && inPriceRange(entry, minPrice, maxPrice))
+        .sort((a, b) => compareEntries(a, b, sort, order));
+
+      // #247: the catalogue is one page today, but its size is still only
+      // reported when the caller asks, matching the cursor list routes.
+      return { ...(count ? { total: services.length } : {}), services };
+    },
+  );
 
   app.get('/services/:code', async (req) => {
     const { code } = req.params as { code: string };
@@ -113,13 +242,15 @@ export function serviceRoutes(app: FastifyInstance): void {
     });
     if (rows.length === 0) throw new ApiError(404, 'service_not_found', 'Service not found');
 
+    const now = new Date();
     const clinics = rows
       .map((row) => ({
         address: row.provider.address,
         name: row.provider.name,
         country: row.provider.country,
-        price: row.price,
-        priceDisplay: fromBaseUnits(row.price),
+        // The price in effect plus the schedule still pending (#315), so a
+        // funder comparing clinics sees that one of them is about to move.
+        ...formatServicePrice(row, now),
       }))
       .sort((a, b) => {
         const av = BigInt(a.price);

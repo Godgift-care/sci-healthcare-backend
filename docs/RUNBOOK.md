@@ -44,16 +44,24 @@ nobody has restored is a rumour.
 
 **Restore from a dump** into a fresh database:
 
-1. Create an empty Postgres database (Render dashboard, or a scratch
+1. Enable maintenance mode by setting `MAINTENANCE_MODE=true` in the service's
+   environment. During restore and indexer catch-up, every data route answers
+   `503 maintenance_mode` with a `Retry-After: 30` header so clients and frontends
+   show the waking-up/maintenance state and wait rather than see a half-restored
+   read model. Liveness probe `/health` stays `200 ok` so Render and health
+   monitors keep the container alive.
+2. Create an empty Postgres database (Render dashboard, or a scratch
    instance — never overwrite the live one in place).
-2. `pg_restore --no-owner -d "$NEW_DATABASE_URL" /backups/sci-YYYY-MM-DD.dump`
-3. Point `DATABASE_URL` at it and restart the service. `npm run db:migrate`
+3. `pg_restore --no-owner -d "$NEW_DATABASE_URL" /backups/sci-YYYY-MM-DD.dump`
+4. Point `DATABASE_URL` at it and restart the service. `npm run db:migrate`
    runs on boot (`render.yaml` startCommand), so an older dump is
    migrated up to the current schema before the indexer resumes.
-4. The indexer resumes from the `IndexerState.lastLedger` cursor inside
+5. The indexer resumes from the `IndexerState.lastLedger` cursor inside
    the restored data. If that cursor is older than the RPC retention
    window, the service goes degraded on `/ready` — follow "Indexer falls
    outside the RPC retention window" below.
+6. Once the indexer has caught up and `/ready` reports healthy, clear
+   `MAINTENANCE_MODE` (or set it to `false`) to resume normal serving.
 
 ### Local development (SQLite)
 
@@ -124,10 +132,33 @@ returns **503** with the gap details.
 #### Option A — Restore a database snapshot
 
 If you have a database backup taken while the indexer was still within
-the retention window:
+the retention window, restore it using your database provider's procedure.
+The repository also creates a nightly read-model artifact when the
+`DATABASE_URL` secret is configured:
 
-1. Restore the backup.
-2. Restart the indexer. It will resume from the snapshot's cursor.
+1. Find a successful **Nightly read-model snapshot** run and download its
+   `read-model-snapshot` artifact. For example:
+   ```sh
+   gh run download <run-id> --repo Godgift-care/sci-healthcare-backend \
+     --name read-model-snapshot --dir ./snapshot-restore
+   ```
+2. Prepare an **empty** database with the current schema. Snapshot import
+   refuses to overwrite any existing rows.
+3. Generate the Prisma client for the database provider, then import the
+   artifact (replace the database URL with the target database):
+   ```sh
+   ./scripts/use-postgres.sh
+   npx prisma generate
+   DATABASE_URL='postgresql://…' npm run snapshot:import -- \
+     --file ./snapshot-restore/sci-healthcare-snapshot.json.gz
+   ```
+   For SQLite, leave the schema on its default provider and use a `file:`
+   `DATABASE_URL`.
+4. Restart the indexer. It resumes from the cursor included in the artifact.
+
+Artifacts are retained for 30 days. A fork or repository without the
+`DATABASE_URL` secret skips the workflow with a notice and produces no
+artifact.
 
 #### Option B — Accept the gap and resume
 
@@ -181,6 +212,17 @@ looks like one `indexer poll failed` error followed by silence, then
 3. The backoff resets itself on the first cycle that works. Nothing has
    to be cleared by hand, and no events are skipped: the cursor only ever
    advances after a batch commits.
+4. An endpoint that is *behind* rather than down is the subtler case,
+   because it answers correctly and simply has less: a paged read handed
+   over mid-range can land on a replica that has not indexed the ledgers
+   the previous page already returned. The pager then holds those events
+   back for a cycle whose cursor actually covers them and polls again
+   immediately instead of sleeping, so the symptom is extra polls and a
+   lag gauge that will not come down — never a webhook that fires twice.
+   `soroban rpc endpoint failing; switching to the next one` alongside a
+   cursor that keeps falling short of `latestLedger` on one endpoint says
+   which replica is behind; drop it from `SOROBAN_RPC_URLS` if it stays
+   there (verified by `src/__tests__/rpc-failover-chaos.test.ts`, #307).
 
 If the outage outlasts the RPC retention window, this becomes the
 retention-gap procedure above.
@@ -260,6 +302,7 @@ wrong order, one of two things goes wrong:
 | --- | --- |
 | `REGISTRY_CONTRACT_ID`, `VOUCHER_CONTRACT_ID`, `RECEIPT_CONTRACT_ID` | The current contract of each role. Required, 56 characters each |
 | `USDC_CONTRACT_ID`, `FAUCET_CONTRACT_ID` | Optional companions; change them only if the redeploy moved them |
+| `SPONSOR_CONTRACT_ID` | Optional (the matching-funding desk). Unset means `GET /sponsors*` answer empty and the voucher routes report `null` matches — that is a valid state, not a failure. When a redeploy moves it, the new id goes here and a `{"type":"sponsor",...}` entry goes in `DEPLOYMENTS`; matches created before the start ledger stay unresolvable, because `match_settled` and `match_refunded` name only the matched voucher and cannot supply the original id a create would need |
 | `DEPLOYMENTS` | One-line JSON array of every deployment that must stay indexed, oldest first: `[{"type":"voucher","contractId":"C...","fromLedger":5063070,"toLedger":6123456}]`. Omitting `toLedger` means still active. List **both** generations — the old contracts *and* the new ones with `fromLedger` = `L` — because a contract that appears only in the current id variables gets a `fromLedger = 0` row, and 0 is the value a full reindex would read back |
 | `INDEXER_START_LEDGER` | Read **only** when the database has no `IndexerState` row — a fresh database. On an existing database the cursor wins and this value changes nothing |
 
@@ -535,7 +578,7 @@ Two layers watch the deployed service, and they answer different questions:
 | --- | --- | --- |
 | The `Uptime monitor` GitHub workflow (committed in this repo) | `/ready` every 30 minutes | A failed run and a red README badge |
 | An external monitor (UptimeRobot below) | `/ready` every 5 minutes | Email to the alert contact |
-| Prometheus rules in `ops/alerts.yml` | `/metrics` series | Indexer lag or stall, failed events, 5xx rate, webhook backlog |
+| Prometheus rules in `ops/alerts.yml` | `/metrics` series | Indexer lag or stall, failed events, reconciliation drift, a pause held over an hour, 5xx rate, webhook backlog |
 
 Neither of these can see the service get *slow*; they only prove `/ready`
 stays green. A paging on latency would need response-time alerting, which

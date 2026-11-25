@@ -87,11 +87,29 @@ Same filter (`status=Settled`, 500 matching rows), differing only in `sort`:
 - **`sort=amount` is ~10× slower than its index-ordered twin** (216 vs
   2,151 req/s; p50 45 ms vs 4 ms) at only 500 matching rows, because the
   route loads every matching voucher and sorts in memory on each request
-  (`src/routes/vouchers.ts`). The gap grows with match-set size — filed as
+  (`src/routes/vouchers/query.ts`). The gap grows with match-set size — filed as
   [#96](https://github.com/Godgift-care/sci-healthcare-backend/issues/96).
 - No connection errors, timeouts, 5xx, or 3xx anywhere in any scenario. The
   read paths themselves are stable under saturation; the mixed scenario
   sustained 2.6k req/s with all 2xx.
+
+## CI Regression Check (#309)
+
+To ensure performance regressions (such as accidental N+1 query patterns) do not
+land in production, pull requests run an automated regression check against
+seeded Postgres in CI via `npm run perf:check`.
+
+The check benchmarks key read routes against the committed baseline in
+`scripts/perf-baseline.json`:
+- Evaluates routes: `/v1/vouchers?status=Funded&limit=20`, `/v1/vouchers/:id`, `/v1/providers`, `/v1/stats`.
+- Executes **three consecutive benchmark runs** per route and takes the **median** p95 latency. This ensures isolated network or virtualization noise does not cause flaky failures.
+- Compares each route's median p95 against its committed baseline plus tolerance (`baseline * (1 + tolerance)`).
+- If a change introduces an N+1 or other query degradation exceeding tolerance, CI fails with a detailed table indicating which routes regressed.
+
+```sh
+npm run perf:check                    # run against current database
+npm run perf:check -- --url http://127.0.0.1:8080 # run against existing instance
+```
 
 ## Caveats
 

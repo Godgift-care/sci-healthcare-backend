@@ -27,7 +27,9 @@ describe('package.json', () => {
   it('keeps the Prisma scripts that must keep working (canary)', () => {
     expect(pkg.scripts?.['db:generate']).toBe('prisma generate');
     expect(pkg.scripts?.['db:push']).toBe('prisma db push');
-    expect(pkg.scripts?.['db:migrate']).toBe('prisma migrate deploy');
+    expect(pkg.scripts?.['db:migrate']).toBe(
+      'node dist/scripts/wait-for-database.js && prisma migrate deploy',
+    );
     expect(pkg.scripts?.['db:seed']).toBe('prisma db seed');
   });
 

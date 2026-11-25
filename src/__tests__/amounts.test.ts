@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { AMOUNT_KEY_WIDTH, amountKey, feeFor, fromBaseUnits, toBaseUnits } from '../lib/amounts.js';
+import {
+  AMOUNT_KEY_WIDTH,
+  amountKey,
+  compareBaseUnits,
+  feeFor,
+  fromBaseUnits,
+  isBaseUnitAmount,
+  toBaseUnits,
+} from '../lib/amounts.js';
 import { beneficiaryRef, isValidRef, refsMatch } from '../lib/beneficiary.js';
 
 describe('amounts', () => {
@@ -48,6 +56,22 @@ describe('amounts', () => {
     // Matches an anchorless version of the validation regex; must not slip through.
     expect(() => toBaseUnits('a3')).toThrow(/Not a valid decimal amount/);
     expect(() => toBaseUnits('3x')).toThrow(/Not a valid decimal amount/);
+  });
+
+  it('orders base-unit strings numerically, including above 2^53', () => {
+    expect(compareBaseUnits('9', '10')).toBeLessThan(0);
+    expect(compareBaseUnits('100', '10')).toBeGreaterThan(0);
+    expect(compareBaseUnits('9007199254740993', '9007199254740992')).toBeGreaterThan(0);
+    expect(compareBaseUnits('123', '123')).toBe(0);
+  });
+
+  it('recognises non-negative base-unit amounts up to i128 size', () => {
+    expect(isBaseUnitAmount('0')).toBe(true);
+    expect(isBaseUnitAmount('170141183460469231731687303715884105727')).toBe(true);
+    expect(isBaseUnitAmount('170141183460469231731687303715884105728')).toBe(false);
+    expect(isBaseUnitAmount('-1')).toBe(false);
+    expect(isBaseUnitAmount('1.5')).toBe(false);
+    expect(isBaseUnitAmount('')).toBe(false);
   });
 
   it('computes basis-point fees exactly as the contract does', () => {

@@ -11,7 +11,30 @@ const validBaseEnv = {
   RECEIPT_CONTRACT_ID: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M',
 };
 
+describe('INDEXER_PAGE_SIZE validation', () => {
+  it('defaults to 200', () => {
+    expect(schema.parse(validBaseEnv).INDEXER_PAGE_SIZE).toBe(200);
+  });
+
+  it.each([0, 1001, -1])('rejects out-of-range value %i', (value) => {
+    expect(schema.safeParse({ ...validBaseEnv, INDEXER_PAGE_SIZE: value }).success).toBe(false);
+  });
+
+  it('accepts values from 1 through 1000', () => {
+    expect(schema.parse({ ...validBaseEnv, INDEXER_PAGE_SIZE: 1 }).INDEXER_PAGE_SIZE).toBe(1);
+    expect(schema.parse({ ...validBaseEnv, INDEXER_PAGE_SIZE: 1000 }).INDEXER_PAGE_SIZE).toBe(1000);
+  });
+});
+
 describe('CORS_ORIGIN validation in env schema', () => {
+  it('leaves scheduled reconciliation disabled unless a positive interval is configured', () => {
+    expect(schema.parse(validBaseEnv).RECONCILE_INTERVAL_MS).toBeUndefined();
+    expect(schema.safeParse({ ...validBaseEnv, RECONCILE_INTERVAL_MS: '0' }).success).toBe(false);
+    expect(
+      schema.parse({ ...validBaseEnv, RECONCILE_INTERVAL_MS: '60000' }).RECONCILE_INTERVAL_MS,
+    ).toBe(60000);
+  });
+
   it('rejects wildcard origin "*" when NODE_ENV is production', () => {
     const result = schema.safeParse({
       ...validBaseEnv,

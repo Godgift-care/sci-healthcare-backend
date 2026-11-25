@@ -18,16 +18,16 @@ datasource db {
 /// Tracks all contract deployments, including historical redeployments.
 /// Each row represents one contract instance deployed at a specific ledger.
 model Deployment {
-  id         Int    @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   type       String // registry | voucher | receipt
-  contractId String @unique
+  contractId String   @unique
   fromLedger Int
-  toLedger   Int?   // null means still active
+  toLedger   Int? // null means still active
   createdAt  DateTime @default(now())
 
   providers Provider[]
-  vouchers Voucher[]
-  receipts Receipt[]
+  vouchers  Voucher[]
+  receipts  Receipt[]
 
   @@index([type])
 }
@@ -36,8 +36,10 @@ model Provider {
   address      String   @id
   name         String
   country      String
-  /// Postgres enforces status IN ('Pending', 'Active', 'Suspended') via CHECK constraint (SQLite skips it).
-  status       String   // Pending | Active | Suspended
+  /// Postgres enforces status IN ('Pending', 'Active', 'Suspended', 'Retired') via CHECK constraint (SQLite skips it).
+  status       String // Pending | Active | Suspended | Retired
+  /// Last registry reason_code; null for deployments or events that predate the field.
+  statusReason Int?
   registeredAt DateTime
   updatedAt    DateTime @updatedAt
 
@@ -45,16 +47,28 @@ model Provider {
   /// a phone number and a location live at this URI, not in the ledger.
   /// Stored only when it fits `METADATA_URI_MAX_LENGTH`; null when the
   /// clinic never published one or cleared it.
-  metadataUri String?
+  metadataUri       String?
   /// The document at `metadataUri`, validated against the schema in
   /// `src/lib/provider-metadata.ts` and stored as JSON. Null until a fetch
   /// succeeds; a failed refresh keeps the previous document rather than
   /// blanking the directory.
-  metadata String?
+  metadata          String?
   /// When the URI was last fetched — successfully or rejected — and the
   /// basis of the daily refresh. Stamped on rejection too, so a dead URI
   /// is retried once a day rather than on every cycle.
   metadataFetchedAt DateTime?
+  /// The fetch state served to the clinic (#271): `pending` after a URI is
+  /// announced, `ok` once a document is cached, `failed` when the last
+  /// attempt was rejected. Null when the clinic published no URI.
+  metadataStatus    String?
+  /// A short code for the last rejection — `unsupported_scheme`, `timeout`,
+  /// `invalid_document` and the like — never the remote body or a raw error
+  /// message (#271). Cleared by a successful fetch.
+  metadataError     String?
+  /// The validator the host sent with the cached document, replayed as
+  /// `If-None-Match` so an unchanged document costs one conditional request
+  /// (#270). Null when the host sends no ETag.
+  metadataEtag      String?
 
   /// The clinic's `max_outstanding` voucher cap, indexed from the registry's
   /// `capacity_changed` event. `0` means unlimited (the contract's own
@@ -64,7 +78,7 @@ model Provider {
   capacity Int?
 
   /// Which deployment this provider was registered under.
-  deployment Deployment? @relation(fields: [deploymentId], references: [id])
+  deployment   Deployment? @relation(fields: [deploymentId], references: [id])
   deploymentId Int?
 
   services Service[]
@@ -75,12 +89,22 @@ model Provider {
 }
 
 model Service {
-  id       String  @id // "{providerAddress}:{code}"
-  code     Int
-  label    String
+  id     String  @id // "{providerAddress}:{code}"
+  code   Int
+  label  String
   /// Postgres enforces non-negative price via CHECK constraint (SQLite skips it).
-  price    String  // i128 as decimal string; JS numbers cannot hold these // pg:decimal
-  active   Boolean @default(true)
+  price  String // i128 as decimal string; JS numbers cannot hold these // pg:decimal
+  active Boolean @default(true)
+
+  /// Price scheduled with `schedule_service_price`, or null when nothing is
+  /// pending. The contract holds it as `pending_price` and swaps it into
+  /// `price` on the first read at or after `upcomingFrom`, emitting no event
+  /// when it does — so this row mirrors that and `applyDuePrice()` decides
+  /// which of the two is the price in effect.
+  upcomingPrice String?
+  /// When `upcomingPrice` takes effect, from the event's `effective_at`.
+  /// Null exactly when `upcomingPrice` is.
+  upcomingFrom  DateTime?
 
   provider        Provider @relation(fields: [providerAddress], references: [address])
   providerAddress String
@@ -90,7 +114,7 @@ model Service {
 }
 
 model Voucher {
-  id              String    @id // on-chain u64 as string
+  id                 String    @id // on-chain u64 as string
   /// Numeric mirror of `id`, and the only correct way to order vouchers by
   /// id: `id` is a string, so `ORDER BY id` is lexicographic and puts
   /// voucher 10 before voucher 9 (issue #61).
@@ -103,12 +127,12 @@ model Voucher {
   /// sort after every real one. `BigInt` rather than `Int` because the local
   /// seed id space alone starts at 9e12, past the range of a 32-bit int.
   /// Never exposed by an API response.
-  seq             BigInt?
-  funder          String
-  beneficiaryRef  String    // opaque 32-byte hex. Not reversible to an identity.
-  serviceCode     Int
+  seq                BigInt?
+  funder             String
+  beneficiaryRef     String // opaque 32-byte hex. Not reversible to an identity.
+  serviceCode        Int
   /// Postgres enforces non-negative amounts via CHECK constraint (SQLite skips it).
-  amount          String    // i128 as decimal string // pg:decimal
+  amount             String // i128 as decimal string // pg:decimal
   /// `amount` zero-padded to 39 digits (`amountKey()` in src/lib/amounts.ts),
   /// so string order is numeric order and `GET /vouchers?sort=amount` and the
   /// minAmount/maxAmount band run in the database instead of in memory
@@ -116,17 +140,25 @@ model Voucher {
   /// src/db.ts; scripts with their own client set it themselves. Backfilled
   /// by migration `20260110000000_voucher_amount_key`. Never exposed by an
   /// API response.
-  amountKey       String    @default("")
+  amountKey          String    @default("")
   /// Postgres enforces status IN ('Funded', 'Claimed', 'Attested', 'Settled', 'Disputed', 'Refunded') via CHECK constraint (SQLite skips it).
-  status          String    // Funded | Claimed | Attested | Settled | Disputed | Refunded
-  createdAt       DateTime
-  expiresAt       DateTime
-  claimedAt       DateTime?
-  attestedAt      DateTime?
+  status             String // Funded | Claimed | Attested | Settled | Disputed | Refunded
+  createdAt          DateTime
+  expiresAt          DateTime
+  claimedAt          DateTime?
+  /// Whether the claim that reached `Claimed` revealed a presence-proof
+  /// secret (#318). The `voucher_claimed` event is identical for `claim` and
+  /// `claim_with_proof`, so this is read from `get_voucher_options`: a
+  /// voucher funded with a `presence_commitment` can only be claimed with
+  /// the proof, and one funded without it can only be claimed without.
+  /// Null until the claim has been indexed *and* that read has answered; a
+  /// claim whose read failed stays null rather than guessing.
+  claimedWithProof   Boolean?
+  attestedAt         DateTime?
   /// Attester that signed the attestation, from the voucher_attested topic.
   /// Nullable so `prisma db push` adds it in place on the existing database.
-  attestedBy      String?
-  disputeDeadline DateTime?
+  attestedBy         String?
+  disputeDeadline    DateTime?
   /// The dispute window the funder chose for this voucher, in seconds, when
   /// it was funded with `create_voucher_with_options` instead of taking the
   /// protocol-wide `Config.dispute_window` (#319). `disputeDeadline` stays
@@ -138,7 +170,7 @@ model Voucher {
   /// `get_voucher_options` for every voucher that has not settled or
   /// refunded. Null means either that no option was set, which is most
   /// vouchers, or that nothing has looked yet.
-  disputeWindowSecs Int?
+  disputeWindowSecs  Int?
   /// SHA-256 of a secret the funder gave the patient. When set, the clinic
   /// can only claim with `claim_with_proof`, revealing it, so a claim shows
   /// the patient was in front of the clinic rather than only saying so.
@@ -147,29 +179,29 @@ model Voucher {
   presenceCommitment String?
   /// reason_code from voucher_disputed; meanings are documented in
   /// docs/protocol/lifecycle.md. The contract treats it as opaque.
-  disputeReason   Int?
+  disputeReason      Int?
   /// How the dispute ended, from dispute_resolved. `disputeOutcome` is
   /// 'Funder' when the funder was refunded, otherwise 'Provider'.
-  disputeResolvedAt DateTime?
-  disputeResolvedBy String?
-  disputeOutcome    String?
-  settledNet      String? // pg:decimal
-  settledFee      String? // pg:decimal
+  disputeResolvedAt  DateTime?
+  disputeResolvedBy  String?
+  disputeOutcome     String?
+  settledNet         String? // pg:decimal
+  settledFee         String? // pg:decimal
   /// When the voucher was refunded, from the voucher_refunded event's
   /// ledger close time. Null until a refund is observed. This is what makes
   /// the daily activity series able to bucket refunds by day.
-  refundedAt      DateTime?
-  updatedAt       DateTime  @updatedAt
+  refundedAt         DateTime?
+  updatedAt          DateTime  @updatedAt
 
   provider        Provider @relation(fields: [providerAddress], references: [address])
   providerAddress String
 
   /// Which deployment this voucher was created under.
-  deployment Deployment? @relation(fields: [deploymentId], references: [id])
+  deployment   Deployment? @relation(fields: [deploymentId], references: [id])
   deploymentId Int?
 
   // Composite indexes for the list routes (issue #58). Each mirrors a real
-  // filter + sort path in src/routes/vouchers.ts; the single-column indexes
+  // filter + sort path in src/routes/vouchers/query.ts; the single-column indexes
   // they replace (funder, providerAddress, beneficiaryRef, status) were
   // strict prefixes of these and were dropped. Postgres scans a two-column
   // index backwards, so one index serves `order=asc|desc` for both the
@@ -229,7 +261,7 @@ model Receipt {
   settledAt       DateTime
 
   /// Which deployment this receipt was settled under.
-  deployment Deployment? @relation(fields: [deploymentId], references: [id])
+  deployment   Deployment? @relation(fields: [deploymentId], references: [id])
   deploymentId Int?
 
   // GET /receipts lists one patient's or one clinic's history sorted by
@@ -266,7 +298,8 @@ model GovernanceEvent {
 model ProviderStatusChange {
   id              String   @id // on-chain event id
   providerAddress String
-  status          String // Pending | Active | Suspended
+  status          String // Pending | Active | Suspended | Retired
+  reasonCode      Int?
   ledger          Int
   changedAt       DateTime
 
@@ -319,16 +352,16 @@ model ContractEvent {
 /// what makes the omission durable and visible: `/ready` reports degraded
 /// while it is non-empty, and `npm run indexer:retry-failed` replays it.
 model FailedEvent {
-  id        String   @id // on-chain event id
-  name      String
-  ledger    Int
+  id         String    @id // on-chain event id
+  name       String
+  ledger     Int
   /// JSON of the raw RPC event with topics and value as base64 XDR, enough
   /// to re-decode it after a decoder fix.
-  raw       String
-  error     String
-  attempts  Int      @default(1)
-  firstSeen DateTime
-  lastSeen  DateTime
+  raw        String
+  error      String
+  attempts   Int       @default(1)
+  firstSeen  DateTime
+  lastSeen   DateTime
   /// Stamped when the failure has been successfully retried or resolved.
   /// Operational data retention cleans up resolved failures older than RETENTION_DAYS.
   resolvedAt DateTime?
@@ -345,17 +378,17 @@ model FailedEvent {
 /// a Postgres advisory lock so the exact same code path is exercised on the
 /// SQLite database used in development and tests.
 model IndexerState {
-  id             Int       @id @default(1)
-  lastLedger     Int
-  updatedAt      DateTime  @updatedAt
+  id              Int       @id @default(1)
+  lastLedger      Int
+  updatedAt       DateTime  @updatedAt
   /// Operator-controlled pause flag. The cursor is retained while paused.
-  paused         Boolean   @default(false)
+  paused          Boolean   @default(false)
   /// Instance holding the lease; null when no one is indexing.
-  leaseOwner     String?
+  leaseOwner      String?
   /// After this instant the lease is free for another instance to take.
-  leaseExpiresAt DateTime?
+  leaseExpiresAt  DateTime?
   /// True when the cursor fell outside the RPC retention window.
-  gap            Boolean   @default(false)
+  gap             Boolean   @default(false)
   /// Oldest ledger the RPC had when the gap was detected.
   gapOldestLedger Int?
   /// Cursor ledger at the time the gap was detected.
@@ -377,6 +410,97 @@ model FaucetDrip {
 
   @@index([wallet])
   @@index([ledger])
+}
+
+/// A sponsor of the matching-funding desk (`contracts/sponsor`), as observed
+/// through that contract's events (#317).
+///
+/// Keyed by the sponsor's own account address — the `sponsor` topic, which is
+/// the address that signed the call, never the desk contract. One row per
+/// sponsor, holding the state the most recent event reported: `available` is
+/// a snapshot the contract emits after every budget movement (it is not a
+/// total computed here, which is what makes a replayed event harmless), and
+/// the four rule fields are the latest `rules_set`. A sponsor that only ever
+/// appeared in a `match_created` therefore has nulls until it deposits or
+/// sets rules.
+///
+/// Only populated when `SPONSOR_CONTRACT_ID` is configured.
+model Sponsor {
+  address String @id
+  /// Unused budget in the desk, i128 as decimal string. Null when no budget
+  /// movement has been indexed for this sponsor yet.
+  available        String?
+  /// u32 basis points: 10000 matches one-for-one, 20000 matches two-for-one.
+  matchBps         Int?
+  capPerVoucher    String? // i128 as decimal string
+  minVoucherAmount String? // i128 as decimal string
+  /// u64 as decimal string, because it is wider than a Postgres integer.
+  /// An anti-farming minimum age, not a funding deadline.
+  minVoucherAgeSecs String?
+  /// Ledger close time of the `rules_set` these fields came from.
+  rulesAt           DateTime?
+  /// Ledger close time of the last budget movement, which is what `available`
+  /// describes. Null until one is indexed.
+  lastMovementAt    DateTime?
+  firstSeenAt       DateTime
+  updatedAt         DateTime @updatedAt
+
+  @@index([firstSeenAt])
+}
+
+/// One deposit into or withdrawal out of the matching desk.
+///
+/// Append-only history, keyed by the on-chain event id like every other
+/// log table, so replaying a page cannot double-count. `available` is the
+/// balance the contract reported *after* this movement.
+model SponsorBudgetEvent {
+  id             String   @id // on-chain event id
+  sponsorAddress String
+  /// Deposited | Withdrawn
+  kind           String
+  amount         String // i128 as decimal string; always positive
+  available      String // i128 as decimal string, after this movement
+  ledger         Int
+  occurredAt     DateTime
+
+  @@index([sponsorAddress, ledger])
+}
+
+/// A match the desk funded: a second voucher, paid by the sponsor, attached
+/// to the voucher it matched (#317).
+///
+/// `matchedVoucherId` is the new voucher the desk created — it arrives in the
+/// voucher stream too, with the desk as its funder — so the read model keeps
+/// both ids and lets a voucher page look its own match up by `originalVoucherId`.
+/// The contract stores one match per original voucher, so a second match on
+/// the same voucher is a contract rejection rather than a second row here.
+///
+/// `status` lags reality by design: the desk publishes `match_settled` and
+/// `match_refunded` only the next time it reconciles that sponsor, so a match
+/// whose voucher already settled stays `Open` until that call happens. The
+/// amounts, though, always add up: a settle or refund carries the same
+/// `amount` the match was created with, because it is read back from the
+/// stored record rather than from the chain again.
+model SponsorMatch {
+  matchedVoucherId  String   @id // u64 as string: the voucher the desk funded
+  /// The voucher the match was made against. Unique: the contract keeps one
+  /// match per original voucher and rejects a second.
+  originalVoucherId String   @unique
+  sponsorAddress    String
+  providerAddress   String
+  serviceCode       Int
+  /// The sponsor's own contribution (i128 as decimal string), which is
+  /// `min(original amount * matchBps / 10000, capPerVoucher)`. The original
+  /// funder's amount is not in this event — it is the voucher's own `amount`.
+  amount            String
+  /// Open | Settled | Refunded
+  status            String   @default("Open")
+  matchedAt         DateTime
+  settledAt         DateTime?
+  refundedAt        DateTime?
+
+  @@index([sponsorAddress, matchedAt])
+  @@index([status])
 }
 
 /// A voucher whose stored row disagrees with the contract.
@@ -415,8 +539,15 @@ model WebhookDelivery {
   id            String    @id
   url           String
   event         String
-  voucherId     String
-  status        String
+  /// The voucher the event is about; null for registry and service events.
+  voucherId     String?
+  /// Resulting status: voucher status, or provider status for registry events.
+  /// Null for `service.price_changed`, which has no status.
+  status        String?
+  /// The provider the event is about, for registry and service events.
+  provider      String?
+  /// Service code, for `service.price_changed` (exactly one event kind).
+  serviceCode   Int?
   txHash        String?
   ledger        Int
   payload       String
@@ -448,4 +579,3 @@ model DailyStat {
   refundedAmount String   @default("0")
   updatedAt      DateTime @updatedAt
 }
-

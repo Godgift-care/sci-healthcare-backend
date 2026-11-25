@@ -42,6 +42,13 @@ const { providers } = await client.providers({
   limit: 20,
 });
 
+// A clinic's price list on its own, without refetching the profile
+const { services } = await client.providerServices(providers[0].address, {
+  active: 'true',
+  sort: 'price',
+  order: 'asc',
+});
+
 // Retrieve voucher details
 const voucher = await client.voucher('0001');
 
@@ -87,11 +94,12 @@ header that `EventSource` cannot set from application code.
 
 Two things a caller must know:
 
-- **A gap is possible.** The backend frames no SSE `id:`, so `stream.lastEventId`
-  stays `null` and events that happened while disconnected are not replayed.
-  Treat the stream as a signal to re-read the JSON routes rather than as a
-  complete log; frames are only written after the transaction that produced
-  them commits, so those routes are never behind the last event delivered.
+- **Reconnects resume, up to a bound.** Each frame carries the on-chain event
+  id, resent as `Last-Event-ID` so the server replays what was missed (at most
+  500 events). If the cursor is too old to replay, `onReset` fires with the
+  reason and the handle clears it; refetch the JSON routes, which are never
+  behind the last event delivered because frames are only written after the
+  transaction that produced them commits.
 - **The feed is live in a combined process.** Where the indexer runs separately
   from the API, that API process has nothing to subscribe to and its streams
   only beat, so the heartbeat timeout reconnects on a loop. Set
@@ -103,6 +111,48 @@ Two things a caller must know:
 with `400`, `401`, `403` or `404` is fatal, because reconnecting identically
 would be a loop rather than a retry. A `503 stream_full` is not: it means the
 instance is holding its `SSE_MAX_CONNECTIONS` and is worth trying again.
+
+## Paginating lists with async iterators
+
+The list routes return one page plus a `nextCursor`. The `*Iterate` helpers
+follow the cursor for you, fetching a page only when you ask for the next
+item, so a `break` stops the loop without a further request (#286):
+
+```typescript
+for await (const voucher of client.vouchersIterate({ provider: 'GDOO...', limit: 50 })) {
+  if (voucher.status === 'Settled') break; // leaves mid-page; no extra call
+  console.log(voucher.id);
+}
+
+for await (const provider of client.providersIterate({ status: 'Active' })) { /* … */ }
+for await (const receipt of client.receiptsIterate({ provider: 'GDOO...' })) { /* … */ }
+for await (const service of client.servicesIterate()) { /* one page, no cursor */ }
+```
+
+## Following live events with `for await`
+
+`client.streamEvents()` is the same `GET /stream` subscription expressed as an
+async iterator (#290), for a terminal tail or any `for await` loop. It wraps
+`stream()` — one reader, one set of reconnect and resume rules — so it takes
+the same filter (exactly one of `voucher` or `provider`; there is no
+unfiltered feed) and the same options, and it ends when the handle ends:
+
+```typescript
+const controller = new AbortController();
+for await (const event of client.streamEvents(
+  { provider: 'GDOO...' },
+  { signal: controller.signal },
+)) {
+  console.log(event.type, event.voucherId, event.status, event.ledger);
+  if (event.status === 'Settled') controller.abort(); // ends the loop
+}
+```
+
+Breaking out of the loop closes the handle, so no half-read connection is left
+behind. Because the handle reconnects, a stream the server closed is not the
+end of the iteration: the next frame simply arrives after the backoff. A
+recoverable drop yields nothing and reports nothing; only a `{ fatal: true }`
+error — one that would end `stream()` too — rejects the iterator.
 
 ## Command-line interface
 
@@ -139,19 +189,38 @@ Every command mirrors one read route:
 | `sci vouchers-csv [filters]` | `GET /vouchers.csv` (prints CSV) |
 | `sci receipts (--beneficiary-ref \| --provider)` / `sci receipt <voucherId>` | `GET /receipts`, `/receipts/:voucherId` |
 | `sci governance` | `GET /governance` |
+| `sci watch (--provider G... \| --voucher <id>)` | `GET /stream` (live events; one filter required) |
 
-Output is an aligned table by default and raw JSON with `--json`, so it is
-both readable and pipeable:
+Output is an aligned table by default, raw JSON with `--json`, and CSV with
+`--csv` (a header plus one row per record, nested fields as dotted columns),
+so it is readable and pipeable with `jq`, `awk`, or a spreadsheet (#291):
 
 ```bash
 sci stats --json | jq '.vouchers'
 sci vouchers --provider GDOO... --json | jq -r '.vouchers[].id'
+sci vouchers --provider GDOO... --csv > vouchers.csv
+sci watch --provider GDOO...            # one line per event, until Ctrl-C
+sci watch --provider GDOO... --json      # JSON lines, pipe straight to jq
 ```
+
+`sci watch` follows the stream — reconnecting through drops, like
+`client.stream()` — until you press Ctrl-C, which ends it cleanly with exit
+code 130 (#290).
 
 The API base URL is `--base-url <url>`, falling back to `SCI_API_URL`, then
 `API_URL`, then `http://localhost:8080`. Exit codes: `0` success, `1` the
-API or the network failed, `2` the command line was wrong. `sci <command>
---help` shows the flags for one command.
+API or the network failed, `2` the command line was wrong, `130` when
+`sci watch` was interrupted. `sci <command> --help` shows the flags for one
+command.
+
+## Module formats
+
+The package is published as both ESM and CommonJS behind an `exports` map, so
+`import '@sci-healthcare/client'` and `require('@sci-healthcare/client')` both
+resolve to the right build (#289). The `sci` bin is ESM-only (it uses
+`import.meta.url` and a top-level await). `npm run build` produces both
+formats; `publint` and a `require`/`import` smoke test run in CI to keep the
+package publishable.
 
 ## Error Handling
 

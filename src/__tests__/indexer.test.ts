@@ -7,6 +7,7 @@ import { env } from '../env.js';
 import { server } from '../stellar/client.js';
 import { Indexer, nextDelay } from '../stellar/indexer.js';
 import { collectEvents } from '../stellar/paging.js';
+import type { ReconcileResult } from '../stellar/reconcile.js';
 
 vi.mock('../stellar/paging.js', () => ({
   collectEvents: vi.fn(),
@@ -132,6 +133,16 @@ describe('indexer logs', () => {
 });
 
 describe('RPC retention gap', () => {
+  it('passes the configured page size to RPC event collection', async () => {
+    stubEvents([], 100);
+    await new Indexer(fakeLog(), { pageSize: 25 }).tick();
+
+    expect(collectEvents).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pageSize: 25 }),
+    );
+  });
+
   it('marks the indexer as degraded when cursor is older than oldestLedger', async () => {
     vi.spyOn(server, 'getHealth').mockResolvedValue({
       oldestLedger: 200,
@@ -214,6 +225,75 @@ describe('single-writer lease', () => {
       );
     } finally {
       await peer.stop();
+    }
+  });
+});
+
+describe('scheduled reconciliation', () => {
+  const result: ReconcileResult = {
+    checked: 1,
+    matched: 1,
+    mismatched: 0,
+    missingOnChain: 0,
+    fixed: 0,
+    errors: 0,
+    openMismatches: 0,
+    lastVoucherId: '1',
+  };
+
+  it('runs after the indexed poll only under the lease and waits through shutdown', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(0));
+    stubEvents([], 101);
+
+    let finishReconcile!: (value: ReconcileResult) => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const activeRunner = vi.fn(
+      () =>
+        new Promise<ReconcileResult>((resolve) => {
+          finishReconcile = resolve;
+          markStarted();
+        }),
+    );
+    const standbyRunner = vi.fn(async () => result);
+    const active = new Indexer(fakeLog(), {
+      reconcileIntervalMs: 1,
+      reconciliationRunner: activeRunner,
+    });
+    const standby = new Indexer(fakeLog(), {
+      reconcileIntervalMs: 1,
+      reconciliationRunner: standbyRunner,
+    });
+
+    try {
+      vi.setSystemTime(new Date(2));
+      const activeCycle = active['cycle']();
+      await started;
+      const pollsBeforeBlockedTick = vi.mocked(collectEvents).mock.calls.length;
+
+      await standby['cycle']();
+      await active.tick();
+
+      expect(standbyRunner).not.toHaveBeenCalled();
+      expect(vi.mocked(collectEvents)).toHaveBeenCalledTimes(pollsBeforeBlockedTick);
+
+      let stopped = false;
+      const stopping = active.stop().then(() => {
+        stopped = true;
+      });
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+
+      finishReconcile(result);
+      await Promise.all([activeCycle, stopping]);
+      expect(stopped).toBe(true);
+    } finally {
+      finishReconcile?.(result);
+      await Promise.all([active.stop(), standby.stop()]);
+      vi.useRealTimers();
     }
   });
 });

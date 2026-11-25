@@ -7,6 +7,7 @@ import { parseFields, applyFields, columnSelect, includesField } from '../lib/fi
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
+const SPONSOR = 'GDFEKR6EXP5WZERLLVT7FE5ZT7W7VRMG63ZBW2DXIXYNXISXJBSXEMWO';
 const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -70,6 +71,22 @@ async function seed() {
   });
 }
 
+/** The sponsor half of voucher 1's funding: 6000000 matched against 30000000. */
+async function seedMatch() {
+  await prisma.sponsorMatch.create({
+    data: {
+      matchedVoucherId: '2',
+      originalVoucherId: '1',
+      sponsorAddress: SPONSOR,
+      providerAddress: CLINIC,
+      serviceCode: 101,
+      amount: '6000000',
+      status: 'Settled',
+      matchedAt: new Date('2026-10-01T04:00:00Z'),
+    },
+  });
+}
+
 beforeAll(async () => {
   app = await buildApp({ logger: false });
 }, 30_000);
@@ -80,6 +97,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await prisma.sponsorMatch.deleteMany();
   await prisma.receipt.deleteMany();
   await prisma.voucher.deleteMany();
   await prisma.service.deleteMany();
@@ -187,10 +205,64 @@ describe('GET /vouchers sparse fieldsets (#166)', () => {
   });
 
   it('still paginates metadata alongside sparse rows', async () => {
-    const { status, body } = await get(`${base}&fields=id&limit=10`);
+    const { status, body } = await get(`${base}&fields=id&limit=10&count=true`);
     expect(status).toBe(200);
     expect(body.total).toBe(1);
     expect(body.vouchers[0]).toEqual({ id: '1' });
+  });
+
+  it('accepts claimedWithProof and sends null when it was never read (#318)', async () => {
+    const { status, body } = await get(`${base}&fields=id,claimedWithProof`);
+    expect(status).toBe(200);
+    expect(body.vouchers[0]).toEqual({ id: '1', claimedWithProof: null });
+  });
+
+  it('reads claimedWithProof back from the row, not a constant', async () => {
+    await prisma.voucher.update({ where: { id: '1' }, data: { claimedWithProof: true } });
+
+    const { body } = await get(`${base}&fields=id,claimedWithProof`);
+    expect(body.vouchers[0]).toEqual({ id: '1', claimedWithProof: true });
+  });
+
+  it('serves the sponsor match keys on their own (#317)', async () => {
+    // A caller that only wants who funded the top-up must be able to ask for
+    // it: the match keys are in the allow-list, so `fields=` is not a reason
+    // to lose them, and the lookup is the same one the full row uses.
+    await seedMatch();
+
+    const { status, body } = await get(`${base}&fields=id,matchedAmount,matchedBy,matchStatus`);
+    expect(status).toBe(200);
+    expect(body.vouchers[0]).toEqual({
+      id: '1',
+      matchedAmount: '6000000',
+      matchedBy: SPONSOR,
+      matchStatus: 'Settled',
+    });
+  });
+
+  it('keeps a matched voucher and an unmatched one distinct under fields=', async () => {
+    // Both rows are projected onto the same key set, so the only way to tell
+    // "nobody matched this" from "a sponsor matched nothing" is the null.
+    await seedMatch();
+    await prisma.voucher.create({
+      data: {
+        id: '3',
+        funder: FUNDER,
+        beneficiaryRef: REF,
+        providerAddress: CLINIC,
+        serviceCode: 101,
+        amount: '1000000',
+        status: 'Active',
+        createdAt: new Date(Date.now() - DAY),
+        expiresAt: new Date(Date.now() + 20 * DAY),
+      },
+    });
+
+    const { body } = await get(`${base}&fields=id,matchedAmount&limit=2`);
+    expect(body.vouchers).toEqual([
+      { id: '3', matchedAmount: null },
+      { id: '1', matchedAmount: '6000000' },
+    ]);
   });
 });
 
@@ -329,6 +401,9 @@ describe('the SQL a sparse page generates (#321)', () => {
       'funder',
       'beneficiaryRef',
       'claimedAt',
+      // The presence-proof flag (#318): a column like any other, so a page
+      // that did not ask for it does not read it.
+      'claimedWithProof',
       'attestedAt',
       'settledNet',
       'settledFee',
@@ -364,6 +439,7 @@ describe('the SQL a sparse page generates (#321)', () => {
         'funder',
         'beneficiaryRef',
         'claimedAt',
+        'claimedWithProof',
         'attestedAt',
         'attestedBy',
         'disputeReason',
@@ -427,7 +503,7 @@ describe('the SQL a sparse page generates (#321)', () => {
     await get('/providers?fields=address,services');
     expect(readsTable('Service'), 'service catalogue').toBe(true);
     expect([...columnsRead('Service')].sort()).toEqual(
-      ['code', 'id', 'label', 'price', 'providerAddress'].sort(),
+      ['code', 'id', 'label', 'price', 'providerAddress', 'upcomingFrom', 'upcomingPrice'].sort(),
     );
   });
 

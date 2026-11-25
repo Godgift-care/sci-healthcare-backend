@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sci-healthcare.example/schemas/provider-metadata.json",
+  "title": "SCI Healthcare provider metadata",
+  "description": "The off-chain document a clinic may publish at its on-chain metadata URI. At least one recognised field is required; unknown fields are ignored by the API.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "address": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "lat": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "lng": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        }
+      },
+      "required": ["lat", "lng"],
+      "additionalProperties": false
+    },
+    "geo": {
+      "type": "object",
+      "properties": {
+        "lat": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "lng": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        }
+      },
+      "required": ["lat", "lng"],
+      "additionalProperties": false
+    },
+    "hours": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      ]
+    },
+    "phone": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 50
+    },
+    "languages": {
+      "minItems": 1,
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 35
+      }
+    }
+  },
+  "additionalProperties": true,
+  "anyOf": [
+    {
+      "required": ["name"]
+    },
+    {
+      "required": ["address"]
+    },
+    {
+      "required": ["location"]
+    },
+    {
+      "required": ["geo"]
+    },
+    {
+      "required": ["hours"]
+    },
+    {
+      "required": ["phone"]
+    },
+    {
+      "required": ["languages"]
+    }
+  ]
+}

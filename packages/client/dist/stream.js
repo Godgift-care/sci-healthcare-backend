@@ -102,12 +102,12 @@ class FrameParser {
  * `baseUrl` is already trailing-slash-trimmed by `Client`. The returned handle
  * is synchronous so a caller can close it before the first connect resolves.
  *
- * Resume is best effort by necessity: this resends the last `id:` it was
- * given, but the route emits no `id:` line, so against this backend
- * `lastEventId` stays null and a gap between a drop and the reconnect is
- * filled by re-reading the JSON routes, not by replay. Frames are only ever
- * written after the transaction that produced them commits, so the state the
- * routes serve is never behind the last frame seen.
+ * Resume resends the last `id:` it was given. The route replays the events
+ * committed after it (bounded) before going live, and answers a cursor too old
+ * for that window with a `reset` event, at which point the caller refetches
+ * the JSON routes. Frames are only ever written after the transaction that
+ * produced them commits, so the state those routes serve is never behind the
+ * last frame seen.
  */
 export function subscribe(baseUrl, defaultHeaders, clientFetch, filters, handlers = {}, options = {}) {
     const hasVoucher = Boolean(filters.voucher);
@@ -154,6 +154,21 @@ export function subscribe(baseUrl, defaultHeaders, clientFetch, filters, handler
         params.set('provider', filters.provider);
     const url = `${baseUrl}/stream?${params.toString()}`;
     const handle = (frame, eventType) => {
+        if (eventType === 'reset') {
+            let reset;
+            try {
+                reset = JSON.parse(frame);
+            }
+            catch {
+                reset = { type: 'reset', reason: 'unreadable_reset' };
+            }
+            // Sending the same stale cursor again would produce the same reset, so
+            // the next reconnect starts from the live edge instead.
+            lastEventId = null;
+            if (handlers.onReset)
+                handlers.onReset(reset);
+            return;
+        }
         if (eventType && eventType !== 'message')
             return;
         let event;

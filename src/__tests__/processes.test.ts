@@ -5,6 +5,8 @@ import { start as startApi } from '../api.js';
 import { prisma } from '../db.js';
 import { start as startWorker } from '../worker.js';
 
+import { expectHealthBody } from './health-body.js';
+
 afterAll(async () => {
   await prisma.$disconnect();
 });
@@ -15,7 +17,7 @@ describe('separate API and indexer processes', () => {
     try {
       const res = await app.inject({ method: 'GET', url: '/health' });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ status: 'ok' });
+      expectHealthBody(res.json());
     } finally {
       await app.close();
     }

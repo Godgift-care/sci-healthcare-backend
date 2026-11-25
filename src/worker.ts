@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import type { FastifyBaseLogger } from 'fastify';
 import pino from 'pino';
 
-import { disconnect } from './db.js';
+import { disconnect, waitForDatabase } from './db.js';
 import { env } from './env.js';
 import { WebhookDispatcher } from './lib/webhooks.js';
 import { Indexer } from './stellar/indexer.js';
@@ -22,6 +22,7 @@ export type WorkerOptions = {
 };
 
 export async function start(opts: WorkerOptions = {}): Promise<Indexer> {
+  await waitForDatabase();
   // No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set (#54).
   startTracingIfConfigured();
 

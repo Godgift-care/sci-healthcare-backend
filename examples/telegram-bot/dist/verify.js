@@ -6,6 +6,13 @@ export function computeSignature(payload, secret) {
     return createHmac('sha256', secret).update(payload).digest('hex');
 }
 /**
+ * Returns true if the given signature header is valid for the raw payload.
+ * Thin alias over verifySignature for use by notifier integrations.
+ */
+export function isValidSignature(rawBody, signatureHeader, secret) {
+    return verifySignature(rawBody, signatureHeader, secret);
+}
+/**
  * Verifies that the incoming X-SCI-Signature header matches the expected HMAC-SHA256
  * signature over the raw payload using constant-time comparison to prevent timing attacks.
  * Accepts signature in form of raw hex string or "sha256=<hex>".

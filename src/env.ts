@@ -31,6 +31,17 @@ function corsViolation(cfg: CorsConfig): string | null {
   return ok ? null : 'CORS_ORIGIN must contain valid http(s) URLs';
 }
 
+/**
+ * An optional variable that is blank means "not configured".
+ *
+ * `.env.example` ships optional ids as empty lines, and a dotenv loader turns
+ * those into `''` rather than leaving the key absent. Without this, a stock
+ * `.env` fails boot on an id the deployment never meant to set.
+ */
+function blankToUndefined(value: unknown): unknown {
+  return typeof value === 'string' && value.trim() === '' ? undefined : value;
+}
+
 /** The parsed environment shape, before the CORS rule is layered on. */
 const envShape = z.object({
   NODE_ENV: z.string().default('development'),
@@ -38,6 +49,11 @@ const envShape = z.object({
   HOST: z.string().default('0.0.0.0'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  /**
+   * When 'true', every data route answers 503 Service Unavailable with
+   * a Retry-After header while /health stays 200 OK (#322).
+   */
+  MAINTENANCE_MODE: z.enum(['true', 'false']).default('false'),
   READY_MAX_LAG_LEDGERS: z.coerce.number().int().nonnegative().default(120),
   /**
    * How long a webhook delivery may stay pending before `/ready` reports the
@@ -50,6 +66,7 @@ const envShape = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_POOL_SIZE: z.coerce.number().int().positive().optional(),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  DATABASE_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   // Prune ContractEvent rows older than this many days, for settled/refunded
   // vouchers only (#275). 0 or unset keeps the full log forever.
   EVENT_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(0),
@@ -65,14 +82,18 @@ const envShape = z.object({
    * next. One blip is not an outage, so the default waits for a small streak.
    */
   SOROBAN_RPC_MAX_FAILURES: z.coerce.number().int().positive().default(3),
+  INDEXER_ARCHIVE_RPC_URL: z.preprocess(
+    blankToUndefined,
+    z.string().refine(isValidHttpUrl).optional(),
+  ),
   NETWORK_PASSPHRASE: z.string().min(1),
 
   REGISTRY_CONTRACT_ID: z.string().length(56),
   VOUCHER_CONTRACT_ID: z.string().length(56),
   RECEIPT_CONTRACT_ID: z.string().length(56),
-  USDC_CONTRACT_ID: z.string().length(56).optional(),
+  USDC_CONTRACT_ID: z.preprocess(blankToUndefined, z.string().length(56).optional()),
   /** Testnet demo faucet. Drips are counted only when this is set. */
-  FAUCET_CONTRACT_ID: z.string().length(56).optional(),
+  FAUCET_CONTRACT_ID: z.preprocess(blankToUndefined, z.string().length(56).optional()),
 
   /**
    * Optional JSON array of previous contract deployments for redeployment support.
@@ -81,8 +102,30 @@ const envShape = z.object({
    */
   DEPLOYMENTS: z.string().optional(),
 
+  /**
+   * Base URL of the IPFS gateway used to resolve `ipfs://<cid>` metadata
+   * pointers (#269). The CID and any path are appended to it; only http(s)
+   * gateways are accepted. Content-addressed documents cannot be changed
+   * silently, which is why clinics are encouraged to publish them.
+   */
+  IPFS_GATEWAY_URL: z.string().url().default('https://ipfs.io/ipfs'),
+  /**
+   * How long a cached provider metadata document is trusted before it is
+   * fetched again (#270). Opening hours and phone numbers change without a
+   * transaction, so the refresh pass re-requests each document after this
+   * window, conditionally with its ETag so an unchanged document costs a
+   * 304 rather than a body.
+   */
+  PROVIDER_METADATA_TTL_MS: z.coerce.number().int().positive().default(86_400_000),
+
   INDEXER_START_LEDGER: z.coerce.number().int().nonnegative().default(0),
   INDEXER_POLL_MS: z.coerce.number().int().positive().default(5000),
+  INDEXER_PAGE_SIZE: z.coerce.number().int().min(1).max(1000).default(200),
+  /** Periodic chain reconciliation; unset disables automatic passes. */
+  RECONCILE_INTERVAL_MS: z.preprocess(
+    blankToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
   /** Ceiling for the indexer's exponential backoff after RPC failures. */
   INDEXER_BACKOFF_MAX_MS: z.coerce.number().int().positive().default(60_000),
   /**
@@ -115,6 +158,14 @@ const envShape = z.object({
    * answers 503 and the client retries later.
    */
   SSE_MAX_CONNECTIONS: z.coerce.number().int().positive().default(64),
+  /**
+   * Minimum voucher count per reporting cell for public aggregate routes
+   * (`GET /countries`, `GET /stats/funnel?country=` and `?clinic=`).
+   * Cells below this threshold are suppressed (returned as null) to prevent
+   * re-identification of individuals in small cohorts (#256).
+   * Set to 0 to disable suppression (testing or unrestricted deployments).
+   */
+  STATS_MIN_CELL: z.coerce.number().int().nonnegative().default(5),
 });
 
 /**

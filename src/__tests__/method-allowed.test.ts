@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { allowedMethods, routePatterns } from '../lib/method-allowed.js';
 
+import { expectHealthBody } from './health-body.js';
+
 let app: FastifyInstance;
 
 /** Rotating client addresses: the app rate-limits per IP, one test is not a flood. */
@@ -168,7 +170,7 @@ describe('405 for a known path with an unsupported method', () => {
   it('leaves the GET routes alone', async () => {
     const res = await call('GET', '/health');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ status: 'ok' });
+    expectHealthBody(res.body);
   });
 
   it('serves a HEAD request from its GET route', async () => {

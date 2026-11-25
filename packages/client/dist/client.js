@@ -4,13 +4,24 @@ export class ApiError extends Error {
     error;
     details;
     issues;
-    constructor(status, error, message, details) {
+    /**
+     * The error body as the API sent it, typed as the one documented envelope
+     * (#296).
+     *
+     * `message` on this class is a fallback-protected string because `Error`
+     * needs one; `envelope` is the honest record, so a route that answers a
+     * lookup failure without a localised `message` shows that here rather than
+     * inheriting a sentence the server never sent.
+     */
+    envelope;
+    constructor(status, error, message, details, envelope) {
         super(message);
         this.name = 'ApiError';
         this.status = status;
         this.error = error;
         this.details = details;
         this.issues = details;
+        this.envelope = envelope ?? { error, message, ...(details === undefined ? {} : { details }) };
     }
 }
 /**
@@ -33,12 +44,35 @@ export function providerLocation(p) {
     }
     return { lat, lng };
 }
+function trimTrailingSlashes(value) {
+    let end = value.length;
+    while (end > 0 && value.charCodeAt(end - 1) === 47)
+        end--;
+    return value.slice(0, end);
+}
+/**
+ * The first page of a list asks for its count (#247).
+ *
+ * The client has always returned `total`, and making the aggregate query
+ * opt-in on the route would otherwise break every caller that reads it. A
+ * cursor page does not ask: the count is the size of the whole filtered set,
+ * unchanged by paging, and `total` stays absent there, as the response type
+ * says.
+ */
+function firstPageCount(params) {
+    if (params === undefined)
+        return { count: true };
+    const query = { ...params };
+    if (query.cursor === undefined && query.count === undefined)
+        query.count = true;
+    return query;
+}
 export class Client {
     baseUrl;
     fetchImpl;
     defaultHeaders;
     constructor(options) {
-        this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+        this.baseUrl = trimTrailingSlashes(options.baseUrl);
         this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
         this.defaultHeaders = options.headers ?? {};
     }
@@ -82,7 +116,11 @@ export class Client {
             const errCode = body.error ?? `http_${res.status}`;
             const message = body.message ?? res.statusText ?? 'Request failed';
             const details = body.details ?? body.issues;
-            throw new ApiError(res.status, errCode, message, details);
+            // `error` is the only required member of the envelope, so a body that
+            // does not carry one is not an envelope and is left out rather than
+            // dressed up as one.
+            const envelope = body.error === undefined ? undefined : body;
+            throw new ApiError(res.status, errCode, message, details, envelope);
         }
         return (await res.json());
     }
@@ -95,17 +133,31 @@ export class Client {
     async ready() {
         return this.request('/ready');
     }
+    async indexer() {
+        return this.request('/indexer');
+    }
     async stats() {
         return this.request('/stats');
     }
-    async dailyStats(days = 30) {
-        return this.request('/stats/daily', { days });
+    async dailyStats(days = 30, options = {}) {
+        return this.request('/stats/daily', { days, ...options });
     }
     async providers(params) {
-        return this.request('/providers', params);
+        return this.request('/providers', firstPageCount(params));
     }
     async provider(address) {
         return this.request(`/providers/${encodeURIComponent(address)}`);
+    }
+    /**
+     * One clinic's price list on its own (issue #314), sorted by price
+     * ascending by default.
+     *
+     * Priced separately from the clinic record because the catalogue changes
+     * far more often than the profile around it, so refreshing prices does not
+     * refetch — or revalidate — the whole provider.
+     */
+    async providerServices(address, params) {
+        return this.request(`/providers/${encodeURIComponent(address)}/services`, params);
     }
     async providerHistory(address) {
         return this.request(`/providers/${encodeURIComponent(address)}/history`);
@@ -117,13 +169,13 @@ export class Client {
         return this.request('/countries');
     }
     async services() {
-        return this.request('/services');
+        return this.request('/services', { count: true });
     }
     async service(code) {
         return this.request(`/services/${code}`);
     }
     async vouchers(params) {
-        return this.request('/vouchers', params);
+        return this.request('/vouchers', firstPageCount(params));
     }
     async voucher(id) {
         return this.request(`/vouchers/${encodeURIComponent(id)}`);
@@ -154,13 +206,16 @@ export class Client {
         return res.text();
     }
     async receipts(params) {
-        return this.request('/receipts', params);
+        return this.request('/receipts', firstPageCount(params));
     }
     async receipt(voucherId) {
         return this.request(`/receipts/${encodeURIComponent(voucherId)}`);
     }
     async governance() {
         return this.request('/governance');
+    }
+    async deployments() {
+        return this.request('/deployments');
     }
     /**
      * Subscribes to `GET /stream` for one voucher or one clinic.
@@ -171,12 +226,92 @@ export class Client {
      * `provider` is required, matching the route, and the returned `close()`
      * stops reconnecting for good.
      *
-     * The server frames no SSE `id:` today, so a drop loses whatever happened
-     * while disconnected; re-read the JSON routes after `onReconnect` to be
-     * certain of current state.
+     * Each frame carries the on-chain event id, resent as `Last-Event-ID` on a
+     * reconnect so the server replays what was missed. If that cursor is too old
+     * for the replay window, `onReset` fires and the JSON routes should be
+     * re-read.
      */
     stream(filters, handlers = {}, options = {}) {
         return subscribe(this.baseUrl, this.defaultHeaders, this.fetchImpl, filters, handlers, options);
+    }
+    /**
+     * The same subscription as an async iterator, for `for await` and for
+     * `sci watch` (#290): one event per frame.
+     *
+     * It wraps `stream()` rather than reading the socket again, so the resume,
+     * heartbeat and backoff rules live in one place. Iteration ends when the
+     * handle ends — a fatal status, `close()`, or the `signal` aborting — so a
+     * stream the server closed is followed by a reconnect, not a quiet finish.
+     * A recoverable drop yields nothing at all: the handle is still retrying it.
+     *
+     * Breaking out of the loop closes the handle before `next()` returns.
+     */
+    async *streamEvents(filters, options = {}) {
+        const queue = [];
+        let wake = null;
+        const notify = () => {
+            const resume = wake;
+            wake = null;
+            if (resume !== null)
+                resume();
+        };
+        // `stream()` validates the filter synchronously, so a bad request rejects
+        // the first `next()` like any other failing async iterator.
+        const handle = this.stream(filters, {
+            onEvent: (event) => {
+                queue.push({ kind: 'event', event });
+                notify();
+            },
+            onError: (error, info) => {
+                if (!info.fatal)
+                    return;
+                queue.push({ kind: 'error', error });
+                notify();
+            },
+        }, options);
+        void handle.done.then(notify, notify);
+        try {
+            while (!handle.closed || queue.length > 0) {
+                const next = queue.shift();
+                if (next === undefined) {
+                    await new Promise((resolve) => {
+                        wake = resolve;
+                    });
+                    continue;
+                }
+                if (next.kind === 'error')
+                    throw next.error;
+                yield next.event;
+            }
+        }
+        finally {
+            handle.close();
+        }
+    }
+    /**
+     * Every voucher across all pages (#286). One request per page, and only
+     * when the previous page has been fully consumed: breaking out of the
+     * loop makes no further requests.
+     */
+    vouchersIterate(params) {
+        return iteratePages((p) => this.vouchers(p), (res) => res.vouchers, (res) => res.nextCursor, params);
+    }
+    /** Every clinic across all pages (#286), same paging semantics. */
+    providersIterate(params) {
+        return iteratePages((p) => this.providers(p), (res) => res.providers, (res) => res.nextCursor, params);
+    }
+    /** Every receipt across all pages (#286), same paging semantics. */
+    receiptsIterate(params) {
+        return iteratePages((p) => this.receipts(p), (res) => res.receipts, (res) => res.nextCursor, params);
+    }
+    /**
+     * Every service in the catalogue (#286). `GET /services` is a single
+     * uncursored page, so this is one request and a full pass over it.
+     */
+    async *servicesIterate() {
+        const res = await this.services();
+        for (const service of res.services)
+            yield service;
     }
     async rawGet(path, params) {
         return this.request(path, params);
@@ -184,5 +319,28 @@ export class Client {
 }
 export function createClient(options) {
     return new Client(options);
+}
+/**
+ * The cursor-loop behind the `*Iterate` methods (#286).
+ *
+ * The next page is requested only after the previous one has been yielded
+ * in full, which is what makes `break` cheap: the generator suspends at the
+ * `yield`, so leaving the loop never fires the following request.
+ */
+async function* iteratePages(fetchPage, rowsOf, cursorOf, params) {
+    let cursor = params?.cursor;
+    for (;;) {
+        const page = { ...params };
+        if (cursor !== undefined)
+            page.cursor = cursor;
+        else
+            delete page.cursor;
+        const res = await fetchPage(page);
+        for (const row of rowsOf(res))
+            yield row;
+        cursor = cursorOf(res) ?? undefined;
+        if (cursor === undefined)
+            return;
+    }
 }
 //# sourceMappingURL=client.js.map

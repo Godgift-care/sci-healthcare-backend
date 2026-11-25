@@ -12,7 +12,7 @@
 > and are kept for the reasoning; where they say "pending", read "landed".
 
 Status (original): **plan + pending SQL**. The SQL in
-[`prisma/postgres-pending/20260107000000_amount_numeric_to_decimal/migration.sql`](../prisma/postgres-pending/20260107000000_amount_numeric_to_decimal/migration.sql)
+[`prisma/migrations/20261119000001_amount_numeric_to_decimal/migration.sql`](../prisma/migrations/20261119000001_amount_numeric_to_decimal/migration.sql)
 converts the i128-as-string amount columns of the **Postgres deploy database**
 to `numeric`, but it is *deliberately not applied yet* — see
 [Why the migration is pending](#why-the-migration-is-pending). Nothing in this
@@ -37,7 +37,7 @@ Amounts (`Voucher.amount`, `Voucher.settledNet`, `Voucher.settledFee`,
     `spend` result set with `BigInt`;
   - `src/routes/receipts.ts:186-200` — the care-summary route walks every
     receipt accumulating `bigint` per clinic;
-  - ~~`pageByAmount` in `src/routes/vouchers.ts`~~ — retired by #96: amount
+  - ~~`pageByAmount` in `src/routes/vouchers/`~~ — retired by #96: amount
     sorts and the `min`/`max` band now run in the database on
     `Voucher.amountKey`, the amount zero-padded to 39 digits.
 
@@ -93,7 +93,7 @@ one of them is a maintainer decision this PR deliberately does not force:
    numbers" ([`CONTRIBUTING.md`](../CONTRIBUTING.md)). Additionally, a
    schema-only flip leaks `Prisma.Decimal` objects past the API boundary and
    fails 3 existing route tests, because `serialise()`
-   (`src/routes/vouchers.ts:541`) and `formatReceipt()`
+   (`src/routes/vouchers/serialiser.ts`) and `formatReceipt()`
    (`src/routes/receipts.ts:59`) would emit the Decimal, not the string.
 
 So the flip requires re-platforming dev and CI to Postgres (or accepting a
@@ -126,7 +126,7 @@ bit-for-bit what it was; route tests are untouched.
    prisma/migrations/` — same folder name, applied by `migrate deploy` and
    accepted by the drift gate.
 3. API boundary keeps strings (the issue's own AC: "strings remain at API
-   boundary"): `serialise()` in `src/routes/vouchers.ts` and
+   boundary"): `serialise()` in `src/routes/vouchers/serialiser.ts` and
    `formatReceipt()` in `src/routes/receipts.ts` call `.toString()` on the
    Decimal fields (plain `String()` fails precision beyond 2^53 if anything
    has read them as JS numbers; Prisma returns `Decimal` objects, so

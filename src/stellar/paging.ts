@@ -11,9 +11,11 @@ export type CollectedEvents = {
    */
   throughLedger: number;
   /**
-   * True when the page budget was exhausted while the range was still
-   * producing full pages, so there is almost certainly more to fetch. The
-   * caller can use this to poll again immediately instead of sleeping.
+   * True when the range was left unfinished — the page budget ran out while
+   * still producing full pages, or the page that ended it reported a
+   * `latestLedger` behind events earlier pages had returned. Either way
+   * there is more to fetch, and the caller can poll again immediately
+   * instead of sleeping.
    */
   hasMore: boolean;
 };
@@ -39,6 +41,11 @@ export type CollectOptions = {
  * last ledger seen may be split across the page boundary, so that ledger
  * is dropped from the result and `throughLedger` stops just before it; the
  * next call starts there and picks up the whole ledger again.
+ *
+ * The same drop applies when a page behind `throughLedger` turns up in the
+ * result, which is what a failover onto a lagging endpoint produces: the
+ * cursor it hands back says nothing about ledgers it has not indexed, so
+ * events past it wait for a cycle whose cursor does cover them.
  */
 export async function collectEvents(
   source: EventSource,
@@ -73,6 +80,19 @@ export async function collectEvents(
     pages += 1;
   }
 
-  // The loop only exits on a short page, so the range is drained.
-  return { events, throughLedger: res.latestLedger, hasMore: false };
+  // The loop only exits on a short page, so the range is drained as far as
+  // that response's `latestLedger` reaches. It can reach less than the
+  // ledgers the earlier pages of this same range returned: a failover onto a
+  // lagging endpoint hands the cursor to a server that has not indexed them
+  // yet and reports a `latestLedger` behind them. Those events are dropped
+  // rather than applied, because the cursor this call reports cannot cover
+  // them — applying them anyway would leave the next cycle to apply them
+  // again, and the read model's counters and the webhook outbox would each
+  // record the same fact twice.
+  const drained = events.filter((e) => e.ledger <= res.latestLedger);
+  return {
+    events: drained,
+    throughLedger: res.latestLedger,
+    hasMore: drained.length < events.length,
+  };
 }

@@ -8,7 +8,9 @@ import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, {
+  LogController,
   type FastifyInstance,
+  type FastifyReply,
   type FastifyRequest,
   type FastifyServerOptions,
 } from 'fastify';
@@ -27,11 +29,13 @@ import {
   matchesEtag,
   NO_STORE,
 } from './lib/cache.js';
-import { errorEnvelope } from './lib/errors.js';
+import { errorEnvelope, MAINTENANCE_RETRY_AFTER_SECONDS } from './lib/errors.js';
 import { errorMessage, negotiateLanguage } from './lib/i18n.js';
 import { allowedMethods, routePatterns, type RoutePattern } from './lib/method-allowed.js';
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
 import { httpDuration, httpRequests, registry } from './lib/metrics.js';
+import { openapiDocsTransform } from './lib/openapi.js';
+import { providerMetadataJsonSchema } from './lib/provider-metadata.js';
 import { APP_VERSION } from './lib/version.js';
 import { attesterRoutes } from './routes/attesters.js';
 import { feedRoutes } from './routes/feed.js';
@@ -40,9 +44,13 @@ import { healthRoutes } from './routes/health.js';
 import { providerRoutes } from './routes/providers.js';
 import { receiptRoutes } from './routes/receipts.js';
 import { serviceRoutes } from './routes/services.js';
+import { sponsorRoutes } from './routes/sponsors.js';
 import { streamRoutes } from './routes/stream.js';
-import { voucherRoutes } from './routes/vouchers.js';
+import { voucherRoutes } from './routes/vouchers/index.js';
 import { DEFAULT_RATE_LIMIT } from './lib/rate-limits.js';
+
+/** Update annually — the test fails when this date is less than 30 days away. */
+export const SECURITY_TXT_EXPIRES = '2027-11-23T00:00:00.000Z';
 
 /**
  * Request ids are opaque, bounded and safe to put in a log line. Anything
@@ -57,8 +65,70 @@ function genReqId(req: IncomingMessage): string {
   return typeof value === 'string' && REQUEST_ID_PATTERN.test(value) ? value : randomUUID();
 }
 
+/**
+ * Paths whose 2xx responses are pure probe traffic (#224).
+ *
+ * Exact matches, with the query string removed: `/health?verbose=1` is still a
+ * probe, while `/health/extra` is not. `/metrics` is registered at the root
+ * only, but `/v1/metrics` is listed so a future alias cannot silently become
+ * noisy.
+ */
+const QUIET_PROBE_PATHS = new Set([
+  '/health',
+  '/v1/health',
+  '/ready',
+  '/v1/ready',
+  '/metrics',
+  '/v1/metrics',
+]);
+
+function isQuietProbePath(request: FastifyRequest): boolean {
+  const path = request.raw.url?.split('?')[0]?.split('#')[0] ?? '';
+  return QUIET_PROBE_PATHS.has(path);
+}
+
+/**
+ * Suppresses the two request lines for a *successful* probe, without hiding a
+ * failure (#224).
+ *
+ * Fastify's `disableRequestLogging` is evaluated on the incoming request,
+ * before the status code exists, and route-level `logLevel: 'silent'` would
+ * also hide a 503 from `/ready`. Both are unacceptable: a failed probe is the
+ * one we need in the log. So the incoming line is withheld for probe paths and
+ * replayed from `requestCompleted` only when the response was not 2xx. Every
+ * other request keeps Fastify's default two lines, including the custom
+ * serializer below.
+ */
+class QuietProbeLogController extends LogController {
+  override incomingRequest(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    metadata?: Record<string, unknown>,
+  ): void {
+    if (isQuietProbePath(request)) return;
+    super.incomingRequest(request, reply, metadata);
+  }
+
+  override requestCompleted(
+    error: Error | null | undefined,
+    request: FastifyRequest,
+    reply: FastifyReply,
+    metadata?: Record<string, unknown>,
+  ): void {
+    if (!isQuietProbePath(request)) {
+      super.requestCompleted(error, request, reply, metadata);
+      return;
+    }
+    if (!error && reply.statusCode >= 200 && reply.statusCode < 300) return;
+
+    super.incomingRequest(request, reply, metadata);
+    super.requestCompleted(error, request, reply, metadata);
+  }
+}
+
 export type BuildAppOptions = {
   logger?: FastifyServerOptions['logger'];
+  maintenanceMode?: boolean;
 };
 
 /**
@@ -103,6 +173,7 @@ async function registerRoutes(scope: FastifyInstance): Promise<void> {
   await scope.register(feedRoutes);
   await scope.register(governanceRoutes);
   await scope.register(attesterRoutes);
+  await scope.register(sponsorRoutes);
   await scope.register(streamRoutes);
 }
 
@@ -117,9 +188,44 @@ export async function buildApp(
 ): Promise<FastifyInstance> {
   const app = Fastify({
     logger: withRedactedLogging(opts.logger),
+    logController: new QuietProbeLogController(),
     trustProxy: true,
     genReqId,
   });
+
+  const isMaintenance =
+    opts.maintenanceMode ??
+    (process.env.MAINTENANCE_MODE === 'true' || env.MAINTENANCE_MODE === 'true');
+
+  if (isMaintenance) {
+    app.addHook('onRequest', async (req, reply) => {
+      const path = req.url.split('?')[0]!.split('#')[0]!;
+      if (
+        path === '/health' ||
+        path === '/v1/health' ||
+        path === '/metrics' ||
+        path === '/openapi.json'
+      ) {
+        return;
+      }
+
+      const language = negotiateLanguage(req.headers['accept-language']);
+      const seconds = String(MAINTENANCE_RETRY_AFTER_SECONDS);
+      reply
+        .code(503)
+        .header('retry-after', seconds)
+        .header('cache-control', NO_STORE)
+        .send({
+          error: 'maintenance_mode',
+          message: errorMessage(
+            'maintenance_mode',
+            language,
+            `Service is undergoing maintenance, retry in ${seconds} seconds`,
+            { seconds },
+          ),
+        });
+    });
+  }
 
   // Every route the app and its plugins register, prefix already applied.
   // The not-found handler reads this to tell a wrong verb from an unknown
@@ -149,6 +255,12 @@ export async function buildApp(
       },
     },
     transform: jsonSchemaTransform,
+    // `transform` converts each route's own schemas; this second hook runs on
+    // the finished document, which is where examples and error statuses can be
+    // added without touching a response body (`schema.response` is compiled
+    // into the live serializer, so declaring one here would be a breaking
+    // change under docs/api-policy.md). See src/lib/openapi.ts.
+    transformObject: openapiDocsTransform,
   });
 
   await app.register(swaggerUi, {
@@ -158,11 +270,14 @@ export async function buildApp(
   await app.register(cors, {
     origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()),
     methods: ['GET'],
+    // `Link` carries the RFC 8288 `rel="next"` page on list routes (#248), so
+    // browser clients must be able to read it.
+    exposedHeaders: ['Link', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
   });
 
   await app.register(compress);
   await app.register(helmet, { contentSecurityPolicy: false });
-  await app.register(rateLimit, DEFAULT_RATE_LIMIT);
+  await app.register(rateLimit, { ...DEFAULT_RATE_LIMIT, enableDraftSpec: true });
 
   // Every response, including errors and 404s, carries the id that appears
   // in the matching log line, plus the configured Stellar network name.
@@ -268,6 +383,15 @@ export async function buildApp(
     return app.swagger();
   });
 
+  // The published JSON Schema for the off-chain document (#272), so a clinic
+  // can validate its file before publishing the pointer. Hidden from the
+  // OpenAPI document like the other non-data routes; `docs/api-reference.md`
+  // documents it for humans.
+  app.get('/schemas/provider-metadata.json', { schema: { hide: true } }, (_req, reply) => {
+    reply.header('cache-control', 'public, max-age=86400');
+    return providerMetadataJsonSchema;
+  });
+
   // Labelled by route pattern, not URL, so ids in paths cannot blow up the
   // number of series. Unmatched requests share one label.
   app.addHook('onResponse', async (req, reply) => {
@@ -292,6 +416,23 @@ export async function buildApp(
     },
   );
 
+  // RFC 9116 security contact — intentionally not rate-limited so automated
+  // scanners can always reach it, and not cached so an updated Expires is
+  // served immediately.
+  app.get(
+    '/.well-known/security.txt',
+    { schema: { hide: true }, config: { rateLimit: false } },
+    async (_req, reply) => {
+      reply.header('content-type', 'text/plain; charset=utf-8').header('cache-control', NO_STORE);
+      return [
+        'Contact: https://github.com/Godgift-care/sci-healthcare-backend/security/advisories/new',
+        'Policy: https://github.com/Godgift-care/sci-healthcare-backend/blob/main/SECURITY.md',
+        `Expires: ${SECURITY_TXT_EXPIRES}`,
+        '',
+      ].join('\n');
+    },
+  );
+
   // `/v1` is the canonical API. The unversioned paths stay as aliases for
   // clients already deployed against them, and say so on every response.
   await app.register(
@@ -304,7 +445,14 @@ export async function buildApp(
   await app.register(async (legacy) => {
     legacy.addHook('onSend', async (req, reply, payload) => {
       reply.header('deprecation', 'true');
-      reply.header('link', `<${v1Path(req.url)}>; rel="successor-version"`);
+      // A list route may already have set `rel="next"` (#248); keep it and
+      // append the alias's successor link instead of replacing the page link.
+      const successor = `<${v1Path(req.url)}>; rel="successor-version"`;
+      const existing = reply.getHeader('link');
+      reply.header(
+        'link',
+        existing === undefined ? successor : `${String(existing)}, ${successor}`,
+      );
       return payload;
     });
     await registerRoutes(legacy);

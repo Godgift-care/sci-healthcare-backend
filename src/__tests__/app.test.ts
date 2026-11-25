@@ -3,8 +3,10 @@ import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { buildApp } from '../app.js';
+import { buildApp, SECURITY_TXT_EXPIRES } from '../app.js';
 import { prisma } from '../db.js';
+
+import { expectHealthBody } from './health-body.js';
 
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
 
@@ -69,9 +71,11 @@ describe('request ids', () => {
 
     const loggedApp = await buildApp({ logger: { level: 'info', stream } });
     try {
+      // A normal route, not a probe: successful probes deliberately write no
+      // request log (#224), so they cannot prove reqId correlation.
       const res = await loggedApp.inject({
         method: 'GET',
-        url: '/health',
+        url: '/v1/stats',
         headers: { 'x-request-id': 'log-correlation-42' },
       });
       expect(res.statusCode).toBe(200);
@@ -106,7 +110,7 @@ describe('versioned paths', () => {
   it('serves every route under /v1 without a deprecation header', async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expectHealthBody(res.json());
     expect(res.headers['deprecation']).toBeUndefined();
     expect(res.headers['link']).toBeUndefined();
   });
@@ -114,7 +118,7 @@ describe('versioned paths', () => {
   it('keeps unversioned paths as aliases carrying Deprecation and a successor link', async () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expectHealthBody(res.json());
     expect(res.headers['deprecation']).toBe('true');
     expect(res.headers['link']).toBe('</v1/health>; rel="successor-version"');
   });
@@ -168,8 +172,58 @@ describe('error envelope', () => {
       new Error('connection reset by peer at 10.0.0.7'),
     );
 
-    const res = await app.inject({ method: 'GET', url: `/vouchers?funder=${FUNDER}` });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/vouchers?funder=${FUNDER}&count=true`,
+    });
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ error: 'internal_error', message: 'Internal server error' });
+  });
+});
+
+describe('rate-limit headers (#249)', () => {
+  it('responds with IETF draft RateLimit headers on a normal request', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { 'x-forwarded-for': '10.1.2.3' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['ratelimit-limit']).toBeDefined();
+    expect(res.headers['ratelimit-remaining']).toBeDefined();
+    expect(res.headers['ratelimit-reset']).toBeDefined();
+  });
+
+  it('exposes the RateLimit headers in CORS', async () => {
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/health',
+      headers: {
+        origin: 'https://example.com',
+        'access-control-request-method': 'GET',
+      },
+    });
+    const exposed = res.headers['access-control-expose-headers'] ?? '';
+    expect(String(exposed).toLowerCase()).toContain('ratelimit-limit');
+    expect(String(exposed).toLowerCase()).toContain('ratelimit-remaining');
+    expect(String(exposed).toLowerCase()).toContain('ratelimit-reset');
+  });
+});
+
+describe('security.txt (#250)', () => {
+  it('serves /.well-known/security.txt with the required RFC 9116 fields', async () => {
+    const res = await app.inject({ method: 'GET', url: '/.well-known/security.txt' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/plain');
+    const body = res.body;
+    expect(body).toContain('Contact:');
+    expect(body).toContain('Policy:');
+    expect(body).toContain('Expires:');
+  });
+
+  it('Expires date is at least 30 days in the future', () => {
+    const expires = new Date(SECURITY_TXT_EXPIRES);
+    const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    expect(expires.getTime()).toBeGreaterThan(thirtyDaysFromNow.getTime());
   });
 });

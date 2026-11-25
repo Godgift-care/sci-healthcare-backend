@@ -21,6 +21,10 @@ export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   // The clinic set its outstanding-voucher cap (registry `set_capacity`).
   capacity_changed: ['provider'],
   service_upserted: ['provider', 'code'],
+  // The clinic scheduled a new price with notice (contracts
+  // `schedule_service_price`, #315). `price` and `effective_at` are data
+  // fields; the (provider, code) pair it applies to is in the topic.
+  service_price_scheduled: ['provider', 'code'],
   service_removed: ['provider'],
   attester_added: ['attester'],
   attester_removed: ['attester'],
@@ -36,6 +40,16 @@ export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   receipt_minted: ['beneficiary_ref', 'provider'],
   // Testnet faucet; only reaches the indexer when FAUCET_CONTRACT_ID is set.
   dripped: ['to'],
+  // Matching-funding desk (contracts/sponsor); only reaches the indexer when
+  // SPONSOR_CONTRACT_ID is set (#317). `match_created` is the only one with
+  // two topics: the voucher it matched is a topic while the voucher it
+  // *funded* is a data field, so mixing them up reads a different voucher.
+  budget_deposited: ['sponsor'],
+  budget_withdrawn: ['sponsor'],
+  rules_set: ['sponsor'],
+  match_created: ['sponsor', 'original_voucher_id'],
+  match_settled: ['sponsor'],
+  match_refunded: ['sponsor'],
 };
 
 export type DecodedEvent = {
@@ -186,7 +200,7 @@ export function asTimestamp(input: unknown): Date {
 }
 
 /** Contract enum discriminants, mapped to the names used in the API. */
-export const PROVIDER_STATUS = ['Pending', 'Active', 'Suspended'] as const;
+export const PROVIDER_STATUS = ['Pending', 'Active', 'Suspended', 'Retired'] as const;
 
 export function providerStatusName(input: unknown): string {
   if (typeof input === 'string') return input;

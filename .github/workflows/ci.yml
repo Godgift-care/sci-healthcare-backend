@@ -214,3 +214,33 @@ jobs:
         with:
           node-version: '22'
       - run: node --test .github/scripts/automerge.test.cjs .github/scripts/security-scan.test.cjs
+
+  perf:
+    name: read latency benchmark (postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sci
+          POSTGRES_PASSWORD: sci
+          POSTGRES_DB: sci_healthcare_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: 'postgresql://sci:sci@localhost:5432/sci_healthcare_test'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: ./scripts/use-postgres.sh
+      - run: npx prisma generate
+      - run: npm run perf:check

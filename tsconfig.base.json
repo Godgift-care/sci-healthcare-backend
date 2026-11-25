@@ -1,0 +1,19 @@
+{
+  "$comment": "The strict settings every TypeScript project in this repo compiles under (issue #312). Path-bearing options (outDir, rootDir, include, exclude) stay in the leaf configs: `extends` resolves them relative to this file, so a leaf that inherited `outDir: dist` would emit into the server's build directory. Project references are deliberately not used - `npm run typecheck` runs each config with --noEmit, which keeps the check independent of the build.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true
+  }
+}

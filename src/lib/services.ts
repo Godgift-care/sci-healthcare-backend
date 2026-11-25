@@ -1,8 +1,60 @@
 import { prisma } from '../db.js';
+import { fromBaseUnits } from './amounts.js';
 
 /** Service rows are keyed `{providerAddress}:{code}` by the indexer. */
 export function serviceKey(providerAddress: string, code: number): string {
   return `${providerAddress}:${code}`;
+}
+
+/** The price columns a `Service` row carries. */
+export type ScheduledPriceRow = {
+  price: string;
+  upcomingPrice: string | null;
+  upcomingFrom: Date | null;
+};
+
+/**
+ * What a service costs right now, and what is still scheduled for it.
+ *
+ * The registry applies a scheduled price lazily: `apply_due_price()` swaps
+ * `pending_price` into `price` on the first read at or after `effective_at`
+ * and emits no event when it does (contracts
+ * `contracts/registry/src/types.rs`). So the ledger never says "this schedule
+ * took effect" — the read model has to decide, the same way, at read time.
+ *
+ * `upcomingPrice` is therefore what the schedule was while it was still
+ * pending, and both fields go null the moment the time is reached, because by
+ * then the new price *is* `price`. The contract's `pending_price > 0` guard
+ * becomes "a row with no schedule has no pending columns", which is also what
+ * makes a deployment that predates `schedule_service_price` render unchanged:
+ * its rows have never had either column written.
+ */
+export function scheduledPriceOf(row: ScheduledPriceRow, now: Date): ScheduledPriceRow {
+  if (row.upcomingPrice === null || row.upcomingFrom === null) return row;
+  if (now < row.upcomingFrom) return row;
+  return { price: row.upcomingPrice, upcomingPrice: null, upcomingFrom: null };
+}
+
+/**
+ * The same resolution in the shape a service entry has in an API response:
+ * the effective price, its display amount, and the schedule still pending.
+ */
+export function formatServicePrice(
+  row: ScheduledPriceRow,
+  now: Date = new Date(),
+): {
+  price: string;
+  priceDisplay: string;
+  upcomingPrice: string | null;
+  upcomingFrom: Date | null;
+} {
+  const effective = scheduledPriceOf(row, now);
+  return {
+    price: effective.price,
+    priceDisplay: fromBaseUnits(effective.price),
+    upcomingPrice: effective.upcomingPrice,
+    upcomingFrom: effective.upcomingFrom,
+  };
 }
 
 /**

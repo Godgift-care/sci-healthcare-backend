@@ -33,16 +33,17 @@ schema does not have. Documentation cannot drift from the schema unnoticed.
 | Contract event | Projects |
 | --- | --- |
 | `provider_registered` | `Provider` (create, or update name and country on re-registration) |
-| `provider_status_changed` | `Provider.status`, `ProviderStatusChange` |
+| `provider_status_changed` | `Provider.status`, `Provider.statusReason`, `ProviderStatusChange` |
 | `provider_metadata_changed` | `Provider.metadataUri` (the cached `metadata` is dropped with it) |
 | `service_upserted` | `Service`, `ServicePriceChange` (price changes only) |
+| `service_price_scheduled` | `Service.upcomingPrice`, `Service.upcomingFrom` |
 | `service_removed` | `Service.active = false` |
 | `admin_proposed` | `GovernanceEvent` (`kind = Proposed`) |
 | `admin_changed` | `GovernanceEvent` (`kind = Changed`) |
 | `attester_added` | `Attester` (create/reactivate) |
 | `attester_removed` | `Attester.active = false` |
 | `voucher_created` | `Voucher` (create), `Provider` stub if unknown, webhook outbox row, `DailyStat` funded counters |
-| `voucher_claimed` | `Voucher.status`, `Voucher.claimedAt`, webhook outbox row |
+| `voucher_claimed` | `Voucher.status`, `Voucher.claimedAt`, `Voucher.claimedWithProof` (from `get_voucher_options`), webhook outbox row |
 | `voucher_attested` | `Voucher.status`, `attestedAt`, `attestedBy`, `disputeDeadline`, webhook outbox row |
 | `voucher_disputed` | `Voucher.status`, `disputeReason`, webhook outbox row |
 | `voucher_settled` | `Voucher.status`, `settledNet`, `settledFee`, webhook outbox row |
@@ -50,6 +51,12 @@ schema does not have. Documentation cannot drift from the schema unnoticed.
 | `dispute_resolved` | `Voucher.disputeResolvedAt/By/Outcome` |
 | `receipt_minted` | `Receipt`, `DailyStat` settled counters |
 | `dripped` | `FaucetDrip` |
+| `budget_deposited` | `Sponsor.available`, `Sponsor.lastMovementAt` (and the sponsor row itself), `SponsorBudgetEvent` |
+| `budget_withdrawn` | `Sponsor.available`, `Sponsor.lastMovementAt`, `SponsorBudgetEvent` |
+| `rules_set` | `Sponsor` — the four match terms and `rulesAt` |
+| `match_created` | `Sponsor` stub if the desk is new, `SponsorMatch` |
+| `match_settled` | `SponsorMatch.status = Settled`, `settledAt` |
+| `match_refunded` | `SponsorMatch.status = Refunded`, `refundedAt` |
 
 Every event also appends a row to `ContractEvent` before its projection
 runs; an event whose projection throws is written to `FailedEvent` instead
@@ -87,12 +94,16 @@ state; the history lives in `ProviderStatusChange`.
 | `address` | `String` | No | `provider_registered.provider` | Primary key: the Stellar ed25519 public key (56 chars) |
 | `name` | `String` | No | `provider_registered.name` | Public registry data, overwritten on every registration event |
 | `country` | `String` | No | `provider_registered.country` | ISO-style code as published on chain |
-| `status` | `String` | No | starts `Pending`, then `provider_status_changed` | `Pending`, `Active` or `Suspended`. Also written as `Active` by the `voucher_created` stub for an unknown provider |
+| `status` | `String` | No | starts `Pending`, then `provider_status_changed` | `Pending`, `Active`, `Suspended` or `Retired`. Also written as `Active` by the `voucher_created` stub for an unknown provider |
+| `statusReason` | `Int?` | Yes | `provider_status_changed.reason_code` | Last reason code, or null when the event came from an older deployment |
 | `registeredAt` | `DateTime` | No | `provider_registered.registered_at` | From the event payload; the stub uses the epoch |
 | `updatedAt` | `DateTime` | No | Prisma `@updatedAt` | Row write time, not an on-chain time |
 | `metadataUri` | `String?` | Yes | `metadata_uri` on `provider_registered` / `provider_metadata_changed` | Off-chain directory pointer (hours, phone, location). Kept only when it is within `METADATA_URI_MAX_LENGTH` (512); an over-long URI is ignored rather than truncated, and an empty one clears the column |
 | `metadata` | `String?` | Yes | the indexer's metadata refresh, JSON of the fetched document (`src/lib/provider-metadata.ts`) | Validated against a schema before it is stored. Null until the first successful fetch; a later failure keeps the previous document, and any event that repoints or clears `metadataUri` nulls it so stale hours are never shown against a new URI |
 | `metadataFetchedAt` | `DateTime?` | Yes | the same refresh, on success and on rejection | Stamped on a rejected fetch too, so a dead URI is retried once a day instead of on every cycle; this is what the refresh window selects on |
+| `metadataStatus` | `String?` | Yes | the same refresh, and the registration handlers | `pending` after a URI is announced, `ok` once a document is cached, `failed` when the last attempt was rejected. Null when the clinic published no URI; served on the provider routes (#271) |
+| `metadataError` | `String?` | Yes | the same refresh, on rejection | A short code (`unsupported_scheme`, `timeout`, `invalid_document`, …), never the remote body or a raw error message. Cleared by a successful fetch; served beside `metadataStatus` (#271) |
+| `metadataEtag` | `String?` | Yes | the refresh, from the response's `ETag` | Replayed as `If-None-Match`, so an unchanged document costs one conditional request and answers `304` (#270). Null when the host sends no ETag |
 | `capacity` | `Int?` | Yes | `capacity_changed.max_outstanding` | The clinic's outstanding-voucher cap from the registry. `0` means unlimited (the contract's own convention); `null` until the registry is first observed setting it. Paired with the live `openVouchers` count on the provider routes |
 | `deployment` | `Deployment?` | Yes | relation | Which contract instance registered this provider |
 | `deploymentId` | `Int?` | Yes | `Deployment.id` for the event's contract | `null` when the contract was not in the `Deployment` table at write time |
@@ -111,6 +122,8 @@ writing history; only a price change reaches `ServicePriceChange`.
 | `label` | `String` | No | `service_upserted.label` | Human-readable name, can change without a price change |
 | `price` | `String` | No | `service_upserted.price` | `i128` as a decimal string, base units of the settlement token |
 | `active` | `Boolean` | No | `service_upserted` sets `true`, `service_removed` sets `false` | Soft delete: the row is kept so old vouchers still resolve a label |
+| `upcomingPrice` | `String?` | Yes | `service_price_scheduled.price` | Price scheduled with notice, `i128` decimal string. Null when nothing is pending, and null once the schedule has taken effect — the contract swaps it into `price` on the next read and emits nothing, so `scheduledPriceOf()` in `src/lib/services.ts` decides which is current (#315) |
+| `upcomingFrom` | `DateTime?` | Yes | `service_price_scheduled.effective_at` | When `upcomingPrice` becomes the price. Null exactly when `upcomingPrice` is; a deployment whose registry predates scheduling never writes either |
 | `provider` | `Provider` | No | relation | Owning clinic |
 | `providerAddress` | `String` | No | `service_upserted.provider` | Foreign key to `Provider.address` |
 
@@ -132,6 +145,7 @@ refund. Dispute columns stay `null` unless the voucher is disputed.
 | `createdAt` | `DateTime` | No | `voucher_created.created_at` | From the event payload |
 | `expiresAt` | `DateTime` | No | `voucher_created.expires_at` | From the event payload |
 | `claimedAt` | `DateTime?` | Yes | `voucher_claimed.claimed_at` | Null until claimed |
+| `claimedWithProof` | `Boolean?` | Yes | `get_voucher_options.presence_commitment`, read when the claim is indexed | Whether the claim revealed a presence secret (issue #318). The claim event is identical for `claim` and `claim_with_proof`, so the voucher's funding options decide it: a commitment makes the proof the only way to claim. Null for an unclaimed voucher *and* for a claim whose options could not be read — absence is not evidence of no proof |
 | `attestedAt` | `DateTime?` | Yes | `voucher_attested.attested_at` | Null until attested |
 | `attestedBy` | `String?` | Yes | `voucher_attested` topic (`attester`) | Attester that signed; nullable so `prisma db push` can add it in place |
 | `disputeDeadline` | `DateTime?` | Yes | `voucher_attested.dispute_deadline` | Window in which the funder can dispute |
@@ -206,7 +220,8 @@ current status; this keeps when and how often a clinic was suspended.
 | --- | --- | --- | --- | --- |
 | `id` | `String` | No | on-chain event id | Primary key; one row per transition |
 | `providerAddress` | `String` | No | `provider_status_changed.provider` | Foreign key to `Provider.address` |
-| `status` | `String` | No | `provider_status_changed.status` | `Pending`, `Active` or `Suspended` |
+| `status` | `String` | No | `provider_status_changed.status` | `Pending`, `Active`, `Suspended` or `Retired` |
+| `reasonCode` | `Int?` | Yes | `provider_status_changed.reason_code` | Reason code, or null when the event came from an older deployment |
 | `ledger` | `Int` | No | event ledger | |
 | `changedAt` | `DateTime` | No | ledger close time | |
 
@@ -295,6 +310,66 @@ replay is idempotent; only populated when `FAUCET_CONTRACT_ID` is set.
 | `ledger` | `Int` | No | event ledger | |
 | `drippedAt` | `DateTime` | No | ledger close time | |
 
+## `Sponsor`
+
+One sponsor of the matching-funding desk, as its own events describe it.
+Only populated when `SPONSOR_CONTRACT_ID` is set. A field the desk has not
+emitted an event for stays null rather than reading as zero, because "has not
+matched yet" and "matched nothing" are different facts.
+
+| Column | Type | Nullable | Written from | Notes |
+| --- | --- | --- | --- | --- |
+| `address` | `String` | No | `sponsor` topic of every sponsor event | Primary key. Created on first sight, so a match can arrive before any budget movement |
+| `available` | `String?` | Yes | `available` carried by the latest budget event | What the contract reported as unused budget after that movement — never summed here: matching spends budget without emitting a budget event |
+| `matchBps` | `Int?` | Yes | `rules_set.match_bps` | u32 basis points; 10000 matches one-for-one, 20000 two-for-one |
+| `capPerVoucher` | `String?` | Yes | `rules_set.cap_per_voucher` | i128 as a decimal string |
+| `minVoucherAmount` | `String?` | Yes | `rules_set.min_voucher_amount` | i128 as a decimal string |
+| `minVoucherAgeSecs` | `String?` | Yes | `rules_set.min_voucher_age_secs` | u64 as a decimal string, because it is wider than a Postgres integer. An anti-farming minimum age, not a funding deadline |
+| `rulesAt` | `DateTime?` | Yes | ledger close time of the `rules_set` | The terms are replaced wholesale, never merged |
+| `lastMovementAt` | `DateTime?` | Yes | ledger close time of the latest budget event | Says which event `available` describes; null until one is indexed |
+| `firstSeenAt` | `DateTime` | No | ledger close time of the first sponsor event seen | Orders `GET /sponsors`; not a registration date |
+| `updatedAt` | `DateTime` | No | database, on every write | `@updatedAt` ingest stamp; deliberately not in any API response, so a replay is not observable |
+
+## `SponsorBudgetEvent`
+
+One budget movement on the desk, keyed by the on-chain event id so replaying
+a ledger is idempotent. This is the audit trail behind `Sponsor.available`;
+the balance itself is never derived by summing these rows, because a deposit
+and a withdrawal both report the resulting balance.
+
+| Column | Type | Nullable | Written from | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `String` | No | on-chain event id | Primary key |
+| `sponsorAddress` | `String` | No | `sponsor` topic | |
+| `kind` | `String` | No | which event projected the row | `Deposited` or `Withdrawn` |
+| `amount` | `String` | No | `amount` | i128 as a decimal string, always positive — the direction is `kind` |
+| `available` | `String` | No | `available` | The balance the contract reported after this movement |
+| `ledger` | `Int` | No | event ledger | |
+| `occurredAt` | `DateTime` | No | ledger close time | |
+
+## `SponsorMatch`
+
+The sponsor's own contribution to one voucher. Keyed by the voucher the desk
+funded, with the voucher it was made against indexed separately — that is the
+join the voucher routes use to answer `matchedAmount`.
+
+| Column | Type | Nullable | Written from | Notes |
+| --- | --- | --- | --- | --- |
+| `matchedVoucherId` | `String` | No | `match_created.matched_voucher_id` | Primary key; u64 as a string. The desk's voucher, not the one the original funder issued |
+| `originalVoucherId` | `String` | No | `match_created.original_voucher_id` (topic) | `@unique`: the contract keeps one match per voucher and rejects a second |
+| `sponsorAddress` | `String` | No | `sponsor` topic | |
+| `providerAddress` | `String` | No | `match_created.provider` | Published by the desk so a clinic can list matched work without joining `Voucher` |
+| `serviceCode` | `Int` | No | `match_created.service_code` | Same reason |
+| `amount` | `String` | No | `match_created.amount` | i128 as a decimal string: `min(original amount × matchBps / 10000, capPerVoucher)`. The funder's own amount is not in this event — it stays on the voucher |
+| `status` | `String` | No | `match_created`, then `match_settled` / `match_refunded` | `Open`, `Settled` or `Refunded` |
+| `matchedAt` | `DateTime` | No | `match_created.matched_at` | The desk's own timestamp, not the ledger's |
+| `settledAt` | `DateTime?` | Yes | ledger close time of `match_settled` | Only that event writes it. `match_settled` carries no timestamp, as with `voucher_refunded` |
+| `refundedAt` | `DateTime?` | Yes | ledger close time of `match_refunded` | Only that event writes it |
+
+A settlement or refund for a match created before the indexer's start ledger
+finds no row and creates none: the resolution event names only the matched
+voucher, so it cannot supply the original id a create would need.
+
 ## `ReconcileMismatch`
 
 A voucher whose stored row disagrees with the contract. Written by
@@ -323,9 +398,11 @@ retries and backs off independently.
 | --- | --- | --- | --- | --- |
 | `id` | `String` | No | `randomUUID()` at enqueue | Primary key; not an on-chain id |
 | `url` | `String` | No | one entry of `WEBHOOK_URLS` | One row per endpoint per event |
-| `event` | `String` | No | contract event name | e.g. `voucher_settled` |
-| `voucherId` | `String` | No | the voucher the event is about | |
-| `status` | `String` | No | resulting voucher status | e.g. `Settled` |
+| `event` | `String` | No | contract event name, or a registry event name | e.g. `voucher_settled`, `provider.registered`, `provider.status_changed`, `service.price_changed` (#266) |
+| `voucherId` | `String?` | Yes | the voucher the event is about | Null for registry and service events |
+| `status` | `String?` | Yes | resulting voucher or provider status | e.g. `Settled`, `Active`; null for `service.price_changed` |
+| `provider` | `String?` | Yes | the clinic the event is about | Set for `provider.*` and `service.price_changed` |
+| `serviceCode` | `Int?` | Yes | service code from `service.price_changed` | Null for every other event |
 | `txHash` | `String?` | Yes | event transaction hash | Null when the RPC did not report one |
 | `ledger` | `Int` | No | event ledger | |
 | `payload` | `String` | No | exact JSON body at enqueue time | Stored rather than rebuilt on retry: the HMAC signature covers those bytes, so a retry must send the same request. Never contains a beneficiary reference |
@@ -357,5 +434,7 @@ not data.
 | `refundedAmount` | `String` | No | the voucher's stored `amount`, added to the day's total | A refund returns the whole voucher amount, which the event payload does not carry |
 | `updatedAt` | `DateTime` | No | Prisma `@updatedAt` | When the day's row was last touched; useful for spotting a stalled indexer |
 
-`GET /stats/daily` fills any day in the requested window with no row as zero,
-so a gap in this table is not a gap in the API's output.
+`GET /stats/daily` fills any period in the requested window with no row as
+zero, so a gap in this table is not a gap in the API's output. It can aggregate
+these rows by day, ISO week (Monday start, UTC) or calendar month, and
+`fill=false` returns only periods that have at least one row.

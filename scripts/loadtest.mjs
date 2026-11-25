@@ -26,7 +26,7 @@
 
 import { execSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,34 +79,103 @@ const DAY = 24 * 60 * 60 * 1000;
 const SERVICE_LABELS = ['Consultation', 'Lab panel', 'Vaccination', 'Dental', 'Ultrasound'];
 
 function parseArgs(argv) {
-  const opts = { duration: 15, connections: 50, clients: 400, port: 8787, url: null, out: null };
-  for (let i = 0; i < argv.length; i += 2) {
+  const opts = {
+    duration: 15,
+    connections: 50,
+    clients: 400,
+    port: 8787,
+    url: null,
+    out: null,
+    checkRegression: false,
+    baselineFile: path.join(ROOT, 'scripts', 'perf-baseline.json'),
+  };
+  for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
-    const value = argv[i + 1];
-    if (key === '--duration') opts.duration = Number(value);
-    else if (key === '--connections') opts.connections = Number(value);
-    else if (key === '--clients') opts.clients = Number(value);
-    else if (key === '--port') opts.port = Number(value);
-    else if (key === '--url') opts.url = value;
-    else if (key === '--out') opts.out = value;
-    else throw new Error(`unknown argument: ${key}`);
+    if (key === '--check-regression' || key === '--ci') {
+      opts.checkRegression = true;
+    } else if (key === '--baseline') {
+      opts.baselineFile = argv[++i];
+    } else if (key === '--duration') {
+      opts.duration = Number(argv[++i]);
+    } else if (key === '--connections') {
+      opts.connections = Number(argv[++i]);
+    } else if (key === '--clients') {
+      opts.clients = Number(argv[++i]);
+    } else if (key === '--port') {
+      opts.port = Number(argv[++i]);
+    } else if (key === '--url') {
+      opts.url = argv[++i];
+    } else if (key === '--out') {
+      opts.out = argv[++i];
+    } else {
+      throw new Error(`unknown argument: ${key}`);
+    }
   }
   return opts;
 }
 
-async function seed() {
-  // The file is throwaway and ours alone, so recreate it from the schema
-  // rather than reset it in place (same approach as the test suite).
-  for (const suffix of ['', '-journal']) rmSync(LOADTEST_DB + suffix, { force: true });
-  const url = `file:${LOADTEST_DB.replaceAll('\\', '/')}`;
-  execSync('npx prisma db push --skip-generate', {
-    cwd: ROOT,
-    env: { ...process.env, DATABASE_URL: url },
-    stdio: 'ignore',
-  });
+export function computeMedian(arr) {
+  if (!arr || arr.length === 0) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+export function evaluateRegression(resultsByRoute, baselineConfig) {
+  const tolerance = baselineConfig.tolerance ?? 0.5;
+  const details = [];
+  let allPassed = true;
+
+  for (const [routePattern, target] of Object.entries(baselineConfig.routes)) {
+    const runs = resultsByRoute[routePattern] || [];
+    const med = computeMedian(runs);
+    const base = target.p95;
+    const threshold = Number((base * (1 + tolerance)).toFixed(2));
+    const regressed = med > threshold;
+    if (regressed) allPassed = false;
+    details.push({
+      route: routePattern,
+      name: target.name,
+      runs,
+      median: med,
+      baseline: base,
+      threshold,
+      regressed,
+    });
+  }
+
+  return { passed: allPassed, details };
+}
+
+async function seed(customUrl) {
+  const url =
+    customUrl ?? (process.env.DATABASE_URL || `file:${LOADTEST_DB.replaceAll('\\', '/')}`);
+  const isPg = url.startsWith('postgres://') || url.startsWith('postgresql://');
+
+  if (isPg) {
+    execSync('npx prisma db push --skip-generate', {
+      cwd: ROOT,
+      env: { ...process.env, DATABASE_URL: url },
+      stdio: 'ignore',
+    });
+  } else {
+    for (const suffix of ['', '-journal']) rmSync(LOADTEST_DB + suffix, { force: true });
+    execSync('npx prisma db push --skip-generate', {
+      cwd: ROOT,
+      env: { ...process.env, DATABASE_URL: url },
+      stdio: 'ignore',
+    });
+  }
 
   const { PrismaClient } = await import('@prisma/client');
   const prisma = new PrismaClient({ datasourceUrl: url });
+
+  if (isPg) {
+    await prisma.receipt.deleteMany();
+    await prisma.voucher.deleteMany();
+    await prisma.service.deleteMany();
+    await prisma.provider.deleteMany();
+  }
 
   const now = Date.now();
   const providers = [];
@@ -228,8 +297,9 @@ function buildRequestMix(clients) {
   return entries;
 }
 
-async function startServer(port) {
+async function startServer(port, dbUrl) {
   const tsx = path.join(ROOT, 'node_modules', '.bin', 'tsx');
+  const url = dbUrl ?? (process.env.DATABASE_URL || `file:${LOADTEST_DB}`);
   const child = spawn(tsx, ['src/api.ts'], {
     cwd: ROOT,
     env: {
@@ -237,7 +307,7 @@ async function startServer(port) {
       PORT: String(port),
       HOST: '127.0.0.1',
       LOG_LEVEL: 'warn',
-      DATABASE_URL: `file:${LOADTEST_DB}`,
+      DATABASE_URL: url,
       STELLAR_NETWORK: 'testnet',
       SOROBAN_RPC_URL: 'https://soroban-testnet.stellar.org',
       NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
@@ -272,6 +342,62 @@ async function startServer(port) {
   }
   child.kill('SIGKILL');
   throw new Error(`server did not answer /health within 30s:\n${stderr}`);
+}
+
+async function runRegressionCheck(base, baselineConfig) {
+  const routesToTest = Object.keys(baselineConfig.routes);
+  const runsCount = baselineConfig.runs ?? 3;
+  const resultsByRoute = {};
+
+  console.log(
+    `\n== running performance regression check (${runsCount} runs per route, taking median) ==`,
+  );
+
+  for (const routeKey of routesToTest) {
+    resultsByRoute[routeKey] = [];
+    const actualPath = routeKey.replace(':id', detailId(10));
+    console.log(`\nTesting ${routeKey} (${actualPath})...`);
+
+    for (let r = 0; r < runsCount; r++) {
+      // 300 distinct client IPs to eliminate rate-limiter impact
+      const reqPaths = Array.from({ length: 300 }, (_, i) => ({
+        method: 'GET',
+        path: actualPath,
+        headers: { 'x-forwarded-for': clientIp(1000 + r * 300 + i) },
+      }));
+
+      const res = await autocannon({
+        url: base,
+        connections: 10,
+        duration: 3,
+        requests: reqPaths,
+      });
+
+      const p95 = res.latency.p97_5;
+      resultsByRoute[routeKey].push(p95);
+      console.log(
+        `  Run ${r + 1}/${runsCount}: p95 ~ ${p95}ms (avg req/s: ${Math.round(res.requests.average)})`,
+      );
+    }
+  }
+
+  const evaluation = evaluateRegression(resultsByRoute, baselineConfig);
+  console.log('\n== Regression Summary Table ==');
+  console.log('| Route | Runs (ms) | Median (ms) | Baseline (ms) | Threshold (ms) | Status |');
+  console.log('| --- | --- | --- | --- | --- | --- |');
+  for (const d of evaluation.details) {
+    const status = d.regressed ? 'REGRESSED' : 'PASS';
+    console.log(
+      `| ${d.route} | [${d.runs.join(', ')}] | ${d.median}ms | ${d.baseline}ms | ${d.threshold}ms | ${status} |`,
+    );
+  }
+
+  if (!evaluation.passed) {
+    console.error('\n❌ Performance regression detected! Latency exceeded tolerance.');
+    process.exit(1);
+  } else {
+    console.log('\n✅ All routes within performance baseline tolerance.');
+  }
 }
 
 /**
@@ -311,6 +437,13 @@ async function main() {
   const base = opts.url ?? `http://127.0.0.1:${opts.port}`;
 
   try {
+    if (opts.checkRegression) {
+      const rawBaseline = readFileSync(opts.baselineFile, 'utf8');
+      const baselineConfig = JSON.parse(rawBaseline);
+      await runRegressionCheck(base, baselineConfig);
+      return;
+    }
+
     console.log('\n== scenario 1: mixed list/detail, many clients ==');
     const mixed = await autocannon({
       url: base,

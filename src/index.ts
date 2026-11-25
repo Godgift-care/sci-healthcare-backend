@@ -1,5 +1,5 @@
 import { buildApp } from './app.js';
-import { disconnect } from './db.js';
+import { disconnect, waitForDatabase } from './db.js';
 import { env } from './env.js';
 import { WebhookDispatcher } from './lib/webhooks.js';
 import { Indexer } from './stellar/indexer.js';
@@ -14,6 +14,7 @@ import { startTracingIfConfigured } from './tracing.js';
  * it exists to make on-chain state queryable, which the ledger alone is not.
  */
 async function main(): Promise<void> {
+  await waitForDatabase();
   // No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set (#54).
   startTracingIfConfigured();
 

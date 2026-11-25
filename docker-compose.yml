@@ -68,18 +68,9 @@ services:
       # but note Soroban RPC only retains a rolling window of ledgers.
       INDEXER_START_LEDGER: "0"
       INDEXER_POLL_MS: "5000"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:8080/ready').then(r => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
+    # No `healthcheck:` override: the runtime image's HEALTHCHECK probes /health
+    # (liveness), not /ready, which is intentionally 503 while the indexer is
+    # paused or the webhook outbox is behind.
 
 volumes:
   sci-db:

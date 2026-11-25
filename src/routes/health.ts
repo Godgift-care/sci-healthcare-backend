@@ -1,11 +1,13 @@
+import type { Prisma } from '@prisma/client';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { env, WEBHOOKS_ENABLED } from '../env.js';
 import { clearLedgerMemos, lastIndexedLedger, ledgerMemo } from '../lib/cache.js';
+import { aggregateDailySeries, utcDateString } from '../lib/daily-stats.js';
 import { isPostgres } from '../lib/database.js';
-import { webhookBacklog } from '../lib/webhooks.js';
+import { webhookBacklog, webhookCircuitSnapshot } from '../lib/webhooks.js';
 import { APP_VERSION, deployedCommit, STARTED_AT } from '../lib/version.js';
 import { server } from '../stellar/client.js';
 
@@ -13,6 +15,11 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const dailyQuery = z.object({
   days: z.coerce.number().int().min(1).max(365).default(30),
+  granularity: z.enum(['day', 'week', 'month']).default('day'),
+  fill: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
 });
 
 const funnelQuery = z.object({
@@ -24,36 +31,70 @@ const funnelQuery = z.object({
   clinic: z.string().min(1).max(56).optional(),
 });
 
+/** The precision `GET /stats/disputes` uses for its rate string. */
+const DISPUTE_RATE_PRECISION = 4;
+
+/** A status that can only have been reached after attestation. */
+const ATTESTED_STATUSES = ['Attested', 'Settled', 'Disputed'] as const;
+
+const disputeResponse = z.object({
+  count: z.number().int().nonnegative().describe('Vouchers that were ever disputed.'),
+  attestedVouchers: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Vouchers that reached attestation, the denominator of the rate.'),
+  rate: z
+    .string()
+    .describe(
+      `Disputes divided by attested vouchers, fixed to ${DISPUTE_RATE_PRECISION} decimal places.`,
+    ),
+  byReason: z
+    .record(z.string(), z.number().int().nonnegative())
+    .describe('Disputed vouchers keyed by the contract reason code.'),
+  byOutcome: z
+    .record(z.string(), z.number().int().nonnegative())
+    .describe('Resolved disputes keyed by Funder or Provider, plus unresolved disputes.'),
+  medianResolutionHours: z
+    .number()
+    .nonnegative()
+    .nullable()
+    .describe(
+      'Median hours from attestation (or creation when never attested) to dispute resolution; null when none resolved.',
+    ),
+});
+
+/**
+ * A ratio as a fixed-precision decimal string, without ever dividing in
+ * floating point. Both engines see the same string, and a zero denominator
+ * is "0.0000" rather than NaN.
+ */
+function fixedRate(numerator: number, denominator: number): string {
+  const scale = 10n ** BigInt(DISPUTE_RATE_PRECISION);
+  if (denominator === 0) return `0.${'0'.repeat(DISPUTE_RATE_PRECISION)}`;
+  // Round half up at the last fixed digit; integer arithmetic keeps it exact.
+  const scaled = (BigInt(numerator) * scale + BigInt(denominator) / 2n) / BigInt(denominator);
+  const whole = scaled / scale;
+  const fraction = (scaled % scale).toString().padStart(DISPUTE_RATE_PRECISION, '0');
+  return `${whole}.${fraction}`;
+}
+
 const funnelResponse = z.object({
   country: z.string().nullable(),
   clinic: z.string().nullable(),
   counts: z.object({
-    funded: z.number().int().nonnegative(),
-    claimed: z.number().int().nonnegative(),
-    attested: z.number().int().nonnegative(),
-    settled: z.number().int().nonnegative(),
+    funded: z.number().int().nonnegative().nullable(),
+    claimed: z.number().int().nonnegative().nullable(),
+    attested: z.number().int().nonnegative().nullable(),
+    settled: z.number().int().nonnegative().nullable(),
   }),
+  suppressed: z.boolean(),
   medianHours: z.object({
     fundedToClaimed: z.number().nonnegative().nullable(),
     claimedToAttested: z.number().nonnegative().nullable(),
     attestedToSettled: z.number().nonnegative().nullable(),
   }),
 });
-
-/** Count and summed base units for one activity type on one day. */
-type DailyBucket = { count: number; amount: string };
-
-type DailyRow = {
-  date: string;
-  funded: DailyBucket;
-  settled: DailyBucket;
-  refunded: DailyBucket;
-};
-
-/** The `YYYY-MM-DD` UTC day a timestamp falls on. */
-function utcDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
 
 /** Median elapsed hours; incomplete and reversed timestamps are excluded. */
 function medianHours(values: number[]): number | null {
@@ -159,6 +200,79 @@ export function resetStatsCache(): void {
 }
 
 /**
+ * Dispute counts, rate, breakdowns and resolution time (#245).
+ *
+ * A voucher counts as disputed when the contract moved it to `Disputed` or
+ * when a reason code was recorded; the status alone would stop counting it
+ * once a resolution moved it on to `Settled` or `Refunded`. Attested is the
+ * denominator the issue asks for: a voucher can only be disputed after
+ * attestation, so dividing by every funded voucher would understate the
+ * rate. `attestedAt` is the normal signal; a row whose projection predates
+ * it but whose status is past attestation still counts.
+ */
+async function disputeStats() {
+  const disputed: Prisma.VoucherWhereInput = {
+    OR: [{ status: 'Disputed' }, { disputeReason: { not: null } }],
+  };
+  const attested: Prisma.VoucherWhereInput = {
+    OR: [{ attestedAt: { not: null } }, { status: { in: [...ATTESTED_STATUSES] } }],
+  };
+
+  const [count, attestedVouchers, reasons, outcomes, resolved] = await Promise.all([
+    prisma.voucher.count({ where: disputed }),
+    prisma.voucher.count({ where: attested }),
+    prisma.voucher.groupBy({
+      by: ['disputeReason'],
+      where: { disputeReason: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.voucher.groupBy({
+      by: ['disputeOutcome'],
+      where: { disputeOutcome: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.voucher.findMany({
+      where: { disputeResolvedAt: { not: null } },
+      select: { createdAt: true, attestedAt: true, disputeResolvedAt: true },
+    }),
+  ]);
+
+  const byReason: Record<string, number> = {};
+  for (const row of reasons) {
+    if (row.disputeReason === null) continue;
+    byReason[String(row.disputeReason)] = row._count._all;
+  }
+
+  const byOutcome: Record<string, number> = { Funder: 0, Provider: 0 };
+  let resolvedCount = 0;
+  for (const row of outcomes) {
+    if (row.disputeOutcome === null) continue;
+    byOutcome[row.disputeOutcome] = row._count._all;
+    resolvedCount += row._count._all;
+  }
+  // A disputed voucher with no resolution yet is neither outcome; show it so
+  // Funder + Provider is not silently less than `count`.
+  byOutcome.Unresolved = Math.max(0, count - resolvedCount);
+
+  const resolutionHours = resolved.flatMap((row) => {
+    const end = row.disputeResolvedAt;
+    if (!end) return [];
+    const start = row.attestedAt ?? row.createdAt;
+    const hours = (end.getTime() - start.getTime()) / 3_600_000;
+    return hours >= 0 ? [hours] : [];
+  });
+
+  return {
+    count,
+    attestedVouchers,
+    rate: fixedRate(count, attestedVouchers),
+    byReason,
+    byOutcome,
+    medianResolutionHours: medianHours(resolutionHours),
+  };
+}
+
+/**
  * Voucher stages and median time between them for one ledger, optionally
  * scoped to a country or a clinic.
  *
@@ -207,15 +321,36 @@ async function funnelStats(country?: string, clinic?: string) {
     return hours === null ? [] : [hours];
   });
 
+  const rawCounts = {
+    funded: vouchers.length,
+    claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
+    attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
+    settled: receipts.length,
+  };
+
+  // Small-cell suppression: apply only to scoped queries, not the global
+  // aggregate, so dashboard totals are never null (#256). Zero is never
+  // suppressed — it reveals nothing about individuals.
+  const isScoped = country !== undefined || clinic !== undefined;
+  const minCell = isScoped ? env.STATS_MIN_CELL : 0;
+  const suppress = (n: number): number | null => (minCell > 0 && n > 0 && n < minCell ? null : n);
+  const counts = {
+    funded: suppress(rawCounts.funded),
+    claimed: suppress(rawCounts.claimed),
+    attested: suppress(rawCounts.attested),
+    settled: suppress(rawCounts.settled),
+  };
+  const suppressed =
+    counts.funded === null ||
+    counts.claimed === null ||
+    counts.attested === null ||
+    counts.settled === null;
+
   return {
     country: country ?? null,
     clinic: clinic ?? null,
-    counts: {
-      funded: vouchers.length,
-      claimed: vouchers.filter((voucher) => voucher.claimedAt !== null).length,
-      attested: vouchers.filter((voucher) => voucher.attestedAt !== null).length,
-      settled: receipts.length,
-    },
+    counts,
+    suppressed,
     medianHours: {
       fundedToClaimed: medianHours(claimTimes),
       claimedToAttested: medianHours(attestationTimes),
@@ -230,9 +365,25 @@ export function healthRoutes(app: FastifyInstance): void {
   app.get(
     '/health',
     {
-      schema: { tags: ['health'], summary: 'Liveness check' },
+      schema: {
+        tags: ['health'],
+        summary: 'Liveness check',
+        description:
+          'Reports that the process is up, which build and commit are serving, ' +
+          'and how long this process has been running. It never reads the ' +
+          'database or RPC, so it stays green while either dependency is down.',
+      },
     },
-    () => ({ status: 'ok' }),
+    () => ({
+      status: 'ok',
+      // Same helpers as /version, so the two endpoints cannot disagree.
+      version: APP_VERSION,
+      commit: deployedCommit(),
+      // Derived from the module-load timestamp rather than a new clock and
+      // floored: a sub-second uptime is not useful to an operator, and a
+      // backward wall-clock adjustment must not report a negative number.
+      uptimeSeconds: Math.max(0, Math.floor((Date.now() - Date.parse(STARTED_AT)) / 1000)),
+    }),
   );
 
   /**
@@ -303,7 +454,7 @@ export function healthRoutes(app: FastifyInstance): void {
         summary: 'Readiness check',
         description:
           'Reports indexer lag, RPC retention gaps, database connectivity, failed ' +
-          'events and the webhook outbox backlog.',
+          'events, the webhook outbox backlog and per-endpoint circuit breakers.',
       },
     },
     async (_req, reply) => {
@@ -341,6 +492,10 @@ export function healthRoutes(app: FastifyInstance): void {
           abandoned: backlog.abandoned,
           oldestPendingAgeSeconds: backlog.oldestPendingAgeSeconds,
           maxPendingAgeSeconds: env.READY_WEBHOOK_MAX_AGE_MS / 1000,
+          // Per-endpoint breakers (#265). A tripped breaker is reported, not
+          // degraded: the outbox is still holding those deliveries, and a
+          // clinic outage must not pull a working API out of rotation.
+          breakers: webhookCircuitSnapshot(),
         };
         if (webhookState === 'backlog') healthy = false;
       } catch (err) {
@@ -405,6 +560,38 @@ export function healthRoutes(app: FastifyInstance): void {
     },
   );
 
+  /**
+   * Public indexer status. This is a single database snapshot plus one latest-
+   * ledger RPC read, not a readiness dependency probe.
+   */
+  app.get(
+    '/indexer',
+    {
+      schema: {
+        tags: ['health'],
+        summary: 'Public indexer status',
+        description:
+          'Returns the persisted indexer cursor and gap/pause state together with the latest RPC ledger.',
+      },
+    },
+    async () => {
+      const [state, latest] = await Promise.all([
+        prisma.indexerState.findUnique({ where: { id: 1 } }),
+        server.getLatestLedger(),
+      ]);
+      const lastLedger = state?.lastLedger ?? 0;
+      return {
+        lastLedger,
+        latestLedger: latest.sequence,
+        lagLedgers: latest.sequence - lastLedger,
+        paused: state?.paused ?? false,
+        gap: state?.gap ?? false,
+        gapOldestLedger: state?.gapOldestLedger ?? null,
+        updatedAt: state?.updatedAt.toISOString() ?? null,
+      };
+    },
+  );
+
   app.get(
     '/stats',
     {
@@ -447,6 +634,26 @@ export function healthRoutes(app: FastifyInstance): void {
     },
   );
 
+  /**
+   * Dispute rate and how disputes end (#245).
+   *
+   * The count, the rate against attested vouchers, reason and outcome
+   * breakdowns, and the median time to resolution. Counts are exact integers
+   * and the rate is a fixed-precision string, so nothing here depends on the
+   * database engine's numeric formatting.
+   */
+  app.get(
+    '/stats/disputes',
+    {
+      schema: {
+        tags: ['health'],
+        summary: 'Dispute counts, rate, breakdowns and median resolution time',
+        response: { 200: disputeResponse },
+      },
+    },
+    async () => disputeStats(),
+  );
+
   /** Voucher stages and median time between them, optionally scoped to a country or clinic. */
   app.get(
     '/stats/funnel',
@@ -475,14 +682,16 @@ export function healthRoutes(app: FastifyInstance): void {
   );
 
   /**
-   * Protocol activity as a per-UTC-day time series.
+   * Protocol activity as a time series.
    *
    * Counters are cumulative, which hides whether anything happened this
    * month. This is the same funded / settled / refunded split as the totals,
-   * but bucketed by day so growth is visible.
+   * bucketed by UTC day, ISO week (Monday start) or calendar month, so a
+   * year-long chart can ask for 12 points instead of 365.
    *
-   * Days with no activity are present with zero counts and a "0" amount, so
-   * a chart does not have to fill gaps itself. Amounts are exact base-unit
+   * Days with no activity are present with zero counts and a "0" amount by
+   * default, so a chart does not have to fill gaps itself; `fill=false`
+   * returns only buckets that have a row. Amounts are exact base-unit
    * strings, summed with BigInt — never floats.
    */
   app.get('/stats/daily', async (req, reply) => {
@@ -490,17 +699,16 @@ export function healthRoutes(app: FastifyInstance): void {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_query', issues: parsed.error.issues });
     }
-    const { days } = parsed.data;
+    const { days, granularity, fill } = parsed.data;
 
     // Anchor the window to UTC midnight so a day boundary is a day boundary
     // regardless of the server's timezone. `to` is exclusive for the query.
     const now = new Date();
     const todayUtcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
     const fromMs = todayUtcMs - (days - 1) * MS_PER_DAY;
-    const from = new Date(fromMs);
 
-    const fromDateStr = utcDate(from);
-    const toDateStr = utcDate(new Date(todayUtcMs));
+    const fromDateStr = utcDateString(new Date(fromMs));
+    const toDateStr = utcDateString(new Date(todayUtcMs));
 
     const stats = await prisma.dailyStat.findMany({
       where: {
@@ -509,39 +717,16 @@ export function healthRoutes(app: FastifyInstance): void {
           lte: toDateStr,
         },
       },
+      orderBy: { date: 'asc' },
     });
-
-    const byDate = new Map<string, (typeof stats)[number]>();
-    for (const s of stats) {
-      byDate.set(s.date, s);
-    }
-
-    const series: DailyRow[] = [];
-    for (let i = 0; i < days; i += 1) {
-      const dateStr = utcDate(new Date(fromMs + i * MS_PER_DAY));
-      const stat = byDate.get(dateStr);
-      series.push({
-        date: dateStr,
-        funded: {
-          count: stat?.fundedCount ?? 0,
-          amount: stat?.fundedAmount ?? '0',
-        },
-        settled: {
-          count: stat?.settledCount ?? 0,
-          amount: stat?.settledAmount ?? '0',
-        },
-        refunded: {
-          count: stat?.refundedCount ?? 0,
-          amount: stat?.refundedAmount ?? '0',
-        },
-      });
-    }
 
     return {
       days,
-      from: from.toISOString(),
+      granularity,
+      fill,
+      from: new Date(fromMs).toISOString(),
       to: new Date(todayUtcMs).toISOString(),
-      series,
+      series: aggregateDailySeries(stats, fromDateStr, toDateStr, granularity, fill),
     };
   });
 }
