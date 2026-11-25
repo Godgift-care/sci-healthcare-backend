@@ -170,6 +170,7 @@ async function registerRoutes(scope: FastifyInstance): Promise<void> {
   await scope.register(providerRoutes);
   await scope.register(serviceRoutes);
   await scope.register(voucherRoutes);
+  await scope.register(transactionRoutes);
   await scope.register(receiptRoutes);
   await scope.register(feedRoutes);
   await scope.register(governanceRoutes);
