@@ -68,7 +68,8 @@ async function main(): Promise<void> {
       ],
     },
   });
-  const result = { vouchers, providers, openMismatches };
+  // Keep the original voucher counters at the top level for existing cron consumers.
+  const result = { ...(vouchers ?? {}), ...(providers ? { providers } : {}), openMismatches };
   log.info(result, 'reconcile complete');
   console.log(JSON.stringify(result));
   await disconnect();
