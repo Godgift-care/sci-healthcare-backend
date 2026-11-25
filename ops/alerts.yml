@@ -8,7 +8,8 @@
 #   - stalled indexer   a five-second poll loop that has not succeeded in
 #                       five minutes is not slow, it is stuck
 #   - failed events     any event the indexer recorded in FailedEvent
-#   - retention gap     persisted IndexerState.gap requires manual recovery
+#   - reconcile drift   open ReconcileMismatch rows for fifteen minutes (#220)
+#   - paused indexer    the pause flag held for more than an hour (#220)
 #   - 5xx rate          5% of requests failing for ten minutes
 #   - webhook backlog   pending deliveries that never drain (see #130)
 #
@@ -75,6 +76,44 @@ groups:
             is up, the database is reachable, and the log for
             "indexer poll failed". No events are lost meanwhile — the cursor
             only advances after a batch commits.
+
+      - alert: SciReconcileMismatches
+        # A mismatch row is drift the poll loop cannot see: an event was
+        # missed or decoded wrong. /ready reports it but stays 200 so a
+        # working API is not pulled from rotation, which is why it needs its
+        # own alert. Fifteen minutes lets a reconcile run with --fix clear a
+        # row before paging anyone.
+        expr: reconcile_mismatches > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Read model disagrees with the chain
+          description: >-
+            {{ $value }} reconciliation mismatch row(s) have stayed open for
+            more than fifteen minutes. /ready reports the same drift as
+            checks.reconcile = "drift" without failing the instance. Run
+            npm run indexer:reconcile to see the field diffs, then
+            npm run indexer:reconcile -- --fix to rewrite affected rows from
+            chain state, and investigate which event the projection missed.
+
+      - alert: SciIndexerPausedTooLong
+        # The pause flag is operator-controlled, not a failure, but a paused
+        # indexer looks quiet on every other rule. An hour is long enough for
+        # planned maintenance and short enough to catch a forgotten pause;
+        # `for` starts when the series becomes 1, not when the process boots.
+        expr: indexer_paused > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Indexer has been paused for more than an hour
+          description: >-
+            indexer_paused is 1, so IndexerState.paused is true and the cursor
+            is not advancing. /ready is already 503 while paused; this alert
+            catches the case where nobody notices. Check who ran
+            npm run indexer:pause, then npm run indexer:resume when the
+            maintenance window is over.
 
       - alert: SciFailedEvents
         # FailedEvent rows are unprojected events: data the read model knows

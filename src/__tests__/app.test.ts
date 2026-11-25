@@ -6,6 +6,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { buildApp, SECURITY_TXT_EXPIRES } from '../app.js';
 import { prisma } from '../db.js';
 
+import { expectHealthBody } from './health-body.js';
+
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
 
 let app: FastifyInstance;
@@ -69,9 +71,11 @@ describe('request ids', () => {
 
     const loggedApp = await buildApp({ logger: { level: 'info', stream } });
     try {
+      // A normal route, not a probe: successful probes deliberately write no
+      // request log (#224), so they cannot prove reqId correlation.
       const res = await loggedApp.inject({
         method: 'GET',
-        url: '/health',
+        url: '/v1/stats',
         headers: { 'x-request-id': 'log-correlation-42' },
       });
       expect(res.statusCode).toBe(200);
@@ -106,7 +110,7 @@ describe('versioned paths', () => {
   it('serves every route under /v1 without a deprecation header', async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expectHealthBody(res.json());
     expect(res.headers['deprecation']).toBeUndefined();
     expect(res.headers['link']).toBeUndefined();
   });
@@ -114,7 +118,7 @@ describe('versioned paths', () => {
   it('keeps unversioned paths as aliases carrying Deprecation and a successor link', async () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expectHealthBody(res.json());
     expect(res.headers['deprecation']).toBe('true');
     expect(res.headers['link']).toBe('</v1/health>; rel="successor-version"');
   });

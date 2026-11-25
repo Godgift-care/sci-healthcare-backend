@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,8 +12,11 @@ import { backfillDailyStats } from '../lib/daily-stats.js';
 import { CLAIM_GRACE_MS } from '../lib/lifecycle.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../lib/rate-limits.js';
 import { webhookCircuit } from '../lib/webhooks.js';
+import { APP_VERSION } from '../lib/version.js';
 import { resetStatsCache } from '../routes/health.js';
 import { server } from '../stellar/client.js';
+
+import { expectHealthBody } from './health-body.js';
 
 const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const SECOND_CLINIC = 'GDRHSGBLCHN4DNXQMIHWR3XJH4JM4ZNEIZGURNG42KSQVYULDW3PQH3I';
@@ -417,7 +421,57 @@ describe('OpenAPI spec', () => {
 
 describe('GET /health and /stats', () => {
   it('reports liveness', async () => {
-    expect(await get('/health')).toEqual({ status: 200, body: { status: 'ok' } });
+    const { status, body } = await get('/health');
+    expect(status).toBe(200);
+    expectHealthBody(body);
+  });
+
+  it('reports the running build, commit and whole-second uptime (#223)', async () => {
+    const previous = {
+      render: process.env.RENDER_GIT_COMMIT,
+      git: process.env.GIT_COMMIT,
+    };
+    process.env.GIT_COMMIT = 'deadbeef';
+    delete process.env.RENDER_GIT_COMMIT;
+    try {
+      const { status, body } = await get('/v1/health');
+      expect(status).toBe(200);
+      expectHealthBody(body);
+      expect(body).toMatchObject({
+        version: APP_VERSION,
+        commit: 'deadbeef',
+        uptimeSeconds: expect.any(Number),
+      });
+      expect(Number.isInteger(body.uptimeSeconds)).toBe(true);
+    } finally {
+      if (previous.render === undefined) delete process.env.RENDER_GIT_COMMIT;
+      else process.env.RENDER_GIT_COMMIT = previous.render;
+      if (previous.git === undefined) delete process.env.GIT_COMMIT;
+      else process.env.GIT_COMMIT = previous.git;
+    }
+  });
+
+  it('never reads the database or RPC to answer a liveness probe (#223)', async () => {
+    const rpc = vi.spyOn(server, 'getLatestLedger').mockRejectedValue(new Error('rpc down'));
+    // The handler is deliberately a plain object, unlike /ready below. Read
+    // its source rather than spying on a Prisma delegate: restoring a spy on a
+    // generated delegate leaves later route tests with a broken `count`.
+    const source = readFileSync(new URL('../routes/health.ts', import.meta.url), 'utf8');
+    const handler = source.slice(
+      source.indexOf("app.get(\n    '/health'"),
+      source.indexOf("app.get(\n    '/version'"),
+    );
+    expect(handler).not.toContain('prisma');
+    expect(handler).not.toContain('server.');
+
+    try {
+      const { status, body } = await get('/health');
+      expect(status).toBe(200);
+      expectHealthBody(body);
+      expect(rpc).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('counts providers, vouchers and settled value', async () => {

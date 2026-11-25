@@ -8,7 +8,9 @@ import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, {
+  LogController,
   type FastifyInstance,
+  type FastifyReply,
   type FastifyRequest,
   type FastifyServerOptions,
 } from 'fastify';
@@ -42,6 +44,7 @@ import { healthRoutes } from './routes/health.js';
 import { providerRoutes } from './routes/providers.js';
 import { receiptRoutes } from './routes/receipts.js';
 import { serviceRoutes } from './routes/services.js';
+import { sponsorRoutes } from './routes/sponsors.js';
 import { streamRoutes } from './routes/stream.js';
 import { voucherRoutes } from './routes/vouchers/index.js';
 import { DEFAULT_RATE_LIMIT } from './lib/rate-limits.js';
@@ -60,6 +63,67 @@ function genReqId(req: IncomingMessage): string {
   const header = req.headers['x-request-id'];
   const value = Array.isArray(header) ? header[0] : header;
   return typeof value === 'string' && REQUEST_ID_PATTERN.test(value) ? value : randomUUID();
+}
+
+/**
+ * Paths whose 2xx responses are pure probe traffic (#224).
+ *
+ * Exact matches, with the query string removed: `/health?verbose=1` is still a
+ * probe, while `/health/extra` is not. `/metrics` is registered at the root
+ * only, but `/v1/metrics` is listed so a future alias cannot silently become
+ * noisy.
+ */
+const QUIET_PROBE_PATHS = new Set([
+  '/health',
+  '/v1/health',
+  '/ready',
+  '/v1/ready',
+  '/metrics',
+  '/v1/metrics',
+]);
+
+function isQuietProbePath(request: FastifyRequest): boolean {
+  const path = request.raw.url?.split('?')[0]?.split('#')[0] ?? '';
+  return QUIET_PROBE_PATHS.has(path);
+}
+
+/**
+ * Suppresses the two request lines for a *successful* probe, without hiding a
+ * failure (#224).
+ *
+ * Fastify's `disableRequestLogging` is evaluated on the incoming request,
+ * before the status code exists, and route-level `logLevel: 'silent'` would
+ * also hide a 503 from `/ready`. Both are unacceptable: a failed probe is the
+ * one we need in the log. So the incoming line is withheld for probe paths and
+ * replayed from `requestCompleted` only when the response was not 2xx. Every
+ * other request keeps Fastify's default two lines, including the custom
+ * serializer below.
+ */
+class QuietProbeLogController extends LogController {
+  override incomingRequest(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    metadata?: Record<string, unknown>,
+  ): void {
+    if (isQuietProbePath(request)) return;
+    super.incomingRequest(request, reply, metadata);
+  }
+
+  override requestCompleted(
+    error: Error | null | undefined,
+    request: FastifyRequest,
+    reply: FastifyReply,
+    metadata?: Record<string, unknown>,
+  ): void {
+    if (!isQuietProbePath(request)) {
+      super.requestCompleted(error, request, reply, metadata);
+      return;
+    }
+    if (!error && reply.statusCode >= 200 && reply.statusCode < 300) return;
+
+    super.incomingRequest(request, reply, metadata);
+    super.requestCompleted(error, request, reply, metadata);
+  }
 }
 
 export type BuildAppOptions = {
@@ -109,6 +173,7 @@ async function registerRoutes(scope: FastifyInstance): Promise<void> {
   await scope.register(feedRoutes);
   await scope.register(governanceRoutes);
   await scope.register(attesterRoutes);
+  await scope.register(sponsorRoutes);
   await scope.register(streamRoutes);
 }
 
@@ -123,6 +188,7 @@ export async function buildApp(
 ): Promise<FastifyInstance> {
   const app = Fastify({
     logger: withRedactedLogging(opts.logger),
+    logController: new QuietProbeLogController(),
     trustProxy: true,
     genReqId,
   });

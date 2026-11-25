@@ -139,4 +139,55 @@ describe('collectEvents', () => {
     });
     expect(out.hasMore).toBe(false);
   });
+
+  /**
+   * The mid-read failover onto a lagging replica: page one comes from an
+   * endpoint at the tip and carries an event in ledger 2, and the cursor
+   * continuation is answered by a server that has only indexed ledger 1.
+   *
+   * Its `latestLedger` is behind an event already in the result, so the
+   * cursor this call reports does not cover that event. Applying it anyway
+   * would move the cursor to 1 and leave the next cycle to apply it a second
+   * time — the read model's counters and the webhook outbox each record the
+   * fact twice. It waits for a cycle whose cursor reaches it instead.
+   */
+  it('holds back events past a short page from a lagging endpoint', async () => {
+    const served: rpc.Api.GetEventsResponse[] = [
+      {
+        events: [
+          { id: '1-0', ledger: 1 },
+          { id: '1-1', ledger: 1 },
+          { id: '2-0', ledger: 2 },
+        ] as unknown as rpc.Api.EventResponse[],
+        cursor: '3',
+        latestLedger: LATEST,
+        oldestLedger: 1,
+        latestLedgerCloseTime: '0',
+        oldestLedgerCloseTime: '0',
+      },
+      {
+        events: [],
+        cursor: '3',
+        latestLedger: 1,
+        oldestLedger: 1,
+        latestLedgerCloseTime: '0',
+        oldestLedgerCloseTime: '0',
+      },
+    ];
+    const source: EventSource = {
+      async getEvents() {
+        return served.shift()!;
+      },
+    };
+
+    const out = await collectEvents(source, {
+      startLedger: 1,
+      contractIds: [CONTRACT],
+      pageSize: 3,
+    });
+
+    expect(out.events.map((e) => e.id)).toEqual(['1-0', '1-1']);
+    expect(out.throughLedger).toBe(1);
+    expect(out.hasMore).toBe(true);
+  });
 });

@@ -6,10 +6,11 @@ type Db = Prisma.TransactionClient | PrismaClient;
 
 /** Formats a Date or date string as YYYY-MM-DD in UTC. */
 export function utcDateString(date: Date | string): string {
-  if (typeof date === 'string') {
-    return date.slice(0, 10);
-  }
-  return date.toISOString().slice(0, 10);
+  // A string goes through `Date` rather than a prefix: `'…T02:00:00+05:00'`
+  // starts on the 2nd locally and on the 1st in UTC, and the first is the
+  // kind of day that shows up in a Lagos deployment.
+  const instant = typeof date === 'string' ? new Date(date) : date;
+  return instant.toISOString().slice(0, 10);
 }
 
 /** The bucket size `GET /stats/daily` can answer. */

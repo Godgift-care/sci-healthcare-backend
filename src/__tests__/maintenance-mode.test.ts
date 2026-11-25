@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { MAINTENANCE_RETRY_AFTER_SECONDS } from '../lib/errors.js';
 
+import { expectHealthBody } from './health-body.js';
+
 describe('MAINTENANCE_MODE (#322)', () => {
   let app: FastifyInstance;
   let testClientId = 0;
@@ -29,7 +31,7 @@ describe('MAINTENANCE_MODE (#322)', () => {
       headers: { 'x-forwarded-for': nextIp() },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expectHealthBody(res.json());
   });
 
   it('/v1/health stays 200 OK during maintenance', async () => {
@@ -39,7 +41,7 @@ describe('MAINTENANCE_MODE (#322)', () => {
       headers: { 'x-forwarded-for': nextIp() },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expectHealthBody(res.json());
   });
 
   it('/metrics remains accessible during maintenance', async () => {

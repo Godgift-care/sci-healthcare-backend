@@ -189,6 +189,17 @@ looks like one `indexer poll failed` error followed by silence, then
 3. The backoff resets itself on the first cycle that works. Nothing has
    to be cleared by hand, and no events are skipped: the cursor only ever
    advances after a batch commits.
+4. An endpoint that is *behind* rather than down is the subtler case,
+   because it answers correctly and simply has less: a paged read handed
+   over mid-range can land on a replica that has not indexed the ledgers
+   the previous page already returned. The pager then holds those events
+   back for a cycle whose cursor actually covers them and polls again
+   immediately instead of sleeping, so the symptom is extra polls and a
+   lag gauge that will not come down — never a webhook that fires twice.
+   `soroban rpc endpoint failing; switching to the next one` alongside a
+   cursor that keeps falling short of `latestLedger` on one endpoint says
+   which replica is behind; drop it from `SOROBAN_RPC_URLS` if it stays
+   there (verified by `src/__tests__/rpc-failover-chaos.test.ts`, #307).
 
 If the outage outlasts the RPC retention window, this becomes the
 retention-gap procedure above.
@@ -268,6 +279,7 @@ wrong order, one of two things goes wrong:
 | --- | --- |
 | `REGISTRY_CONTRACT_ID`, `VOUCHER_CONTRACT_ID`, `RECEIPT_CONTRACT_ID` | The current contract of each role. Required, 56 characters each |
 | `USDC_CONTRACT_ID`, `FAUCET_CONTRACT_ID` | Optional companions; change them only if the redeploy moved them |
+| `SPONSOR_CONTRACT_ID` | Optional (the matching-funding desk). Unset means `GET /sponsors*` answer empty and the voucher routes report `null` matches — that is a valid state, not a failure. When a redeploy moves it, the new id goes here and a `{"type":"sponsor",...}` entry goes in `DEPLOYMENTS`; matches created before the start ledger stay unresolvable, because `match_settled` and `match_refunded` name only the matched voucher and cannot supply the original id a create would need |
 | `DEPLOYMENTS` | One-line JSON array of every deployment that must stay indexed, oldest first: `[{"type":"voucher","contractId":"C...","fromLedger":5063070,"toLedger":6123456}]`. Omitting `toLedger` means still active. List **both** generations — the old contracts *and* the new ones with `fromLedger` = `L` — because a contract that appears only in the current id variables gets a `fromLedger = 0` row, and 0 is the value a full reindex would read back |
 | `INDEXER_START_LEDGER` | Read **only** when the database has no `IndexerState` row — a fresh database. On an existing database the cursor wins and this value changes nothing |
 
@@ -543,7 +555,7 @@ Two layers watch the deployed service, and they answer different questions:
 | --- | --- | --- |
 | The `Uptime monitor` GitHub workflow (committed in this repo) | `/ready` every 30 minutes | A failed run and a red README badge |
 | An external monitor (UptimeRobot below) | `/ready` every 5 minutes | Email to the alert contact |
-| Prometheus rules in `ops/alerts.yml` | `/metrics` series | Indexer lag or stall, failed events, 5xx rate, webhook backlog |
+| Prometheus rules in `ops/alerts.yml` | `/metrics` series | Indexer lag or stall, failed events, reconciliation drift, a pause held over an hour, 5xx rate, webhook backlog |
 
 Neither of these can see the service get *slow*; they only prove `/ready`
 stays green. A paging on latency would need response-time alerting, which

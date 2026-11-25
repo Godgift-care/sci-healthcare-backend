@@ -52,6 +52,66 @@ export const indexerSecondsSinceSuccess = new Gauge({
   },
 });
 
+/**
+ * Open reconciliation mismatches (#220).
+ *
+ * The rows live in the read model, and the reconcile job is a one-shot
+ * process, so a gauge set only there would never be scraped. Reading the count
+ * when `/metrics` is collected keeps the exposed value honest in whichever
+ * process serves HTTP; the explicit setter below makes a run of `reconcile()`
+ * visible immediately in that process too.
+ */
+export const reconcileMismatches = new Gauge({
+  name: 'reconcile_mismatches',
+  help: 'Reconciliation mismatches currently recorded against the read model',
+  registers: [registry],
+  async collect() {
+    try {
+      this.set(await prisma.reconcileMismatch.count());
+    } catch {
+      // Keep the last known value. A database outage is reported by /ready
+      // and the request log; inventing a zero here would silence the alert.
+    }
+  },
+});
+
+/** Updates the gauge in the process that has just finished a reconcile run. */
+export function recordReconcileMismatches(count: number): void {
+  reconcileMismatches.set(count);
+}
+
+/**
+ * Whether the indexer is paused (#220): 1 paused, 0 running.
+ *
+ * `IndexerState.paused` is the authoritative flag, set by the pause/resume
+ * scripts. Collecting from the database avoids a process-local gauge that
+ * starts at zero and hides a pause that was requested before this process
+ * booted. `SciIndexerPausedTooLong` uses `for: 1h`, so a restart does not
+ * invent a pause that has lasted an hour.
+ */
+export const indexerPaused = new Gauge({
+  name: 'indexer_paused',
+  help: 'Whether the indexer is paused (1) or running (0)',
+  registers: [registry],
+  async collect() {
+    try {
+      const state = await prisma.indexerState.findUnique({
+        where: { id: 1 },
+        select: { paused: true },
+      });
+      this.set(state?.paused ? 1 : 0);
+    } catch {
+      // As above: keep the last known value rather than reporting a fake
+      // "running" state while the database is unreachable.
+    }
+  },
+});
+
+/** Updates the gauge in the process that changed the pause flag. */
+export function recordIndexerPaused(paused: boolean): void {
+  indexerPaused.set(paused ? 1 : 0);
+}
+
 export const eventsApplied = new Counter({
   name: 'events_applied_total',
   help: 'Contract events projected into the read model',

@@ -37,6 +37,23 @@ Set `LOG_LEVEL` (`debug`, `info`, `warn`, `error`) per environment: `info` in
 production, `debug` only while chasing something specific, because every
 level you add is ingested and billed.
 
+### Successful probes are silent
+
+An uptime monitor hitting `/health`, `/ready` or `/metrics` every few seconds
+would otherwise spend most of a short retention window on identical lines.
+A **2xx** response on any of those paths writes no `incoming request` and no
+`request completed` line (both the `/v1` and legacy paths are covered). This is
+implemented in Fastify's log controller, not by hiding the route from logging
+altogether, so:
+
+- a 503 from `/ready` (paused indexer, stale webhook backlog, database or RPC
+  failure) still writes **both** lines with `res.statusCode: 503`;
+- a 405/429 on a probe path, and any error handler line, is still logged;
+- normal application traffic is unchanged.
+
+If you are verifying a log stream with a probe, use a real route such as
+`/v1/stats` — a green probe no longer produces a `reqId` to search for.
+
 ## Fields worth indexing
 
 Index these at the provider, in this order. Everything else is still
