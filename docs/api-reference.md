@@ -62,7 +62,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /stats` | Protocol counters for the dashboard |
 | `GET /stats/daily?days=30` | Funded / settled / refunded counts and value per UTC day, ISO week or month (`days` 1–365; `granularity=day|week|month`, `fill=false` for sparse) |
 | `GET /stats/funnel` | Voucher counts and median hours between funded, claimed, attested and settled stages; optionally filter by `country` or clinic address |
-| `GET /providers` | Clinics filterable by `status`, `country`, `q` and `serviceCode`, and sortable by `name`, `registered` or `country`; each carries the clinic's cached off-chain `metadata` (`null` until fetched) |
+| `GET /providers` | Clinics filterable by `status`, `country`, `q` and `serviceCode`, and sortable by `name`, `registered` or `country`; each carries the clinic's cached off-chain `metadata` (`null` until fetched). `near=lat,lng` with `radiusKm` instead returns clinics within that radius of the point, nearest first, each with `distanceKm` (paged by `limit`/`offset`) |
 | `GET /providers/:address` | One clinic and its service catalogue, plus its cached off-chain `metadata` |
 | `GET /providers/:address/stats` | A clinic's vouchers by status, total settled value, and median claim/attestation times |
 | `GET /providers/:address/history` | Every status transition for a clinic, oldest first |
