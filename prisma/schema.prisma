@@ -93,6 +93,8 @@ model Service {
   /// Postgres enforces non-negative price via CHECK constraint (SQLite skips it).
   price  String // i128 as decimal string; JS numbers cannot hold these // pg:decimal
   active Boolean @default(true)
+  /// Whether the registry says the service can currently be delivered.
+  available Boolean @default(true)
 
   /// Price scheduled with `schedule_service_price`, or null when nothing is
   /// pending. The contract holds it as `pending_price` and swaps it into
