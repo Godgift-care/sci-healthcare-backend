@@ -85,7 +85,7 @@
     "@types/node": "22.10.5",
     "@vitest/coverage-v8": "2.1.8",
     "ajv": "^8.20.0",
-    "autocannon": "8.0.0",
+    "autocannon": "9.0.0",
     "eslint": "9.39.5",
     "fast-check": "^4.5.3",
     "husky": "^9.1.7",
