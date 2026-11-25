@@ -67,6 +67,7 @@ const envShape = z.object({
   DATABASE_POOL_SIZE: z.coerce.number().int().positive().optional(),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
   DATABASE_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+  DATABASE_SLOW_QUERY_MS: z.coerce.number().int().nonnegative().default(500),
   // Prune ContractEvent rows older than this many days, for settled/refunded
   // vouchers only (#275). 0 or unset keeps the full log forever.
   EVENT_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(0),
