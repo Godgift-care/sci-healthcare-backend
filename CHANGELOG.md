@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Transaction event lookup** (#211): `GET /transactions/:hash/events` (also `/v1/transactions/:hash/events`) returns contract events in ledger order for a 64-hex transaction hash, with an empty list for unknown hashes and HTTP 400 for malformed hashes. Adds an indexed `ContractEvent.txHash` migration.
 - **Operational alerts for quiet failures** (#220): `reconcile_mismatches` and `indexer_paused` gauges now read the persisted read-model state when `/metrics` is scraped (and are updated by the reconcile and pause/resume code paths), with Grafana panels and `SciReconcileMismatches` / `SciIndexerPausedTooLong` rules in `ops/alerts.yml`. The latter waits `1h` so planned maintenance does not page; a database outage keeps the last known value instead of reporting a fake zero or running indexer.
 - **Build and uptime on `GET /health`** (#223): the liveness body now includes `version`, `commit` (null outside a deploy) and `uptimeSeconds` from the existing `src/lib/version.ts` helpers, beside the unchanged `status: "ok"`. The route still makes no database or RPC call; the OpenAPI example, typed client and API reference are updated.
 - **Quiet successful health probes** (#224): 2xx responses on `/health`, `/ready` and `/metrics` (including `/v1` paths) no longer write `incoming request` or `request completed` lines. Failures, including a 503 from `/ready`, keep both lines; the behaviour is documented in `docs/logging.md`.
