@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks';
 
 import { Histogram } from 'prom-client';
 
-import { registry } from './metrics.js';
+import { registry } from './metrics-registry.js';
 
 /** Labels are fixed Prisma model and operation names, never SQL or arguments. */
 export const databaseQueryDuration = new Histogram({
