@@ -1,4 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { afterAll, beforeAll } from 'vitest';
+
+import { prisma } from '../db.js';
+import { indexerGap } from '../lib/metrics.js';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -69,6 +73,7 @@ describe('ops/alerts.yml', () => {
     const names = alerts.map((a) => a.name);
     // Indexer lag, failed events, 5xx rate and the webhook backlog (#130).
     for (const required of [
+      'SciIndexerGap',
       'SciIndexerLagging',
       'SciFailedEvents',
       'SciHigh5xxRate',
@@ -108,5 +113,53 @@ describe('ops/alerts.yml', () => {
     // and the indexer series only in the process running the indexer; an
     // alert on a series nobody scrapes can never fire.
     expect(alertsText).toMatch(/combined mode, or the worker/);
+  });
+});
+
+
+describe('indexer retention gap alert (#219)', () => {
+  let originalState: Awaited<ReturnType<typeof prisma.indexerState.findUnique>> = null;
+
+  beforeAll(async () => {
+    originalState = await prisma.indexerState.findUnique({ where: { id: 1 } });
+  });
+
+  afterAll(async () => {
+    if (originalState === null) {
+      await prisma.indexerState.deleteMany({ where: { id: 1 } });
+    } else {
+      await prisma.indexerState.update({
+        where: { id: 1 },
+        data: {
+          lastLedger: originalState.lastLedger,
+          paused: originalState.paused,
+          gap: originalState.gap,
+          gapOldestLedger: originalState.gapOldestLedger,
+          gapCursorLedger: originalState.gapCursorLedger,
+          leaseOwner: originalState.leaseOwner,
+          leaseExpiresAt: originalState.leaseExpiresAt,
+        },
+      });
+    }
+  });
+
+  it('defines a critical rule with a recovery runbook', () => {
+    const rule = alertBlocks().find((alert) => alert.name === 'SciIndexerGap');
+    expect(exprOf(rule?.body ?? '')).toContain('indexer_gap == 1');
+    expect(rule?.body).toMatch(/severity: critical/);
+    expect(rule?.body).toContain('docs/RUNBOOK.md');
+  });
+
+  it('reports both persisted gap states as 0 and 1', async () => {
+    await prisma.indexerState.upsert({
+      where: { id: 1 },
+      create: { id: 1, lastLedger: 100, gap: false },
+      update: { gap: false },
+    });
+    expect((await indexerGap.get()).values[0]?.value).toBe(0);
+    await prisma.indexerState.update({ where: { id: 1 }, data: { gap: true } });
+    expect((await indexerGap.get()).values[0]?.value).toBe(1);
+    await prisma.indexerState.update({ where: { id: 1 }, data: { gap: false } });
+    expect((await indexerGap.get()).values[0]?.value).toBe(0);
   });
 });
