@@ -70,7 +70,11 @@ async function main(): Promise<void> {
 
     const { events, throughLedger, hasMore } = await collectEvents(source, {
       startLedger,
-      contractIds: INDEXED_CONTRACTS,
+      contractIds:
+        process.env.SPONSOR_CONTRACT_ID &&
+        !INDEXED_CONTRACTS.includes(process.env.SPONSOR_CONTRACT_ID)
+          ? [...INDEXED_CONTRACTS, process.env.SPONSOR_CONTRACT_ID]
+          : INDEXED_CONTRACTS,
     });
 
     for (const raw of events) {

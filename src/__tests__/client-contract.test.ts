@@ -163,7 +163,10 @@ const CSV_COLUMNS = [
 ] as const;
 
 const CONTRACTS = {
-  Health: { present: ['status'], absent: [] },
+  Health: {
+    present: ['status', 'version', 'commit', 'uptimeSeconds'],
+    absent: [],
+  },
   Version: {
     present: [
       'version',
@@ -349,10 +352,16 @@ const CONTRACTS = {
       'serviceLabel',
       'amount',
       'amountDisplay',
+      'matchedAmount',
+      'matchedAmountDisplay',
+      'matchedBy',
+      'matchStatus',
+      'matchedAt',
       'status',
       'createdAt',
       'expiresAt',
       'claimedAt',
+      'claimedWithProof',
       'attestedAt',
       'attestedBy',
       'disputeDeadline',
@@ -381,10 +390,16 @@ const CONTRACTS = {
       'serviceLabel',
       'amount',
       'amountDisplay',
+      'matchedAmount',
+      'matchedAmountDisplay',
+      'matchedBy',
+      'matchStatus',
+      'matchedAt',
       'status',
       'createdAt',
       'expiresAt',
       'claimedAt',
+      'claimedWithProof',
       'attestedAt',
       'attestedBy',
       'disputeDeadline',

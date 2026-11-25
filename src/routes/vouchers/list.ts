@@ -9,6 +9,7 @@ import { applyFields, parseFields } from '../../lib/fields.js';
 import { isRefundable, isSettleable } from '../../lib/lifecycle.js';
 import { LIST_ROUTE_RATE_LIMIT } from '../../lib/rate-limits.js';
 import { serviceLabels } from '../../lib/services.js';
+import { matchesByOriginalVoucherId } from '../../lib/sponsors.js';
 import { amountBound, idOrder, pageByWhere, parseWithin, voucherSelect } from './query.js';
 import { serialise, serialisePage } from './serialiser.js';
 import type { Row } from './serialiser.js';
@@ -221,18 +222,23 @@ export function registerVoucherDue(app: FastifyInstance): void {
       orderBy: { expiresAt: 'asc' },
     });
 
-    const labels = await serviceLabels(rows);
-    const due = rows
-      .filter((v) => {
-        const timing = {
-          status: v.status,
-          expiresAt: v.expiresAt,
-          disputeDeadline: v.disputeDeadline,
-        };
-        return isRefundable(timing, deadline) || isSettleable(timing, deadline);
-      })
-      .map((v) => serialise(v, labels));
+    const due = rows.filter((v) => {
+      const timing = {
+        status: v.status,
+        expiresAt: v.expiresAt,
+        disputeDeadline: v.disputeDeadline,
+      };
+      return isRefundable(timing, deadline) || isSettleable(timing, deadline);
+    });
 
-    return { total: due.length, vouchers: due };
+    const [labels, matches] = await Promise.all([
+      serviceLabels(due),
+      matchesByOriginalVoucherId(due.map((v) => v.id)),
+    ]);
+
+    return {
+      total: due.length,
+      vouchers: due.map((v) => serialise(v, labels, matches.get(v.id) ?? null)),
+    };
   });
 }

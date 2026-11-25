@@ -5,6 +5,7 @@ import { ApiError } from '../../lib/errors.js';
 import { providerDetails } from '../../lib/providers.js';
 import { receiptsByVoucherId } from '../../lib/receipts.js';
 import { serviceLabels } from '../../lib/services.js';
+import { matchesByOriginalVoucherId } from '../../lib/sponsors.js';
 import { serialise } from './serialiser.js';
 import type { Include } from './schema.js';
 import { detailQuery } from './schema.js';
@@ -36,15 +37,16 @@ export function registerVoucherDetail(app: FastifyInstance): void {
       });
       if (!v) throw new ApiError(404, 'voucher_not_found', 'Voucher not found');
 
-      const [labels, providers, receipt] = await Promise.all([
+      const [labels, providers, receipt, matchById] = await Promise.all([
         serviceLabels([v]),
         includes.has('provider') ? providerDetails([v]) : null,
         includes.has('receipt')
           ? receiptsByVoucherId([id]).then((receipts) => receipts.get(id) ?? null)
           : prisma.receipt.findUnique({ where: { voucherId: id } }),
+        matchesByOriginalVoucherId([id]),
       ]);
 
-      const summary = serialise(v, labels);
+      const summary = serialise(v, labels, matchById.get(id) ?? null);
       const base = providers
         ? { ...summary, provider: providers.get(v.providerAddress) ?? summary.provider }
         : summary;

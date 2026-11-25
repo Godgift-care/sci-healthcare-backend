@@ -365,9 +365,25 @@ export function healthRoutes(app: FastifyInstance): void {
   app.get(
     '/health',
     {
-      schema: { tags: ['health'], summary: 'Liveness check' },
+      schema: {
+        tags: ['health'],
+        summary: 'Liveness check',
+        description:
+          'Reports that the process is up, which build and commit are serving, ' +
+          'and how long this process has been running. It never reads the ' +
+          'database or RPC, so it stays green while either dependency is down.',
+      },
     },
-    () => ({ status: 'ok' }),
+    () => ({
+      status: 'ok',
+      // Same helpers as /version, so the two endpoints cannot disagree.
+      version: APP_VERSION,
+      commit: deployedCommit(),
+      // Derived from the module-load timestamp rather than a new clock and
+      // floored: a sub-second uptime is not useful to an operator, and a
+      // backward wall-clock adjustment must not report a negative number.
+      uptimeSeconds: Math.max(0, Math.floor((Date.now() - Date.parse(STARTED_AT)) / 1000)),
+    }),
   );
 
   /**

@@ -4,7 +4,7 @@ import { prisma } from '../../db.js';
 import { AMOUNT_KEY_WIDTH, amountKey } from '../../lib/amounts.js';
 import { columnSelect, includesField } from '../../lib/fields.js';
 import type { Row } from './serialiser.js';
-import { VOUCHER_FIELDS } from './schema.js';
+import { MATCH_FIELDS, VOUCHER_FIELDS } from './schema.js';
 
 /**
  * The columns a voucher page is read from (#321).
@@ -37,6 +37,9 @@ const VOUCHER_DERIVED: Record<string, readonly string[]> = {
   isRefundable: ['status', 'expiresAt'],
   // Not a column at all: a separate batched read, keyed by `id` (#167).
   receipt: [],
+  // Nor are these: the matching desk is one batched read of `SponsorMatch`
+  // keyed by `id` (#317), so none of them may reach the voucher `select`.
+  ...Object.fromEntries(MATCH_FIELDS.map((field) => [field, []])),
 };
 
 /**
