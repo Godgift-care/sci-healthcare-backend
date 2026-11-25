@@ -132,10 +132,33 @@ returns **503** with the gap details.
 #### Option A — Restore a database snapshot
 
 If you have a database backup taken while the indexer was still within
-the retention window:
+the retention window, restore it using your database provider's procedure.
+The repository also creates a nightly read-model artifact when the
+`DATABASE_URL` secret is configured:
 
-1. Restore the backup.
-2. Restart the indexer. It will resume from the snapshot's cursor.
+1. Find a successful **Nightly read-model snapshot** run and download its
+   `read-model-snapshot` artifact. For example:
+   ```sh
+   gh run download <run-id> --repo Godgift-care/sci-healthcare-backend \
+     --name read-model-snapshot --dir ./snapshot-restore
+   ```
+2. Prepare an **empty** database with the current schema. Snapshot import
+   refuses to overwrite any existing rows.
+3. Generate the Prisma client for the database provider, then import the
+   artifact (replace the database URL with the target database):
+   ```sh
+   ./scripts/use-postgres.sh
+   npx prisma generate
+   DATABASE_URL='postgresql://…' npm run snapshot:import -- \
+     --file ./snapshot-restore/sci-healthcare-snapshot.json.gz
+   ```
+   For SQLite, leave the schema on its default provider and use a `file:`
+   `DATABASE_URL`.
+4. Restart the indexer. It resumes from the cursor included in the artifact.
+
+Artifacts are retained for 30 days. A fork or repository without the
+`DATABASE_URL` secret skips the workflow with a notice and produces no
+artifact.
 
 #### Option B — Accept the gap and resume
 

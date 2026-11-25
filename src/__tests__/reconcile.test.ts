@@ -614,4 +614,24 @@ describe('reconcile', () => {
     expect(result.checked).toBe(1);
     expect(read).toHaveBeenCalledWith('1');
   });
+
+  it('pages a bounded non-terminal pass forward and wraps without repeating rows', async () => {
+    await seedVoucher('1');
+    await seedVoucher('2');
+    await seedVoucher('3');
+    const read = vi.fn(async (id: string) => chainVoucher({ id: BigInt(id) }));
+
+    const first = await reconcile({ read, limit: 2, sample: 0, log: fakeLog() });
+    const second = await reconcile({
+      read,
+      limit: 2,
+      ...(first.lastVoucherId ? { afterId: first.lastVoucherId } : {}),
+      sample: 0,
+      log: fakeLog(),
+    });
+
+    expect(first.lastVoucherId).toBe('2');
+    expect(second.lastVoucherId).toBe('1');
+    expect(read.mock.calls.map(([id]) => id)).toEqual(['1', '2', '3', '1']);
+  });
 });

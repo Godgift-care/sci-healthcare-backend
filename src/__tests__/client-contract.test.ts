@@ -16,6 +16,8 @@ import {
   type DailyBucket,
   type DailyRow,
   type DailyStats,
+  type Deployment,
+  type DeploymentsResponse,
   type DueVouchersResponse,
   type EmbeddedReceiptRow,
   type GovernanceContract,
@@ -120,6 +122,8 @@ interface Shapes {
   ReceiptPatientView: Receipt;
   ReceiptProvider: ReceiptProvider;
   GovernanceResponse: GovernanceResponse;
+  DeploymentsResponse: DeploymentsResponse;
+  Deployment: Deployment;
   GovernanceContract: GovernanceContract;
   GovernanceHistoryEvent: GovernanceHistoryEvent;
   /** `GET /stream` answers no JSON body; its contract is the frame and the handle. */
@@ -269,6 +273,7 @@ const CONTRACTS = {
       'name',
       'country',
       'status',
+      'statusReason',
       'registeredAt',
       'capacity',
       'openVouchers',
@@ -297,7 +302,10 @@ const CONTRACTS = {
     absent: [],
   },
   ProviderHistory: { present: ['address', 'history'], absent: [] },
-  ProviderHistoryItem: { present: ['status', 'ledger', 'changedAt'], absent: [] },
+  ProviderHistoryItem: {
+    present: ['status', 'reasonCode', 'ledger', 'changedAt'],
+    absent: [],
+  },
   PriceHistory: { present: ['providerAddress', 'code', 'history'], absent: [] },
   PriceHistoryItem: {
     present: ['price', 'priceDisplay', 'ledger', 'changedAt'],
@@ -465,6 +473,8 @@ const CONTRACTS = {
   },
   ReceiptProvider: { present: ['address', 'name', 'country'], absent: [] },
   GovernanceResponse: { present: ['contracts'], absent: [] },
+  DeploymentsResponse: { present: ['deployments'], absent: [] },
+  Deployment: { present: ['type', 'contractId', 'fromLedger', 'toLedger'], absent: [] },
   GovernanceContract: {
     present: ['contract', 'contractId', 'currentAdmin', 'pendingAdmin', 'history'],
     absent: [],
@@ -511,6 +521,7 @@ export type EveryClientKeyIsContracted = AssertTrue<
 const CONTRACTED_METHODS = [
   'countries',
   'dailyStats',
+  'deployments',
   'governance',
   'health',
   'indexer',
@@ -1058,6 +1069,12 @@ describe('@sci-healthcare/client contract (#310)', () => {
     for (const contract of withHistory) {
       expectEveryShape('GovernanceHistoryEvent', contract.history);
     }
+  });
+
+  it('deployments', async () => {
+    const res = await client.deployments();
+    expectShape('DeploymentsResponse', res);
+    for (const deployment of res.deployments) expectShape('Deployment', deployment);
   });
 
   /**

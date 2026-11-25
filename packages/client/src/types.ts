@@ -44,7 +44,8 @@ export type Provider = {
   address: string;
   name: string;
   country: string;
-  status: 'Pending' | 'Active' | 'Suspended';
+  status: 'Pending' | 'Active' | 'Suspended' | 'Retired';
+  statusReason: number | null;
   registeredAt: string | Date;
   /**
    * The clinic's voucher cap as indexed from the registry's `capacity_changed`
@@ -95,6 +96,7 @@ export type ServicePriceChangeHistory = {
  */
 export type ProviderHistoryItem = {
   status: string;
+  reasonCode: number | null;
   ledger: number;
   changedAt: string | Date;
 };
@@ -345,6 +347,17 @@ export type GovernanceResponse = {
   contracts: GovernanceContract[];
 };
 
+export type Deployment = {
+  type: string;
+  contractId: string;
+  fromLedger: number;
+  toLedger: number | null;
+};
+
+export type DeploymentsResponse = {
+  deployments: Deployment[];
+};
+
 export type HealthStatus = {
   status: string;
   /** Package version of the running build. */
@@ -541,7 +554,7 @@ export type ClinicServicesResponse = {
 };
 
 export type ListProvidersParams = {
-  status?: 'Pending' | 'Active' | 'Suspended';
+  status?: 'Pending' | 'Active' | 'Suspended' | 'Retired';
   country?: string;
   q?: string;
   cursor?: string;

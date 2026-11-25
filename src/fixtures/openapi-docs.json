@@ -686,7 +686,7 @@
   },
   "GET /providers": {
     "ok": {
-      "description": "A page of clinics with their active services. Filter by `status`, `country`, `q` or `serviceCode` (only clinics with that service active); sort by `name`, `registered` (default, newest first) or `country`, with `order=asc|desc`. `nextCursor` encodes the ordering and answers `400 invalid_cursor` if used with another one; `total` is only present without a cursor, because a keyset page does not count. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
+      "description": "A page of clinics with their active services. Filter by `status` (`Pending`, `Active`, `Suspended` or `Retired`), `country`, `q` or `serviceCode` (only clinics with that service active); sort by `name`, `registered` (default, newest first) or `country`, with `order=asc|desc`. `nextCursor` encodes the ordering and answers `400 invalid_cursor` if used with another one; `total` is only present without a cursor, because a keyset page does not count. `statusReason` is the last registry reason code, or null for events from older deployments. `capacity` is the clinic voucher cap the indexer read from the registry, `null` until the clinic has ever set one (`0` means unlimited), and `openVouchers` counts its `Funded` and `Claimed` vouchers.",
       "example": {
         "total": 13,
         "limit": 1,
@@ -698,6 +698,7 @@
             "name": "Kumasi Community Clinic",
             "country": "GH",
             "status": "Active",
+            "statusReason": null,
             "registeredAt": "2026-01-08T10:00:00.000Z",
             "metadata": null,
             "metadataStatus": null,
@@ -809,12 +810,13 @@
   },
   "GET /providers/{address}": {
     "ok": {
-      "description": "One clinic, its registry state and its full service catalogue. This is the object `?include=provider` embeds on the voucher routes. `capacity` is the cap indexed from the registry (`null` before the clinic has set one, `0` for unlimited) and `openVouchers` its current `Funded` plus `Claimed` count, so a funder can see a clinic at capacity before sending a transaction that reverts.",
+      "description": "One clinic, its registry state and its full service catalogue. This is the object `?include=provider` embeds on the voucher routes. `statusReason` is the last registry reason code, or null for events from older deployments. `capacity` is the cap indexed from the registry (`null` before the clinic has set one, `0` for unlimited) and `openVouchers` its current `Funded` plus `Claimed` count, so a funder can see a clinic at capacity before sending a transaction that reverts.",
       "example": {
         "address": "GBHOJCTZZHSEHJNSGQD7TIIH4XLLJE5GVFEC64PAXLFRLWR2ANV333OU",
         "name": "Kumasi Community Clinic",
         "country": "GH",
         "status": "Active",
+        "statusReason": null,
         "registeredAt": "2026-01-08T10:00:00.000Z",
         "metadata": null,
         "metadataStatus": null,
@@ -1123,6 +1125,7 @@
         "history": [
           {
             "status": "Active",
+            "reasonCode": null,
             "ledger": 1980441,
             "changedAt": "2026-01-08T10:00:00.000Z"
           }
@@ -2706,6 +2709,76 @@
       },
       "503": {
         "description": "The read model could not be reached — Prisma code P1001, P1003, P1008, P1009 or P2024. Worth retrying: `Retry-After` is the read-model cache lifetime, and a dropped connection is normally back within one indexer poll.",
+        "example": {
+          "error": "database_unavailable",
+          "message": "Database is unavailable, retry in 5 seconds"
+        },
+        "headers": {
+          "retry-after": {
+            "description": "Seconds to wait before retrying.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 5
+          }
+        }
+      }
+    }
+  },
+  "GET /deployments": {
+    "ok": {
+      "description": "Contract deployments ordered by type and starting ledger. A null `toLedger` marks the active deployment.",
+      "example": {
+        "deployments": [
+          {
+            "type": "registry",
+            "contractId": "CAMU635NRFEHATJ6MTY5SI43IAZ43KHPFXAQDQAST2AHKCHLSGWHVE4V",
+            "fromLedger": 4465529,
+            "toLedger": null
+          }
+        ]
+      }
+    },
+    "errors": {
+      "429": {
+        "description": "This IP has spent the route’s request budget. Wait for `Retry-After` seconds before trying again.",
+        "example": {
+          "error": "rate_limited",
+          "message": "Too many requests"
+        },
+        "headers": {
+          "retry-after": {
+            "description": "Seconds until the budget refills.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 29
+          },
+          "x-ratelimit-limit": {
+            "description": "Requests allowed for this route in the window.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 120
+          },
+          "x-ratelimit-remaining": {
+            "description": "Requests left in the current window.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 0
+          },
+          "x-ratelimit-reset": {
+            "description": "Seconds until the window restarts.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 29
+          }
+        }
+      },
+      "503": {
+        "description": "The read model could not be reached. Retry after the indicated delay.",
         "example": {
           "error": "database_unavailable",
           "message": "Database is unavailable, retry in 5 seconds"

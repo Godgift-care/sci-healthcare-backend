@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, ClinicServicesParams, ClinicServicesResponse, CountryStats, CsvVouchersParams, DailyStats, DailyStatsQuery, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, IndexerStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
+import type { ApiErrorEnvelope, ClinicServicesParams, ClinicServicesResponse, CountryStats, CsvVouchersParams, DailyStats, DailyStatsQuery, DeploymentsResponse, DueVouchersParams, DueVouchersResponse, GovernanceResponse, HealthStatus, IndexerStatus, ListProvidersParams, ListReceiptsParams, ListVouchersParams, Provider, ProviderHistory, ProviderLocation, ProvidersResponse, Receipt, ReceiptsResponse, ReadyStatus, ServiceCatalogueItem, ServiceClinics, ServicePriceChangeHistory, ServicesResponse, Stats, VersionInfo, Voucher, VoucherDetail, VouchersResponse } from './types.js';
 import { type StreamFilters, type StreamHandle, type StreamHandlers, type StreamOptions, type VoucherStreamEvent } from './stream.js';
 export declare class ApiError extends Error {
     readonly status: number;
@@ -63,6 +63,7 @@ export declare class Client {
     receipts(params: ListReceiptsParams): Promise<ReceiptsResponse>;
     receipt(voucherId: string): Promise<Receipt>;
     governance(): Promise<GovernanceResponse>;
+    deployments(): Promise<DeploymentsResponse>;
     /**
      * Subscribes to `GET /stream` for one voucher or one clinic.
      *

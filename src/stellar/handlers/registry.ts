@@ -164,6 +164,10 @@ export async function onCapacityChanged(db: Db, e: DecodedEvent): Promise<void> 
 export async function onProviderStatus(db: Db, e: DecodedEvent): Promise<void> {
   const address = asAddress(e.fields.provider);
   const status = providerStatusName(e.fields.status);
+  const reasonCode =
+    e.fields.reason_code === undefined || e.fields.reason_code === null
+      ? null
+      : asNumber(e.fields.reason_code);
   // Read before writing so a replay of the same event — or a status the
   // clinic already had — does not notify a receiver twice.
   const existing = await db.provider.findUnique({
@@ -172,13 +176,14 @@ export async function onProviderStatus(db: Db, e: DecodedEvent): Promise<void> {
   });
   // `db` is the cycle's (or applyEvent's) transaction, so the status update
   // and its history row commit together.
-  await db.provider.updateMany({ where: { address }, data: { status } });
+  await db.provider.updateMany({ where: { address }, data: { status, statusReason: reasonCode } });
   await db.providerStatusChange.upsert({
     where: { id: e.id },
     create: {
       id: e.id,
       providerAddress: address,
       status,
+      reasonCode,
       ledger: e.ledger,
       changedAt: e.ledgerClosedAt,
     },

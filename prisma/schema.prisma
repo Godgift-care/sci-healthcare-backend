@@ -36,8 +36,10 @@ model Provider {
   address      String   @id
   name         String
   country      String
-  /// Postgres enforces status IN ('Pending', 'Active', 'Suspended') via CHECK constraint (SQLite skips it).
-  status       String // Pending | Active | Suspended
+  /// Postgres enforces status IN ('Pending', 'Active', 'Suspended', 'Retired') via CHECK constraint (SQLite skips it).
+  status       String // Pending | Active | Suspended | Retired
+  /// Last registry reason_code; null for deployments or events that predate the field.
+  statusReason Int?
   registeredAt DateTime
   updatedAt    DateTime @updatedAt
 
@@ -296,7 +298,8 @@ model GovernanceEvent {
 model ProviderStatusChange {
   id              String   @id // on-chain event id
   providerAddress String
-  status          String // Pending | Active | Suspended
+  status          String // Pending | Active | Suspended | Retired
+  reasonCode      Int?
   ledger          Int
   changedAt       DateTime
 

@@ -1264,6 +1264,109 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "95th percentile duration of scheduled reconciliation passes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(indexer_reconcile_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95 duration",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Scheduled reconciliation duration (p95)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Open reconciliation mismatches found in the most recent pass.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "indexer_reconcile_open_mismatches",
+          "legendFormat": "open mismatches",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Reconciliation mismatches",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Open ReconcileMismatch rows. /ready reports the same drift but stays 200; SciReconcileMismatches alerts after fifteen minutes.",
       "fieldConfig": {
         "defaults": {
@@ -1320,9 +1423,9 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 48
+        "y": 56
       },
-      "id": 13,
+      "id": 15,
       "options": {
         "legend": {
           "calcs": ["mean", "max"],
@@ -1412,9 +1515,9 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 48
+        "y": 56
       },
-      "id": 14,
+      "id": 16,
       "options": {
         "legend": {
           "calcs": ["mean", "max"],
@@ -1456,7 +1559,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "SCI Healthcare — API & Indexer",
+  "title": "SCI Healthcare \u2014 API & Indexer",
   "uid": "sci-healthcare-api-indexer",
   "version": 1,
   "weekStart": ""

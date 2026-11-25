@@ -119,7 +119,7 @@ The image runs as the unprivileged `node` user. Override any environment value
 
 | Read it when | |
 | --- | --- |
-| You are calling the API | [API reference](docs/api-reference.md) · [Webhooks](docs/webhooks.md) |
+| You are calling the API | [API reference and endpoint list](docs/api-reference.md) · [Webhooks](docs/webhooks.md) |
 | You are deploying or configuring an instance | [Environment](docs/environment.md) · [Deployment and operations runbook](docs/RUNBOOK.md) |
 | You are reading or changing the read model | [Architecture](docs/architecture.md) · [Data dictionary](docs/data-dictionary.md) |
 | You are tracing a slow request or cycle | [Tracing (OpenTelemetry)](docs/tracing.md) |

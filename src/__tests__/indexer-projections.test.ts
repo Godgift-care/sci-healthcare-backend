@@ -139,26 +139,50 @@ describe('provider_registered projection', () => {
 });
 
 describe('provider_status_changed projection', () => {
-  it('updates the clinic status and appends the transition to history', async () => {
+  it('stores the reason on current state and history, including Retired', async () => {
     await apply(
       rawEvent('provider_registered', 101, { name: 'Clinic', country: 'CF', registered_at: 1n }, [
         addr(CLINIC),
       ]),
     );
 
-    await apply(rawEvent('provider_status_changed', 105, { status: u32(1) }, [addr(CLINIC)]));
+    await apply(
+      rawEvent('provider_status_changed', 105, { status: u32(3), reason_code: u32(5) }, [
+        addr(CLINIC),
+      ]),
+    );
 
     const provider = await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } });
-    expect(provider.status).toBe('Active');
+    expect(provider).toMatchObject({ status: 'Retired', statusReason: 5 });
     const change = await prisma.providerStatusChange.findUniqueOrThrow({
       where: { id: 'provider_status_changed-105' },
     });
     expect(change).toMatchObject({
       providerAddress: CLINIC,
-      status: 'Active',
+      status: 'Retired',
+      reasonCode: 5,
       ledger: 105,
     });
     expect(change.changedAt.toISOString()).toBe(LEDGER_CLOSED_AT);
+  });
+
+  it('keeps the reason null for older status events', async () => {
+    await apply(
+      rawEvent('provider_registered', 101, { name: 'Clinic', country: 'CF', registered_at: 1n }, [
+        addr(CLINIC),
+      ]),
+    );
+    await apply(rawEvent('provider_status_changed', 105, { status: u32(2) }, [addr(CLINIC)]));
+
+    expect(await prisma.provider.findUniqueOrThrow({ where: { address: CLINIC } })).toMatchObject({
+      status: 'Suspended',
+      statusReason: null,
+    });
+    expect(
+      await prisma.providerStatusChange.findUniqueOrThrow({
+        where: { id: 'provider_status_changed-105' },
+      }),
+    ).toMatchObject({ reasonCode: null });
   });
 });
 

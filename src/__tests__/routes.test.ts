@@ -292,11 +292,19 @@ async function seed() {
   });
   await prisma.providerStatusChange.createMany({
     data: [
-      { id: 'st-1', providerAddress: CLINIC, status: 'Active', ledger: 10, changedAt: at(20) },
+      {
+        id: 'st-1',
+        providerAddress: CLINIC,
+        status: 'Active',
+        reasonCode: 0,
+        ledger: 10,
+        changedAt: at(20),
+      },
       {
         id: 'st-2',
         providerAddress: CLINIC,
         status: 'Suspended',
+        reasonCode: 3,
         ledger: 12,
         changedAt: at(15),
       },
@@ -392,6 +400,7 @@ beforeEach(async () => {
   await prisma.service.deleteMany();
   await prisma.provider.deleteMany();
   await prisma.governanceEvent.deleteMany();
+  await prisma.deployment.deleteMany();
   await prisma.providerStatusChange.deleteMany();
   await prisma.servicePriceChange.deleteMany();
   await prisma.dailyStat.deleteMany();
@@ -410,6 +419,8 @@ describe('OpenAPI spec', () => {
     expect(spec.paths['/providers']).toBeDefined();
     expect(spec.paths['/receipts']).toBeDefined();
     expect(spec.paths['/governance']).toBeDefined();
+    expect(spec.paths['/deployments']).toBeDefined();
+    expect(spec.paths['/deployments']).toBeDefined();
   });
 
   it('serves Swagger UI at /docs', async () => {
@@ -1534,6 +1545,7 @@ describe('GET /providers', () => {
     expect(body.providers[0].name).toBe('Ikeja General Clinic');
     expect(body.providers[0].services.map((s: { code: number }) => s.code)).toEqual([101, 202]);
     expect(body.providers[0].services[0].priceDisplay).toBe('3.0000000');
+    expect(body.providers[0].statusReason).toBeNull();
   });
 
   it('filters by country', async () => {
@@ -1545,6 +1557,42 @@ describe('GET /providers', () => {
     const { status, body } = await get('/providers?status=Verified');
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_query');
+  });
+
+  it('filters Retired clinics and returns their status reasons in details and history', async () => {
+    const retiredAddress = `G${'R'.repeat(55)}`;
+    await prisma.provider.create({
+      data: {
+        address: retiredAddress,
+        name: 'Retired Clinic',
+        country: 'GH',
+        status: 'Retired',
+        statusReason: 5,
+        registeredAt: new Date('2026-09-01T00:00:00Z'),
+      },
+    });
+    await prisma.providerStatusChange.create({
+      data: {
+        id: 'retired-status-change',
+        providerAddress: retiredAddress,
+        status: 'Retired',
+        reasonCode: 5,
+        ledger: 15,
+        changedAt: new Date('2026-09-02T00:00:00Z'),
+      },
+    });
+
+    const listed = await get('/providers?status=Retired');
+    expect(listed.status).toBe(200);
+    expect(listed.body.providers).toMatchObject([
+      { address: retiredAddress, status: 'Retired', statusReason: 5 },
+    ]);
+
+    const detail = await get(`/providers/${retiredAddress}`);
+    expect(detail.body).toMatchObject({ status: 'Retired', statusReason: 5 });
+
+    const history = await get(`/providers/${retiredAddress}/history`);
+    expect(history.body.history).toMatchObject([{ status: 'Retired', reasonCode: 5 }]);
   });
 
   it('returns one provider with its full catalogue, including delisted services', async () => {
@@ -3432,6 +3480,37 @@ describe('GET /governance', () => {
   });
 });
 
+describe('GET /deployments', () => {
+  it('lists active and retired deployments by type and starting ledger', async () => {
+    await prisma.deployment.createMany({
+      data: [
+        { type: 'voucher', contractId: 'v-active'.padEnd(56, 'A'), fromLedger: 20 },
+        {
+          type: 'registry',
+          contractId: 'r-later'.padEnd(56, 'B'),
+          fromLedger: 30,
+          toLedger: 40,
+        },
+        {
+          type: 'registry',
+          contractId: 'r-first'.padEnd(56, 'C'),
+          fromLedger: 10,
+          toLedger: 29,
+        },
+      ],
+    });
+
+    const { status, body } = await get('/deployments');
+
+    expect(status).toBe(200);
+    expect(body.deployments).toEqual([
+      { type: 'registry', contractId: 'r-first'.padEnd(56, 'C'), fromLedger: 10, toLedger: 29 },
+      { type: 'registry', contractId: 'r-later'.padEnd(56, 'B'), fromLedger: 30, toLedger: 40 },
+      { type: 'voucher', contractId: 'v-active'.padEnd(56, 'A'), fromLedger: 20, toLedger: null },
+    ]);
+  });
+});
+
 describe('cursor pagination', () => {
   it('pages through vouchers with cursor', async () => {
     const { body: page1 } = await get(`/vouchers?funder=${FUNDER}&limit=2`);
@@ -3501,6 +3580,11 @@ describe('GET /providers/:address/history', () => {
       'Active',
     ]);
     expect(body.history.map((h: { ledger: number }) => h.ledger)).toEqual([10, 12, 14]);
+    expect(body.history.map((h: { reasonCode: number | null }) => h.reasonCode)).toEqual([
+      0,
+      3,
+      null,
+    ]);
   });
 
   it('404s an unknown provider', async () => {

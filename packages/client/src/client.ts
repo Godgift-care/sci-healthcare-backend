@@ -6,6 +6,7 @@ import type {
   CsvVouchersParams,
   DailyStats,
   DailyStatsQuery,
+  DeploymentsResponse,
   DueVouchersParams,
   DueVouchersResponse,
   GovernanceResponse,
@@ -324,6 +325,10 @@ export class Client {
 
   async governance(): Promise<GovernanceResponse> {
     return this.request<GovernanceResponse>('/governance');
+  }
+
+  async deployments(): Promise<DeploymentsResponse> {
+    return this.request<DeploymentsResponse>('/deployments');
   }
 
   /**

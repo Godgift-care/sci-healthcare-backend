@@ -33,7 +33,7 @@ schema does not have. Documentation cannot drift from the schema unnoticed.
 | Contract event | Projects |
 | --- | --- |
 | `provider_registered` | `Provider` (create, or update name and country on re-registration) |
-| `provider_status_changed` | `Provider.status`, `ProviderStatusChange` |
+| `provider_status_changed` | `Provider.status`, `Provider.statusReason`, `ProviderStatusChange` |
 | `provider_metadata_changed` | `Provider.metadataUri` (the cached `metadata` is dropped with it) |
 | `service_upserted` | `Service`, `ServicePriceChange` (price changes only) |
 | `service_price_scheduled` | `Service.upcomingPrice`, `Service.upcomingFrom` |
@@ -94,7 +94,8 @@ state; the history lives in `ProviderStatusChange`.
 | `address` | `String` | No | `provider_registered.provider` | Primary key: the Stellar ed25519 public key (56 chars) |
 | `name` | `String` | No | `provider_registered.name` | Public registry data, overwritten on every registration event |
 | `country` | `String` | No | `provider_registered.country` | ISO-style code as published on chain |
-| `status` | `String` | No | starts `Pending`, then `provider_status_changed` | `Pending`, `Active` or `Suspended`. Also written as `Active` by the `voucher_created` stub for an unknown provider |
+| `status` | `String` | No | starts `Pending`, then `provider_status_changed` | `Pending`, `Active`, `Suspended` or `Retired`. Also written as `Active` by the `voucher_created` stub for an unknown provider |
+| `statusReason` | `Int?` | Yes | `provider_status_changed.reason_code` | Last reason code, or null when the event came from an older deployment |
 | `registeredAt` | `DateTime` | No | `provider_registered.registered_at` | From the event payload; the stub uses the epoch |
 | `updatedAt` | `DateTime` | No | Prisma `@updatedAt` | Row write time, not an on-chain time |
 | `metadataUri` | `String?` | Yes | `metadata_uri` on `provider_registered` / `provider_metadata_changed` | Off-chain directory pointer (hours, phone, location). Kept only when it is within `METADATA_URI_MAX_LENGTH` (512); an over-long URI is ignored rather than truncated, and an empty one clears the column |
@@ -219,7 +220,8 @@ current status; this keeps when and how often a clinic was suspended.
 | --- | --- | --- | --- | --- |
 | `id` | `String` | No | on-chain event id | Primary key; one row per transition |
 | `providerAddress` | `String` | No | `provider_status_changed.provider` | Foreign key to `Provider.address` |
-| `status` | `String` | No | `provider_status_changed.status` | `Pending`, `Active` or `Suspended` |
+| `status` | `String` | No | `provider_status_changed.status` | `Pending`, `Active`, `Suspended` or `Retired` |
+| `reasonCode` | `Int?` | Yes | `provider_status_changed.reason_code` | Reason code, or null when the event came from an older deployment |
 | `ledger` | `Int` | No | event ledger | |
 | `changedAt` | `DateTime` | No | ledger close time | |
 

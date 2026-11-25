@@ -13,7 +13,7 @@ describe('Database constraints for statuses and amounts (#143)', () => {
         'ALTER TABLE "Voucher" DROP CONSTRAINT IF EXISTS "voucher_status_check"',
         "ALTER TABLE \"Voucher\" ADD CONSTRAINT \"voucher_status_check\" CHECK (\"status\" IN ('Funded', 'Claimed', 'Attested', 'Settled', 'Disputed', 'Refunded'))",
         'ALTER TABLE "Provider" DROP CONSTRAINT IF EXISTS "provider_status_check"',
-        'ALTER TABLE "Provider" ADD CONSTRAINT "provider_status_check" CHECK ("status" IN (\'Pending\', \'Active\', \'Suspended\'))',
+        "ALTER TABLE \"Provider\" ADD CONSTRAINT \"provider_status_check\" CHECK (\"status\" IN ('Pending', 'Active', 'Suspended', 'Retired'))",
         'ALTER TABLE "Voucher" DROP CONSTRAINT IF EXISTS "voucher_amount_non_negative"',
         'ALTER TABLE "Voucher" ADD CONSTRAINT "voucher_amount_non_negative" CHECK ("amount" >= 0)',
         'ALTER TABLE "Voucher" DROP CONSTRAINT IF EXISTS "voucher_settled_net_check"',
@@ -70,6 +70,15 @@ describe('Database constraints for statuses and amounts (#143)', () => {
         name: 'Valid Clinic',
         country: 'NG',
         status: 'Active',
+        registeredAt: new Date(),
+      },
+    });
+    await prisma.provider.create({
+      data: {
+        address: `${PROVIDER.slice(0, -1)}3`,
+        name: 'Retired Clinic',
+        country: 'NG',
+        status: 'Retired',
         registeredAt: new Date(),
       },
     });

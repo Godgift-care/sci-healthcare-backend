@@ -27,6 +27,14 @@ describe('INDEXER_PAGE_SIZE validation', () => {
 });
 
 describe('CORS_ORIGIN validation in env schema', () => {
+  it('leaves scheduled reconciliation disabled unless a positive interval is configured', () => {
+    expect(schema.parse(validBaseEnv).RECONCILE_INTERVAL_MS).toBeUndefined();
+    expect(schema.safeParse({ ...validBaseEnv, RECONCILE_INTERVAL_MS: '0' }).success).toBe(false);
+    expect(
+      schema.parse({ ...validBaseEnv, RECONCILE_INTERVAL_MS: '60000' }).RECONCILE_INTERVAL_MS,
+    ).toBe(60000);
+  });
+
   it('rejects wildcard origin "*" when NODE_ENV is production', () => {
     const result = schema.safeParse({
       ...validBaseEnv,

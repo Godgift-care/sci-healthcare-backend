@@ -181,6 +181,30 @@ describe('monitor.yml', () => {
   });
 });
 
+describe('nightly-snapshot.yml (#207)', () => {
+  const yml = workflow('nightly-snapshot.yml');
+
+  it('exports on a schedule and can be dispatched manually', () => {
+    expect(yml).toMatch(/^ {2}schedule:/m);
+    expect(yml).toMatch(/cron: '\d+ \d+ \* \* \*'/);
+    expect(yml).toMatch(/^ {2}workflow_dispatch:$/m);
+  });
+
+  it('skips cleanly with a notice when DATABASE_URL is absent', () => {
+    expect(yml).toMatch(/DATABASE_URL: \$\{\{ secrets\.DATABASE_URL \}\}/);
+    expect(yml).toMatch(/configured=false/);
+    expect(yml).toMatch(/::notice::.*DATABASE_URL secret is not configured/);
+    expect(yml).toMatch(/if: steps\.database\.outputs\.configured == 'true'/);
+  });
+
+  it('exports a Postgres snapshot and retains the artifact for 30 days', () => {
+    expect(yml).toMatch(/\.\/scripts\/use-postgres\.sh/);
+    expect(yml).toMatch(/npm run snapshot:export/);
+    expect(yml).toMatch(/actions\/upload-artifact@v\d+/);
+    expect(yml).toMatch(/retention-days: 30/);
+  });
+});
+
 describe('links.yml', () => {
   const yml = workflow('links.yml');
 
@@ -433,14 +457,16 @@ describe('api-reference/index.html (#297)', () => {
       if (!node || typeof node !== 'object') return;
       const record = node as Record<string, unknown>;
       const isSchema =
-        record.type !== undefined ||
+        typeof record.type === 'string' ||
         record.properties ||
         record.items ||
         record.enum ||
         record.propertyNames ||
         record.$ref;
       if (isSchema) Object.keys(record).forEach((key) => used.add(key));
-      Object.keys(record).forEach((key) => walk(record[key]));
+      Object.keys(record)
+        .filter((key) => key !== 'example' && key !== 'examples')
+        .forEach((key) => walk(record[key]));
     };
     walk(spec);
 
