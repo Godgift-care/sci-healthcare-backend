@@ -1,4 +1,7 @@
-import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom-client';
+import { collectDefaultMetrics, Counter, Gauge, Histogram } from 'prom-client';
+
+import { registry } from './metrics-registry.js';
+export { registry } from './metrics-registry.js';
 
 import { prisma } from '../db.js';
 
@@ -9,7 +12,6 @@ import { prisma } from '../db.js';
  * process that runs it (combined mode, or the worker). A split API process
  * serves the HTTP and process metrics only.
  */
-export const registry = new Registry();
 collectDefaultMetrics({ register: registry });
 
 /** Wall-clock ms of the last poll that completed, or null before the first. */
