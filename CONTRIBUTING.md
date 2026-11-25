@@ -6,6 +6,7 @@ serves them over a read-only HTTP API.
 By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Setup
+test2
 
 Use Node 22 (`nvm use` reads `.nvmrc`). Its bundled npm 10 is what CI runs;
 a lockfile written by npm 11 drops entries npm 10 requires and fails `npm ci`.
