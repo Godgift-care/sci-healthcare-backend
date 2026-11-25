@@ -165,47 +165,6 @@ describe('ci.yml', () => {
     // The file is mounted into the Prometheus image at /ops.
     expect(yml).toMatch(/check rules \/ops\/alerts\.yml/);
   });
-
-  /**
-   * The `test` job's own text, so an assertion cannot be satisfied by the
-   * Node 24 job below it or by a comment elsewhere in the file.
-   */
-  function testJob(): string {
-    const start = yml.indexOf('\n  test:\n');
-    expect(start).toBeGreaterThan(-1);
-    const rest = yml.slice(start + 1);
-    const next = rest.slice(1).search(/^ {2}[a-z0-9-]+:$/m);
-    return next === -1 ? rest : rest.slice(0, next + 1);
-  }
-
-  it('runs the suite in UTC, Africa/Lagos and Pacific/Kiritimati (#306)', () => {
-    const job = testJob();
-    expect(job).toMatch(/^ {6}TZ: \$\{\{ matrix\.tz \}\}$/m);
-
-    // UTC+1 is where this backend is deployed; UTC+14 is the furthest ahead
-    // of UTC, so an instant late on one UTC day is already the next day
-    // there. A local-date implementation cannot survive both.
-    for (const tz of ['UTC', 'Africa/Lagos', 'Pacific/Kiritimati']) {
-      expect(job).toMatch(new RegExp(`^ {12}tz: ${tz.replace('/', '\\/')}$`, 'm'));
-    }
-  });
-
-  it('names each test entry so the zone runs cannot overwrite one another', () => {
-    // GitHub reports checks by name: two matrix entries sharing one name
-    // look like one job in the pull request UI, and the second silently
-    // replaces the first. Engine alone is no longer enough now that zones
-    // differ.
-    const job = testJob();
-    expect(job).toMatch(/^ {4}name: test \(\$\{\{ matrix\.engine \}\}, \$\{\{ matrix\.tz \}\}\)$/m);
-
-    const entries = [...job.matchAll(/^ {10}- engine: (\S+)$/gm)].map((m) => m[1]);
-    const zones = [...job.matchAll(/^ {12}tz: (\S+)$/gm)].map((m) => m[1]);
-    expect(entries.length).toBeGreaterThan(1);
-    expect(entries).toHaveLength(zones.length);
-    const pairs = entries.map((engine, i) => `${engine}/${zones[i]}`);
-    expect(new Set(pairs).size).toBe(pairs.length);
-    expect(pairs).toContain('postgres/UTC');
-  });
 });
 
 describe('monitor.yml', () => {

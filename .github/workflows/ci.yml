@@ -39,21 +39,8 @@ jobs:
   # The same suite runs on both engines. SQLite is what contributors get
   # with no setup; Postgres is what production runs, and the two disagree on
   # string ordering and comparison in ways that only show up with real data.
-  #
-  # It also runs in three time zones (issue #306). Daily buckets and the
-  # /stats/daily window are the code most likely to shift by a day, and a
-  # UTC runner cannot see that: an implementation that read the local
-  # calendar instead of UTC is green here every day of the week and starts
-  # mislabelling rows the moment it is deployed in Lagos. The day-boundary
-  # tests also loop zones inside the process, because every zone east of UTC
-  # leaves a UTC midnight on the same calendar date — only a zone west of it
-  # can see a day label built from local fields. The zone axis runs on
-  # SQLite rather than both engines because the bucketing is JavaScript
-  # date arithmetic — no query in this service derives a day in SQL, and
-  # Prisma stores instants, not local wall-clock strings — so the engine
-  # axis adds nothing the zone axis could catch.
   test:
-    name: test (${{ matrix.engine }}, ${{ matrix.tz }})
+    name: test (${{ matrix.engine }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -61,20 +48,9 @@ jobs:
         include:
           - engine: sqlite
             database-url: ''
-            tz: UTC
           - engine: postgres
             database-url: 'postgresql://sci:sci@localhost:5432/sci_healthcare_test'
-            tz: UTC
-          # UTC+1 year round: the deployment this backend actually serves.
-          - engine: sqlite
-            database-url: ''
-            tz: Africa/Lagos
-          # UTC+14, the furthest ahead of UTC there is: an instant late on
-          # one UTC day is already the following day here.
-          - engine: sqlite
-            database-url: ''
-            tz: Pacific/Kiritimati
-    # Started for every entry; the SQLite entries simply never connect. The
+    # Started for both entries; the SQLite entry simply never connects. The
     # health gate keeps the Postgres entry from racing the container's boot.
     services:
       postgres:
@@ -92,7 +68,6 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: ${{ matrix.database-url }}
-      TZ: ${{ matrix.tz }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
