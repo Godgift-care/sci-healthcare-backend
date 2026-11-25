@@ -47,6 +47,15 @@ describe('production maintenance scripts run compiled JavaScript (#161)', () => 
     });
   }
 
+  for (const command of ['failed:list', 'failed:show'] as const) {
+    const entry = command.replace(':', '-');
+    it(`${command} runs from dist and has a tsx dev equivalent`, () => {
+      expect(pkg.scripts[command]).toBe(`node dist/scripts/${entry}.js`);
+      expect(pkg.scripts[`${command}:dev`]).toBe(`tsx src/scripts/${entry}.ts`);
+      expect(existsSync(fileURLToPath(new URL(`../scripts/${entry}.ts`, import.meta.url)))).toBe(true);
+    });
+  }
+
   it('the process entry points also run dist, not tsx', () => {
     expect(pkg.scripts.start).toBe('node dist/index.js');
     expect(pkg.scripts['start:api']).toBe('node dist/api.js');
