@@ -19,6 +19,15 @@ import { resetStatsCache } from '../routes/health.js';
  *   so it cannot use `include` the way `Voucher` does; the batch is what keeps
  *   it to one query either way.
  * - `/services`: uses `groupBy` aggregation, no per-row lookups
+ * - `/sponsors`: `totalsBySponsor()` (#317) reads the whole page's match rows
+ *   and budget movements in ONE `findMany({ where: { sponsorAddress: { in: addresses } } })`
+ *   each, then groups in JS — the amounts are i128 decimal strings, so no SQL
+ *   aggregate can add them. Guarded by a real query count in
+ *   `sponsors.test.ts`, not by this comment.
+ * - `/vouchers` again, for the match join: `matchesByOriginalVoucherId()`
+ *   batches a page's `sponsorMatch` lookup into one query, which the existing
+ *   "fixed number of queries, not one per row" check in `routes.test.ts`
+ *   counts alongside the rest of the page.
  *
  * No route issues N+1 queries. This file serves as documentation of that finding
  * and a regression guard via the existing route tests in routes.test.ts.
@@ -300,11 +309,16 @@ describe('aggregate routes compute once per ledger (#320)', () => {
     expect((await get<FunnelBody>('/stats/funnel')).counts.funded).toBe(3);
   });
 
+  // The fixture is replaced before each case but survives the last one, and
+  // with `fileParallelism: false` the next file in the run reads these rows:
+  // a `/vouchers` page for this funder comes back carrying `qc-*` ids it never
+  // created. Same teardown as the setup above.
   afterAll(async () => {
     await prisma.receipt.deleteMany();
     await prisma.voucher.deleteMany();
     await prisma.service.deleteMany();
     await prisma.provider.deleteMany();
     await prisma.indexerState.deleteMany();
+    resetStatsCache();
   });
 });

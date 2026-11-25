@@ -288,6 +288,18 @@ export function voucherIdScVal(voucherId: string): xdr.ScVal {
 }
 
 /**
+ * Whether a voucher may only be claimed by revealing a presence secret.
+ *
+ * `claim` refuses a voucher with a commitment (`PresenceProofRequired`) and
+ * `claim_with_proof` refuses one without (`NoPresenceCommitment`), so this
+ * answers whether the claim that was made carried a proof even though the
+ * claim event does not say so.
+ */
+export function hasPresenceProof(options: ChainVoucherOptions): boolean {
+  return options.presence_commitment !== null && options.presence_commitment !== undefined;
+}
+
+/**
  * Reads `get_voucher_options` through simulation (#319).
  *
  * The view resolves the voucher first, so an unknown id fails the same way

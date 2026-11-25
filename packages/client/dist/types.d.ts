@@ -149,10 +149,16 @@ export type Voucher = {
     serviceLabel?: string | null;
     amount: string;
     amountDisplay: string;
+    matchedAmount: string | null;
+    matchedAmountDisplay: string | null;
+    matchedBy: string | null;
+    matchStatus: string | null;
+    matchedAt: string | Date | null;
     status: VoucherStatus;
     createdAt: string | Date;
     expiresAt: string | Date;
     claimedAt: string | Date | null;
+    claimedWithProof: boolean | null;
     attestedAt: string | Date | null;
     /** The attester that signed, from the `voucher_attested` topic. */
     attestedBy: string | null;

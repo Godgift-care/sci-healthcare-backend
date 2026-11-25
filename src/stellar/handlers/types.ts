@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import type { FastifyBaseLogger } from 'fastify';
-import type { VoucherReader } from '../reconcile.js';
+import type { VoucherOptionsReader, VoucherReader } from '../reconcile.js';
 
 export type Db = Prisma.TransactionClient;
 
@@ -21,6 +21,7 @@ export type PendingSignal = {
 
 export type VoucherHandlerContext = {
   voucherReader: VoucherReader;
+  optionsReader?: VoucherOptionsReader | undefined;
   repairedVouchers?: Set<string>;
   log?: FastifyBaseLogger;
 };

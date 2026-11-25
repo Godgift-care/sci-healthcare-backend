@@ -40,6 +40,16 @@ export const TOPIC_FIELDS: Record<string, readonly string[]> = {
   receipt_minted: ['beneficiary_ref', 'provider'],
   // Testnet faucet; only reaches the indexer when FAUCET_CONTRACT_ID is set.
   dripped: ['to'],
+  // Matching-funding desk (contracts/sponsor); only reaches the indexer when
+  // SPONSOR_CONTRACT_ID is set (#317). `match_created` is the only one with
+  // two topics: the voucher it matched is a topic while the voucher it
+  // *funded* is a data field, so mixing them up reads a different voucher.
+  budget_deposited: ['sponsor'],
+  budget_withdrawn: ['sponsor'],
+  rules_set: ['sponsor'],
+  match_created: ['sponsor', 'original_voucher_id'],
+  match_settled: ['sponsor'],
+  match_refunded: ['sponsor'],
 };
 
 export type DecodedEvent = {

@@ -70,6 +70,8 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /providers/:address/services/:code/history` | Every observed price for a service, oldest first |
 | `GET /attesters` | Attesters trusted to confirm care; `?all=true` includes removed ones |
 | `GET /attesters/:address` | One attester with its attestation count |
+| `GET /sponsors` | Sponsors of the matching-funding desk, most recently seen first, with what each has matched; empty while `SPONSOR_CONTRACT_ID` is unset |
+| `GET /sponsors/:address` | One sponsor: its terms, its last reported balance and its match totals |
 | `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status`; `?include=receipt,provider` embeds related records |
 | `GET /vouchers/:id` | One voucher, with its care receipt if settled, attester and dispute outcome; `?include=receipt,provider` embeds the canonical forms |
 | `GET /vouchers/:id/events` | Every contract event for a voucher, oldest first, with transaction hashes |

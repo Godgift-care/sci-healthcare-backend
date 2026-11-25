@@ -144,6 +144,14 @@ model Voucher {
   createdAt          DateTime
   expiresAt          DateTime
   claimedAt          DateTime?
+  /// Whether the claim that reached `Claimed` revealed a presence-proof
+  /// secret (#318). The `voucher_claimed` event is identical for `claim` and
+  /// `claim_with_proof`, so this is read from `get_voucher_options`: a
+  /// voucher funded with a `presence_commitment` can only be claimed with
+  /// the proof, and one funded without it can only be claimed without.
+  /// Null until the claim has been indexed *and* that read has answered; a
+  /// claim whose read failed stays null rather than guessing.
+  claimedWithProof   Boolean?
   attestedAt         DateTime?
   /// Attester that signed the attestation, from the voucher_attested topic.
   /// Nullable so `prisma db push` adds it in place on the existing database.
@@ -399,6 +407,97 @@ model FaucetDrip {
 
   @@index([wallet])
   @@index([ledger])
+}
+
+/// A sponsor of the matching-funding desk (`contracts/sponsor`), as observed
+/// through that contract's events (#317).
+///
+/// Keyed by the sponsor's own account address — the `sponsor` topic, which is
+/// the address that signed the call, never the desk contract. One row per
+/// sponsor, holding the state the most recent event reported: `available` is
+/// a snapshot the contract emits after every budget movement (it is not a
+/// total computed here, which is what makes a replayed event harmless), and
+/// the four rule fields are the latest `rules_set`. A sponsor that only ever
+/// appeared in a `match_created` therefore has nulls until it deposits or
+/// sets rules.
+///
+/// Only populated when `SPONSOR_CONTRACT_ID` is configured.
+model Sponsor {
+  address String @id
+  /// Unused budget in the desk, i128 as decimal string. Null when no budget
+  /// movement has been indexed for this sponsor yet.
+  available        String?
+  /// u32 basis points: 10000 matches one-for-one, 20000 matches two-for-one.
+  matchBps         Int?
+  capPerVoucher    String? // i128 as decimal string
+  minVoucherAmount String? // i128 as decimal string
+  /// u64 as decimal string, because it is wider than a Postgres integer.
+  /// An anti-farming minimum age, not a funding deadline.
+  minVoucherAgeSecs String?
+  /// Ledger close time of the `rules_set` these fields came from.
+  rulesAt           DateTime?
+  /// Ledger close time of the last budget movement, which is what `available`
+  /// describes. Null until one is indexed.
+  lastMovementAt    DateTime?
+  firstSeenAt       DateTime
+  updatedAt         DateTime @updatedAt
+
+  @@index([firstSeenAt])
+}
+
+/// One deposit into or withdrawal out of the matching desk.
+///
+/// Append-only history, keyed by the on-chain event id like every other
+/// log table, so replaying a page cannot double-count. `available` is the
+/// balance the contract reported *after* this movement.
+model SponsorBudgetEvent {
+  id             String   @id // on-chain event id
+  sponsorAddress String
+  /// Deposited | Withdrawn
+  kind           String
+  amount         String // i128 as decimal string; always positive
+  available      String // i128 as decimal string, after this movement
+  ledger         Int
+  occurredAt     DateTime
+
+  @@index([sponsorAddress, ledger])
+}
+
+/// A match the desk funded: a second voucher, paid by the sponsor, attached
+/// to the voucher it matched (#317).
+///
+/// `matchedVoucherId` is the new voucher the desk created — it arrives in the
+/// voucher stream too, with the desk as its funder — so the read model keeps
+/// both ids and lets a voucher page look its own match up by `originalVoucherId`.
+/// The contract stores one match per original voucher, so a second match on
+/// the same voucher is a contract rejection rather than a second row here.
+///
+/// `status` lags reality by design: the desk publishes `match_settled` and
+/// `match_refunded` only the next time it reconciles that sponsor, so a match
+/// whose voucher already settled stays `Open` until that call happens. The
+/// amounts, though, always add up: a settle or refund carries the same
+/// `amount` the match was created with, because it is read back from the
+/// stored record rather than from the chain again.
+model SponsorMatch {
+  matchedVoucherId  String   @id // u64 as string: the voucher the desk funded
+  /// The voucher the match was made against. Unique: the contract keeps one
+  /// match per original voucher and rejects a second.
+  originalVoucherId String   @unique
+  sponsorAddress    String
+  providerAddress   String
+  serviceCode       Int
+  /// The sponsor's own contribution (i128 as decimal string), which is
+  /// `min(original amount * matchBps / 10000, capPerVoucher)`. The original
+  /// funder's amount is not in this event — it is the voucher's own `amount`.
+  amount            String
+  /// Open | Settled | Refunded
+  status            String   @default("Open")
+  matchedAt         DateTime
+  settledAt         DateTime?
+  refundedAt        DateTime?
+
+  @@index([sponsorAddress, matchedAt])
+  @@index([status])
 }
 
 /// A voucher whose stored row disagrees with the contract.

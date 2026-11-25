@@ -46,6 +46,24 @@ const BLOCKED_REASONS: Record<string, string> = {
   dispute_resolved: 'voucher.resolve_dispute is admin-only',
   receipt_minted:
     'the only receipt-mint call sites are settle and dispute resolution, both unreachable; the mint itself also requires the voucher contract signature',
+  // The matching-funding desk (#317). None of these can be captured because
+  // `contracts/sponsor` has no deployment id anywhere this repo points at: the
+  // README, `.env.example` and `docker-compose.yml` publish the registry,
+  // voucher, receipt, USDC and faucet contracts only. `getEvents` filters by
+  // contract id, so a contract that does not exist on the network has no
+  // history to read however long the RPC retains ledgers.
+  budget_deposited:
+    'contracts/sponsor is not deployed: no sponsor contract id is published in the README, .env.example or docker-compose.yml, so getEvents has no contract to read',
+  budget_withdrawn:
+    'same undeployed desk as budget_deposited — sponsor.withdraw also needs a budget that cannot exist without a deployed contract',
+  rules_set:
+    'sponsor.set_rules is called on the matching desk, which has no deployment id in this repo, so no ledger has ever carried the event',
+  match_created:
+    'sponsor.match_voucher needs a funded budget on the undeployed desk and a voucher meeting its minimum age; the desk exists only in the contracts source',
+  match_settled:
+    'published retrospectively by reconcile_sponsor or match_voucher on the undeployed desk; the settle it follows is itself admin-gated on the live deployment',
+  match_refunded:
+    'the refund twin of match_settled — no deployed sponsor contract, and no open match on the network to refund',
 };
 
 /**

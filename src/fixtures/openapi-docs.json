@@ -3110,6 +3110,79 @@
       }
     }
   },
+  "GET /sponsors": {
+    "ok": {
+      "description": "Sponsors of the matching-funding desk, with their terms, budget and match totals.",
+      "example": {
+        "total": 1,
+        "limit": 50,
+        "offset": 0,
+        "sponsors": [
+          {
+            "address": "GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P",
+            "available": "75000000",
+            "availableDisplay": "7.5000000",
+            "availableAsOf": "2026-10-01T03:00:00.000Z",
+            "matchBps": 20000,
+            "capPerVoucher": "6000000",
+            "capPerVoucherDisplay": "0.6000000",
+            "minVoucherAmount": "10000000",
+            "minVoucherAmountDisplay": "1.0000000",
+            "minVoucherAgeSecs": "3600",
+            "rulesAt": "2026-10-01T02:00:00.000Z",
+            "firstSeenAt": "2026-10-01T01:00:00.000Z",
+            "deposited": "100000000",
+            "depositedDisplay": "10.0000000",
+            "withdrawn": "25000000",
+            "withdrawnDisplay": "2.5000000",
+            "matchCount": 3,
+            "openMatchCount": 1,
+            "settledMatchCount": 1,
+            "refundedMatchCount": 1,
+            "matchedAmount": "9500000",
+            "matchedAmountDisplay": "0.9500000",
+            "settledMatchedAmount": "6000000",
+            "settledMatchedAmountDisplay": "0.6000000",
+            "refundedMatchedAmount": "2000000",
+            "refundedMatchedAmountDisplay": "0.2000000"
+          }
+        ]
+      }
+    }
+  },
+  "GET /sponsors/{address}": {
+    "ok": {
+      "description": "One sponsor of the matching-funding desk: terms, budget and match totals.",
+      "example": {
+        "address": "GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P",
+        "available": "75000000",
+        "availableDisplay": "7.5000000",
+        "availableAsOf": "2026-10-01T03:00:00.000Z",
+        "matchBps": 20000,
+        "capPerVoucher": "6000000",
+        "capPerVoucherDisplay": "0.6000000",
+        "minVoucherAmount": "10000000",
+        "minVoucherAmountDisplay": "1.0000000",
+        "minVoucherAgeSecs": "3600",
+        "rulesAt": "2026-10-01T02:00:00.000Z",
+        "firstSeenAt": "2026-10-01T01:00:00.000Z",
+        "deposited": "100000000",
+        "depositedDisplay": "10.0000000",
+        "withdrawn": "25000000",
+        "withdrawnDisplay": "2.5000000",
+        "matchCount": 3,
+        "openMatchCount": 1,
+        "settledMatchCount": 1,
+        "refundedMatchCount": 1,
+        "matchedAmount": "9500000",
+        "matchedAmountDisplay": "0.9500000",
+        "settledMatchedAmount": "6000000",
+        "settledMatchedAmountDisplay": "0.6000000",
+        "refundedMatchedAmount": "2000000",
+        "refundedMatchedAmountDisplay": "0.2000000"
+      }
+    }
+  },
   "GET /stats/disputes": {
     "ok": {
       "description": "Dispute counts, the rate against attested vouchers, breakdowns by the contract reason code and by outcome, and the median hours from attestation to resolution. `rate` is a fixed four-decimal string; `Unresolved` counts disputes with no outcome yet, and `medianResolutionHours` is `null` before anything resolves.",
