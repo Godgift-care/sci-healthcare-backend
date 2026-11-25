@@ -340,6 +340,7 @@ model ContractEvent {
   data       String
 
   @@index([voucherId, ledger])
+  @@index([txHash])
 }
 
 /// An event the indexer could not project.
