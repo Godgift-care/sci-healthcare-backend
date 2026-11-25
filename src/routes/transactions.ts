@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 
 import { prisma } from '../db.js';
 
@@ -8,11 +9,7 @@ const TX_HASH = /^[0-9a-fA-F]{64}$/;
 export function transactionRoutes(app: FastifyInstance): void {
   app.get('/transactions/:hash/events', {
     schema: {
-      params: {
-        type: 'object',
-        required: ['hash'],
-        properties: { hash: { type: 'string', pattern: '^[0-9a-fA-F]{64}$' } },
-      },
+      params: z.object({ hash: z.string().regex(TX_HASH) }),
     },
   }, async (req, reply) => {
     const { hash } = req.params as { hash: string };
