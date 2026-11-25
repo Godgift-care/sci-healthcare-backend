@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reconcile registry provider details and service prices/availability against chain state; add `--providers`, `--vouchers`, and `--repair` flags to the indexer reconciliation command. (#213)
+
 ### Added
 - **Operational alerts for quiet failures** (#220): `reconcile_mismatches` and `indexer_paused` gauges now read the persisted read-model state when `/metrics` is scraped (and are updated by the reconcile and pause/resume code paths), with Grafana panels and `SciReconcileMismatches` / `SciIndexerPausedTooLong` rules in `ops/alerts.yml`. The latter waits `1h` so planned maintenance does not page; a database outage keeps the last known value instead of reporting a fake zero or running indexer.
 - **Build and uptime on `GET /health`** (#223): the liveness body now includes `version`, `commit` (null outside a deploy) and `uptimeSeconds` from the existing `src/lib/version.ts` helpers, beside the unchanged `status: "ok"`. The route still makes no database or RPC call; the OpenAPI example, typed client and API reference are updated.
