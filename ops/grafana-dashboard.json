@@ -111,7 +111,10 @@
       "id": 1,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -203,7 +206,10 @@
       "id": 2,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -322,7 +328,10 @@
       "id": 3,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -414,7 +423,10 @@
       "id": 4,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -514,7 +526,10 @@
       "id": 5,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -614,7 +629,10 @@
       "id": 6,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -714,7 +732,10 @@
       "id": 7,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -745,7 +766,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Contract events projected into the read model per second, by event name.",
+      "description": "Stacked event throughput by contract family and known event name (unknown values collapse to other).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -758,7 +779,7 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 55,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -775,8 +796,8 @@
             "showPoints": "never",
             "spanNulls": false,
             "stacking": {
-              "group": "A",
-              "mode": "none"
+              "mode": "normal",
+              "group": "A"
             },
             "thresholdsStyle": {
               "mode": "off"
@@ -806,8 +827,11 @@
       "id": 8,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
-          "displayMode": "table",
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
@@ -823,8 +847,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(events_applied_total[$__rate_interval])) by (name)",
-          "legendFormat": "{{name}}",
+          "expr": "sum(rate(events_applied_total[$__rate_interval])) by (contract, name)",
+          "legendFormat": "{{contract}} / {{name}}",
           "range": true,
           "refId": "A"
         }
@@ -902,7 +926,10 @@
       "id": 9,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -919,8 +946,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(events_skipped_total[$__rate_interval])) by (name)",
-          "legendFormat": "{{name}}",
+          "expr": "sum(rate(events_skipped_total[$__rate_interval])) by (contract, name)",
+          "legendFormat": "{{contract}} / {{name}}",
           "range": true,
           "refId": "A"
         },
@@ -1005,7 +1032,10 @@
       "id": 10,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -1108,7 +1138,10 @@
       "id": 11,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -1222,7 +1255,10 @@
       "id": 12,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -1325,7 +1361,10 @@
       "id": 13,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -1417,7 +1456,10 @@
       "id": 14,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -1446,7 +1488,12 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["sci-healthcare", "api", "indexer", "prometheus"],
+  "tags": [
+    "sci-healthcare",
+    "api",
+    "indexer",
+    "prometheus"
+  ],
   "templating": {
     "list": []
   },
