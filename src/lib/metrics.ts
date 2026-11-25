@@ -1,6 +1,7 @@
 import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom-client';
 
 import { prisma } from '../db.js';
+import { TOPIC_FIELDS } from '../stellar/events.js';
 
 /**
  * Prometheus metrics, exposed at `/metrics`.
@@ -94,17 +95,28 @@ export function recordIndexerPaused(paused: boolean): void {
   indexerPaused.set(paused ? 1 : 0);
 }
 
+/** Only fixed contract families and decoder-recognised event names become labels. */
+const KNOWN_EVENT_NAMES = new Set([...Object.keys(TOPIC_FIELDS), 'initialized', 'minter_changed']);
+const KNOWN_CONTRACTS = new Set(['registry', 'voucher', 'receipt', 'faucet', 'sponsor']);
+
+export function eventMetricLabels(contract: string, name: string): { contract: string; name: string } {
+  return {
+    contract: KNOWN_CONTRACTS.has(contract) ? contract : 'other',
+    name: KNOWN_EVENT_NAMES.has(name) ? name : 'other',
+  };
+}
+
 export const eventsApplied = new Counter({
   name: 'events_applied_total',
   help: 'Contract events projected into the read model',
-  labelNames: ['name'],
+  labelNames: ['contract', 'name'],
   registers: [registry],
 });
 
 export const eventsSkipped = new Counter({
   name: 'events_skipped_total',
   help: 'Contract events that failed to project and were recorded as failed',
-  labelNames: ['name'],
+  labelNames: ['contract', 'name'],
   registers: [registry],
 });
 
