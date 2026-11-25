@@ -3,7 +3,10 @@
     "ok": {
       "description": "The process is up. Never reads the database, so it stays green while a query would fail.",
       "example": {
-        "status": "ok"
+        "status": "ok",
+        "version": "0.2.0",
+        "commit": "a1b2c3d",
+        "uptimeSeconds": 3600
       }
     },
     "errors": {
@@ -3177,6 +3180,79 @@
           "error": "stream_full",
           "message": "This instance is holding its 64 open streams; try again shortly"
         }
+      }
+    }
+  },
+  "GET /sponsors": {
+    "ok": {
+      "description": "Sponsors of the matching-funding desk, with their terms, budget and match totals.",
+      "example": {
+        "total": 1,
+        "limit": 50,
+        "offset": 0,
+        "sponsors": [
+          {
+            "address": "GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P",
+            "available": "75000000",
+            "availableDisplay": "7.5000000",
+            "availableAsOf": "2026-10-01T03:00:00.000Z",
+            "matchBps": 20000,
+            "capPerVoucher": "6000000",
+            "capPerVoucherDisplay": "0.6000000",
+            "minVoucherAmount": "10000000",
+            "minVoucherAmountDisplay": "1.0000000",
+            "minVoucherAgeSecs": "3600",
+            "rulesAt": "2026-10-01T02:00:00.000Z",
+            "firstSeenAt": "2026-10-01T01:00:00.000Z",
+            "deposited": "100000000",
+            "depositedDisplay": "10.0000000",
+            "withdrawn": "25000000",
+            "withdrawnDisplay": "2.5000000",
+            "matchCount": 3,
+            "openMatchCount": 1,
+            "settledMatchCount": 1,
+            "refundedMatchCount": 1,
+            "matchedAmount": "9500000",
+            "matchedAmountDisplay": "0.9500000",
+            "settledMatchedAmount": "6000000",
+            "settledMatchedAmountDisplay": "0.6000000",
+            "refundedMatchedAmount": "2000000",
+            "refundedMatchedAmountDisplay": "0.2000000"
+          }
+        ]
+      }
+    }
+  },
+  "GET /sponsors/{address}": {
+    "ok": {
+      "description": "One sponsor of the matching-funding desk: terms, budget and match totals.",
+      "example": {
+        "address": "GA64IEGSITBY4EVMROLT24OV4CT7X2LWARAXNRRILIQLQ2CEFTPJWS4P",
+        "available": "75000000",
+        "availableDisplay": "7.5000000",
+        "availableAsOf": "2026-10-01T03:00:00.000Z",
+        "matchBps": 20000,
+        "capPerVoucher": "6000000",
+        "capPerVoucherDisplay": "0.6000000",
+        "minVoucherAmount": "10000000",
+        "minVoucherAmountDisplay": "1.0000000",
+        "minVoucherAgeSecs": "3600",
+        "rulesAt": "2026-10-01T02:00:00.000Z",
+        "firstSeenAt": "2026-10-01T01:00:00.000Z",
+        "deposited": "100000000",
+        "depositedDisplay": "10.0000000",
+        "withdrawn": "25000000",
+        "withdrawnDisplay": "2.5000000",
+        "matchCount": 3,
+        "openMatchCount": 1,
+        "settledMatchCount": 1,
+        "refundedMatchCount": 1,
+        "matchedAmount": "9500000",
+        "matchedAmountDisplay": "0.9500000",
+        "settledMatchedAmount": "6000000",
+        "settledMatchedAmountDisplay": "0.6000000",
+        "refundedMatchedAmount": "2000000",
+        "refundedMatchedAmountDisplay": "0.2000000"
       }
     }
   },

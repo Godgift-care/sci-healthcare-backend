@@ -3,6 +3,7 @@ import { nativeToScVal, type xdr } from '@stellar/stellar-sdk';
 
 import { prisma } from '../db.js';
 import { env } from '../env.js';
+import { recordReconcileMismatches } from '../lib/metrics.js';
 import { ContractReadError, readContract } from './client.js';
 import { asAddress, asAmount, asHex, asNumber, voucherStatusName } from './events.js';
 
@@ -293,6 +294,18 @@ export function voucherIdScVal(voucherId: string): xdr.ScVal {
 }
 
 /**
+ * Whether a voucher may only be claimed by revealing a presence secret.
+ *
+ * `claim` refuses a voucher with a commitment (`PresenceProofRequired`) and
+ * `claim_with_proof` refuses one without (`NoPresenceCommitment`), so this
+ * answers whether the claim that was made carried a proof even though the
+ * claim event does not say so.
+ */
+export function hasPresenceProof(options: ChainVoucherOptions): boolean {
+  return options.presence_commitment !== null && options.presence_commitment !== undefined;
+}
+
+/**
  * Reads `get_voucher_options` through simulation (#319).
  *
  * The view resolves the voucher first, so an unknown id fails the same way
@@ -437,6 +450,7 @@ export async function reconcile({
   }
 
   result.openMismatches = await prisma.reconcileMismatch.count();
+  recordReconcileMismatches(result.openMismatches);
   return result;
 }
 

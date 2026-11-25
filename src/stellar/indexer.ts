@@ -12,6 +12,7 @@ import {
   indexerReconcileOpenMismatches,
   markIndexerSuccess,
   recordEventLatency,
+  recordIndexerPaused,
 } from '../lib/metrics.js';
 import { server, validateContractIds } from './client.js';
 import { asId, decodeEvent, serialiseEventData, type DecodedEvent } from './events.js';
@@ -25,6 +26,7 @@ import {
   reconcile,
   type ReconcileOptions,
   type ReconcileResult,
+  type VoucherOptionsReader,
   type VoucherReader,
 } from './reconcile.js';
 import { pruneContractEvents, purgeExpiredOperationalData } from '../lib/retention.js';
@@ -40,6 +42,8 @@ import {
   onCapacityChanged,
   onDisputeResolved,
   onDripped,
+  onMatchCreated,
+  onMatchResolved,
   onProviderMetadataChanged,
   onProviderRegistered,
   onProviderStatus,
@@ -47,6 +51,8 @@ import {
   onServicePriceScheduled,
   onServiceRemoved,
   onServiceUpserted,
+  onSponsorBudget,
+  onSponsorRules,
   onVoucherAttested,
   onVoucherClaimed,
   onVoucherCreated,
@@ -191,6 +197,8 @@ export type IndexerOptions = {
   shutdownTimeoutMs?: number;
   /** Chain reader used to repair a voucher whose creation event was missed. */
   voucherReader?: VoucherReader;
+  /** Chain reader used to resolve whether a claim carried a presence proof (#318). */
+  optionsReader?: VoucherOptionsReader;
   /** Optional RPC server interface (for fake RPC testing or custom RPC endpoints). */
   rpcServer?: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
   /** Batch page size passed to collectEvents. */
@@ -229,6 +237,7 @@ export class Indexer {
   private readonly lease: IndexerLease;
   private readonly shutdownTimeoutMs: number;
   private readonly voucherReader: VoucherReader;
+  private readonly optionsReader: VoucherOptionsReader | undefined;
   /** Vouchers repaired during this process, so the repair log is one-per-voucher. */
   private readonly repairedVouchers = new Set<string>();
   private readonly rpcServer: Pick<rpc.Server, 'getEvents' | 'getLatestLedger' | 'getHealth'>;
@@ -243,6 +252,8 @@ export class Indexer {
     this.lease = opts.lease ?? new IndexerLease();
     this.shutdownTimeoutMs = opts.shutdownTimeoutMs ?? env.SHUTDOWN_TIMEOUT_MS;
     this.voucherReader = opts.voucherReader ?? readVoucherFromChain;
+    this.optionsReader =
+      opts.optionsReader ?? (env.NODE_ENV === 'test' ? undefined : readVoucherOptionsFromChain);
     this.rpcServer = opts.rpcServer ?? server;
     this.pageSize = opts.pageSize ?? env.INDEXER_PAGE_SIZE;
     this.reconcileIntervalMs = opts.reconcileIntervalMs ?? env.RECONCILE_INTERVAL_MS ?? 0;
@@ -252,7 +263,14 @@ export class Indexer {
   async start(): Promise<void> {
     // Keep the normal test suite network-free; production starts always use
     // the RPC facade and fail before the indexer can silently do nothing.
-    if (env.NODE_ENV !== 'test') await validateContractIds(INDEXED_CONTRACTS);
+    if (env.NODE_ENV !== 'test') {
+      const allContracts =
+        process.env.SPONSOR_CONTRACT_ID &&
+        !INDEXED_CONTRACTS.includes(process.env.SPONSOR_CONTRACT_ID)
+          ? [...INDEXED_CONTRACTS, process.env.SPONSOR_CONTRACT_ID]
+          : INDEXED_CONTRACTS;
+      await validateContractIds(allContracts);
+    }
     // Initialize deployment tracking table from DEPLOYMENTS config.
     await this.initializeDeployments();
 
@@ -592,6 +610,7 @@ export class Indexer {
     this.hasMore = false;
 
     const state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
+    recordIndexerPaused(state.paused);
     if (state.paused) {
       this.hasMore = false;
       return 0;
@@ -631,7 +650,11 @@ export class Indexer {
     const { events, throughLedger, hasMore } = await withSpan('rpc.getContractEvents', () =>
       collectEvents(this.rpcServer, {
         startLedger,
-        contractIds: INDEXED_CONTRACTS,
+        contractIds:
+          process.env.SPONSOR_CONTRACT_ID &&
+          !INDEXED_CONTRACTS.includes(process.env.SPONSOR_CONTRACT_ID)
+            ? [...INDEXED_CONTRACTS, process.env.SPONSOR_CONTRACT_ID]
+            : INDEXED_CONTRACTS,
         pageSize: this.pageSize,
       }),
     );
@@ -789,6 +812,7 @@ export class Indexer {
 
     const voucherCtx: VoucherHandlerContext = {
       voucherReader: this.voucherReader,
+      optionsReader: this.optionsReader,
       repairedVouchers: this.repairedVouchers,
       log: this.log,
     };
@@ -849,6 +873,24 @@ export class Indexer {
         return null;
       case 'dripped':
         await onDripped(db, e);
+        return null;
+      case 'budget_deposited':
+        await onSponsorBudget(db, e, 'Deposited');
+        return null;
+      case 'budget_withdrawn':
+        await onSponsorBudget(db, e, 'Withdrawn');
+        return null;
+      case 'rules_set':
+        await onSponsorRules(db, e);
+        return null;
+      case 'match_created':
+        await onMatchCreated(db, e);
+        return null;
+      case 'match_settled':
+        await onMatchResolved(db, e, 'Settled');
+        return null;
+      case 'match_refunded':
+        await onMatchResolved(db, e, 'Refunded');
         return null;
       default:
         // Known-but-unprojected events stay silent; anything else is a name

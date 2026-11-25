@@ -11,7 +11,8 @@ import {
   asTimestamp,
   type DecodedEvent,
 } from '../events.js';
-import { normaliseChainVoucher } from '../reconcile.js';
+import { hasPresenceProof, normaliseChainVoucher } from '../reconcile.js';
+import { ContractReadError } from '../client.js';
 import { lookupDeploymentId } from './common.js';
 import type { Db, PendingSignal, VoucherHandlerContext } from './types.js';
 
@@ -168,6 +169,37 @@ export async function onVoucherCreated(db: Db, e: DecodedEvent): Promise<Pending
   return voucherSignal(e, 'Funded', topicProvider(e));
 }
 
+/**
+ * Whether the claim being indexed revealed a presence secret, or `null`
+ * when there is nothing new to write.
+ */
+async function claimProofFlag(
+  db: Db,
+  id: string,
+  contractId: string,
+  ctx: VoucherHandlerContext,
+): Promise<boolean | null> {
+  if (!ctx.optionsReader) return null;
+  const stored = await db.voucher.findUnique({
+    where: { id },
+    select: { claimedWithProof: true },
+  });
+  if (stored?.claimedWithProof !== null && stored?.claimedWithProof !== undefined) return null;
+  try {
+    const options = await ctx.optionsReader(id, contractId);
+    return options === null ? null : hasPresenceProof(options);
+  } catch (err) {
+    ctx.log?.warn(
+      {
+        voucherId: id,
+        failure: err instanceof ContractReadError ? 'contract_read' : 'read_failed',
+      },
+      'could not read a voucher presence commitment',
+    );
+    return null;
+  }
+}
+
 export async function onVoucherStatus(
   db: Db,
   d: Record<string, unknown>,
@@ -188,9 +220,10 @@ export async function onVoucherStatus(
       await recordDailyStatRefunded(db, refundedAt, existing.amount);
     }
   }
+  const proof = status === 'Claimed' ? await claimProofFlag(db, id, contractId, ctx) : null;
   await db.voucher.updateMany({
     where: { id },
-    data: { status, ...extra },
+    data: { status, ...extra, ...(proof === null ? {} : { claimedWithProof: proof }) },
   });
 }
 

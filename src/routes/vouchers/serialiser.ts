@@ -3,6 +3,7 @@ import { isRefundable, isSettleable, refundableAt } from '../../lib/lifecycle.js
 import { providerDetails } from '../../lib/providers.js';
 import { receiptsByVoucherId } from '../../lib/receipts.js';
 import { serviceKey, serviceLabels } from '../../lib/services.js';
+import { matchesByOriginalVoucherId, type VoucherMatch } from '../../lib/sponsors.js';
 import { includesField } from '../../lib/fields.js';
 import type { Include } from './schema.js';
 
@@ -16,6 +17,7 @@ export type Row = {
   createdAt: Date;
   expiresAt: Date;
   claimedAt: Date | null;
+  claimedWithProof: boolean | null;
   attestedAt: Date | null;
   attestedBy: string | null;
   disputeDeadline: Date | null;
@@ -34,7 +36,7 @@ export type Row = {
   provider?: { name: string; country: string };
 };
 
-export function serialise(v: Row, labels: Map<string, string>) {
+export function serialise(v: Row, labels: Map<string, string>, match: VoucherMatch | null) {
   const refundable = refundableAt(v);
   return {
     id: v.id,
@@ -52,10 +54,21 @@ export function serialise(v: Row, labels: Map<string, string>) {
     serviceLabel: labels.get(serviceKey(v.providerAddress, v.serviceCode)) ?? null,
     amount: v.amount,
     amountDisplay: fromBaseUnits(v.amount),
+    // The sponsor's side of the funding, kept null when nobody matched this
+    // voucher: a zero would read as "a sponsor matched 0.0000000 against it",
+    // which is a different fact and cannot be told apart afterwards.
+    matchedAmount: match?.matchedAmount ?? null,
+    matchedAmountDisplay: match?.matchedAmountDisplay ?? null,
+    matchedBy: match?.matchedBy ?? null,
+    matchStatus: match?.matchStatus ?? null,
+    matchedAt: match?.matchedAt ?? null,
     status: v.status,
     createdAt: v.createdAt,
     expiresAt: v.expiresAt,
     claimedAt: v.claimedAt,
+    // Null until the indexer has read this voucher's funding options: the
+    // claim event itself does not say whether a proof was revealed (#318).
+    claimedWithProof: v.claimedWithProof,
     attestedAt: v.attestedAt,
     attestedBy: v.attestedBy,
     disputeDeadline: v.disputeDeadline,
@@ -88,21 +101,23 @@ export async function serialisePage(
   const labels = includesField(fieldSet, 'serviceLabel')
     ? await serviceLabels(rows)
     : new Map<string, string>();
-  // One `Receipt` batch and one `Provider` batch for the whole page (each
-  // with its own single batched label/lookup query): the number of round
-  // trips does not grow with the page size (#167). A requested record that
-  // does not exist stays null rather than disappearing from the page.
-  // `?fields=` also gets a say (#321): a page projecting neither `receipt`
-  // nor `provider` cannot show the embed, so it does not read it either.
+  // One `SponsorMatch`, `Receipt` and `Provider` batch for the whole page (each
+  // with its own single batched label/lookup query): the number of round trips
+  // does not grow with the page size (#167). A requested record that does not
+  // exist stays null rather than disappearing from the page. `?fields=` also
+  // gets a say (#321): a page projecting neither `receipt` nor `provider`
+  // cannot show the embed, so it does not read it either. The match batch is
+  // not gated the same way because all five `matched*` fields come from it.
   const embedReceipt = includes.has('receipt') && includesField(fieldSet, 'receipt');
   const embedProvider = includes.has('provider') && includesField(fieldSet, 'provider');
-  const [receipts, providers] = await Promise.all([
+  const [matches, receipts, providers] = await Promise.all([
+    matchesByOriginalVoucherId(rows.map((v) => v.id)),
     embedReceipt ? receiptsByVoucherId(rows.map((v) => v.id)) : null,
     embedProvider ? providerDetails(rows) : null,
   ]);
 
   return rows.map((v) => {
-    const summary = serialise(v, labels);
+    const summary = serialise(v, labels, matches.get(v.id) ?? null);
     const base = providers
       ? { ...summary, provider: providers.get(v.providerAddress) ?? summary.provider }
       : summary;

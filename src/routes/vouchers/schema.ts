@@ -13,6 +13,21 @@ export const STATUSES = [
   'Refunded',
 ] as const;
 
+/**
+ * The five response fields the matching desk puts on a voucher (#317).
+ *
+ * One list, used both as the `?fields=` allow-list entries and as the keys of
+ * the derived-column map below, so a field cannot be added to the response
+ * without telling `columnSelect` that it is not a `Voucher` column.
+ */
+export const MATCH_FIELDS = [
+  'matchedAmount',
+  'matchedAmountDisplay',
+  'matchedBy',
+  'matchStatus',
+  'matchedAt',
+] as const;
+
 /** Top-level keys `serialise()` emits: the allow-list for `?fields=` (#166). */
 export const VOUCHER_FIELDS = [
   'id',
@@ -23,10 +38,13 @@ export const VOUCHER_FIELDS = [
   'serviceLabel',
   'amount',
   'amountDisplay',
+  // What the matching desk put against this voucher, if anything (#317).
+  ...MATCH_FIELDS,
   'status',
   'createdAt',
   'expiresAt',
   'claimedAt',
+  'claimedWithProof',
   'attestedAt',
   'attestedBy',
   'disputeDeadline',

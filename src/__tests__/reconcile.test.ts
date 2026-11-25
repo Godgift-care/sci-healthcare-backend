@@ -6,6 +6,7 @@ import { ContractReadError, readContract } from '../stellar/client.js';
 import {
   diffVoucher,
   diffVoucherOptions,
+  hasPresenceProof,
   isVoucherNotFound,
   normaliseChainVoucher,
   normaliseChainVoucherOptions,
@@ -175,6 +176,41 @@ describe('reading a voucher from the chain', () => {
     expect(scValToNative(onWire)).toBe(18446744073709551615n);
     // Discriminant 5 is SCV_U64; an i128 or u32 would encode differently.
     expect(scVal.toXDR('base64')).toBe('AAAABf//////////');
+  });
+});
+
+describe('presence commitments on the wire (#318)', () => {
+  const entry = (key: string, val: xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+
+  /**
+   * `VoucherOptions` exactly as the contract writes it, which is the layout
+   * its own test snapshots record: an `Option` is the value itself or `void`,
+   * not a vector of zero or one. Reading it wrong would call every voucher
+   * uncommitted, so the encoding is built here and put on the wire.
+   */
+  function optionsXdr(commitment: Uint8Array | null): xdr.ScVal {
+    return xdr.ScVal.scvMap([
+      entry(
+        'presence_commitment',
+        commitment === null ? xdr.ScVal.scvVoid() : xdr.ScVal.scvBytes(commitment),
+      ),
+      entry('dispute_window', xdr.ScVal.scvVoid()),
+    ]);
+  }
+
+  /** What `readContract` hands back for those bytes: XDR first, then native. */
+  function readOptions(commitment: Uint8Array | null): ChainVoucherOptions {
+    const onWire = xdr.ScVal.fromXDR(optionsXdr(commitment).toXDR('base64'), 'base64');
+    return scValToNative(onWire) as ChainVoucherOptions;
+  }
+
+  it('reads a voucher funded without a commitment as needing no proof', () => {
+    expect(hasPresenceProof(readOptions(null))).toBe(false);
+  });
+
+  it('reads a voucher funded with a commitment as only claimable with proof', () => {
+    expect(hasPresenceProof(readOptions(new Uint8Array(Array(32).fill(9))))).toBe(true);
   });
 });
 
