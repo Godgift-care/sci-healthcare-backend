@@ -170,11 +170,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: ./scripts/use-postgres.sh
-      # A fresh database must migrate cleanly...
-      - run: npx prisma migrate deploy
-      # ...and end up exactly where the schema says. Exit code 2 means the
-      # schema changed without a migration.
-      - run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      - run: ./scripts/check-populated-migrations.sh
 
   # Fails the pull request on high and critical advisories in production
   # dependencies. Threshold: `--audit-level=high` — moderate findings are

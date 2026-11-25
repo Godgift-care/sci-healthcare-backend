@@ -171,7 +171,7 @@ To change the schema:
 2. Against a scratch Postgres, run `./scripts/use-postgres.sh`, then `npx prisma migrate dev --name <change>`, and restore the provider to `sqlite` (`git checkout -p prisma/schema.prisma`, or edit it back).
 3. Commit the new `prisma/migrations/<timestamp>_<change>/` directory with the schema change.
 
-CI applies every migration to a fresh Postgres and then runs `prisma migrate diff`, failing the build if the schema and the migrations disagree.
+CI applies every migration to a fresh Postgres and checks the newest migration against seeded rows at the preceding schema version before running `prisma migrate diff`. The job fails if a migration cannot handle existing data or the final schema disagrees with the migrations.
 
 **Existing database created with `db push`:** the first migration creates tables that already exist, so mark it as applied once, then deploy normally:
 
