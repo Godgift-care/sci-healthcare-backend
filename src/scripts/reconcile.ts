@@ -2,7 +2,8 @@ import { parseArgs } from 'node:util';
 
 import pino from 'pino';
 
-import { disconnect } from '../db.js';
+import { disconnect, prisma } from '../db.js';
+import { reconcileRegistry } from '../stellar/reconcile-registry.js';
 import { env } from '../env.js';
 import {
   readVoucherFromChain,
@@ -27,6 +28,9 @@ import {
 const { values } = parseArgs({
   options: {
     fix: { type: 'boolean', default: false },
+    repair: { type: 'boolean', default: false },
+    providers: { type: 'boolean', default: false },
+    vouchers: { type: 'boolean', default: false },
     sample: { type: 'string' },
   },
   strict: true,
@@ -41,22 +45,35 @@ if (!Number.isInteger(sample) || sample < 0) {
 const log = pino({ level: env.LOG_LEVEL });
 
 async function main(): Promise<void> {
-  log.info({ fix: values.fix, sample }, 'reconcile starting');
+  const fix = values.fix || values.repair;
+  const runProviders = values.providers || (!values.providers && !values.vouchers);
+  const runVouchers = values.vouchers || (!values.providers && !values.vouchers);
+  log.info({ fix, sample, runProviders, runVouchers }, 'reconcile starting');
 
-  const result = await reconcile({
-    read: readVoucherFromChain,
-    readOptions: readVoucherOptionsFromChain,
-    sample,
-    fix: values.fix,
-    log,
+  const vouchers = runVouchers
+    ? await reconcile({
+        read: readVoucherFromChain,
+        readOptions: readVoucherOptionsFromChain,
+        sample,
+        fix,
+        log,
+      })
+    : null;
+  const providers = runProviders ? await reconcileRegistry({ fix }) : null;
+  const openMismatches = await prisma.reconcileMismatch.count({
+    where: {
+      OR: [
+        ...(runVouchers ? [{ kind: { in: ['field_mismatch', 'missing_on_chain'] } }] : []),
+        ...(runProviders ? [{ kind: { in: ['provider', 'service'] } }] : []),
+      ],
+    },
   });
-
+  // Keep the original voucher counters at the top level for existing cron consumers.
+  const result = { ...(vouchers ?? {}), ...(providers ? { providers } : {}), openMismatches };
   log.info(result, 'reconcile complete');
   console.log(JSON.stringify(result));
   await disconnect();
-
-  // Non-zero while anything is still open, so cron or CI notices.
-  process.exit(result.openMismatches > 0 ? 2 : 0);
+  process.exit(openMismatches > 0 || (providers?.errors ?? 0) > 0 ? 2 : 0);
 }
 
 main().catch((err) => {

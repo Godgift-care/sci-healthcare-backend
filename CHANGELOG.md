@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reconcile registry provider details and service prices/availability against chain state; add `--providers`, `--vouchers`, and `--repair` flags to the indexer reconciliation command. (#213)
+
 ### Added
 - **Populated-data migration CI** (#277): the migrations job applies all but the newest migration to a clean Postgres database, inserts representative rows at that schema version, then deploys the remaining migration and checks the migrated records and final schema. This catches failures hidden by an empty database.
 
