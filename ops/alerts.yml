@@ -26,6 +26,22 @@
 groups:
   - name: sci-healthcare-indexer
     rules:
+      - alert: SciIndexerGap
+        # A persisted retention gap cannot heal through normal polling.
+        expr: indexer_gap == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Indexer has crossed the RPC retention boundary
+          description: >-
+            IndexerState.gap is set: the cursor is older than the oldest
+            event available from the configured RPC. The read model may be
+            permanently incomplete until an operator restores a suitable
+            database snapshot or follows the full reindex recovery procedure.
+            Follow the runbook before resuming normal indexing.
+          runbook_url: https://github.com/Godgift-care/sci-healthcare-backend/blob/main/docs/RUNBOOK.md
+
       - alert: SciIndexerLagging
         # The same ledger gap at which GET /ready answers 503. Ten minutes
         # of it, because a single slow cycle catches up on its own.

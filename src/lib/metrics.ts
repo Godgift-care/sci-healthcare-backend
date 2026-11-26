@@ -21,6 +21,24 @@ export function markIndexerSuccess(now: number = Date.now()): void {
   lastSuccessAt = now;
 }
 
+/** Persisted RPC retention gap: 1 requires manual recovery, 0 is healthy. */
+export const indexerGap = new Gauge({
+  name: 'indexer_gap',
+  help: 'Whether the indexer cursor has fallen outside RPC event retention',
+  registers: [registry],
+  async collect() {
+    try {
+      const state = await prisma.indexerState.findUnique({
+        where: { id: 1 },
+        select: { gap: true },
+      });
+      this.set(state?.gap ? 1 : 0);
+    } catch {
+      // Retain the last observed state if the database is unavailable.
+    }
+  },
+});
+
 export const indexerLagLedgers = new Gauge({
   name: 'indexer_lag_ledgers',
   help: 'Ledgers between the chain tip and the indexer cursor after the last poll',

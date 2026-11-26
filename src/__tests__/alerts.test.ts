@@ -74,6 +74,7 @@ describe('ops/alerts.yml', () => {
     // Indexer lag, failed events, 5xx rate, webhook backlog (#130) and the
     // two quiet states from #220.
     for (const required of [
+      'SciIndexerGap',
       'SciIndexerLagging',
       'SciFailedEvents',
       'SciHigh5xxRate',
@@ -203,5 +204,53 @@ describe('#220 operational gauges', () => {
 
     await prisma.indexerState.update({ where: { id: 1 }, data: { paused: true } });
     expect(await gaugeValue(indexerPaused)).toBe(1);
+  });
+});
+
+
+describe('indexer retention gap alert (#219)', () => {
+  let originalState: Awaited<ReturnType<typeof prisma.indexerState.findUnique>> = null;
+
+  beforeAll(async () => {
+    originalState = await prisma.indexerState.findUnique({ where: { id: 1 } });
+  });
+
+  afterAll(async () => {
+    if (originalState === null) {
+      await prisma.indexerState.deleteMany({ where: { id: 1 } });
+    } else {
+      await prisma.indexerState.update({
+        where: { id: 1 },
+        data: {
+          lastLedger: originalState.lastLedger,
+          paused: originalState.paused,
+          gap: originalState.gap,
+          gapOldestLedger: originalState.gapOldestLedger,
+          gapCursorLedger: originalState.gapCursorLedger,
+          leaseOwner: originalState.leaseOwner,
+          leaseExpiresAt: originalState.leaseExpiresAt,
+        },
+      });
+    }
+  });
+
+  it('defines a critical rule with a recovery runbook', () => {
+    const rule = alertBlocks().find((alert) => alert.name === 'SciIndexerGap');
+    expect(exprOf(rule?.body ?? '')).toContain('indexer_gap == 1');
+    expect(rule?.body).toMatch(/severity: critical/);
+    expect(rule?.body).toContain('docs/RUNBOOK.md');
+  });
+
+  it('reports both persisted gap states as 0 and 1', async () => {
+    await prisma.indexerState.upsert({
+      where: { id: 1 },
+      create: { id: 1, lastLedger: 100, gap: false },
+      update: { gap: false },
+    });
+    expect((await indexerGap.get()).values[0]?.value).toBe(0);
+    await prisma.indexerState.update({ where: { id: 1 }, data: { gap: true } });
+    expect((await indexerGap.get()).values[0]?.value).toBe(1);
+    await prisma.indexerState.update({ where: { id: 1 }, data: { gap: false } });
+    expect((await indexerGap.get()).values[0]?.value).toBe(0);
   });
 });
