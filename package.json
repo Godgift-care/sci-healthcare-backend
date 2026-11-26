@@ -54,7 +54,11 @@
     "db:seed": "prisma db seed",
     "loadtest": "node scripts/loadtest.mjs",
     "perf:check": "node scripts/loadtest.mjs --check-regression",
-    "prepare": "husky"
+    "prepare": "husky",
+    "failed:list": "node dist/scripts/failed-list.js",
+    "failed:show": "node dist/scripts/failed-show.js",
+    "failed:list:dev": "tsx src/scripts/failed-list.ts",
+    "failed:show:dev": "tsx src/scripts/failed-show.ts"
   },
   "dependencies": {
     "@fastify/compress": "9.2.2",

@@ -62,6 +62,30 @@ export async function recordFailure(
   });
 }
 
+export async function listFailed() {
+  return prisma.failedEvent.findMany({
+    where: { resolvedAt: null },
+    select: { id: true, name: true, ledger: true, attempts: true, firstSeen: true, lastSeen: true },
+    orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
+  });
+}
+
+export async function showFailed(id: string) {
+  const row = await prisma.failedEvent.findUnique({ where: { id } });
+  if (!row || row.resolvedAt !== null) return null;
+  const decoded = decodeEvent(JSON.parse(row.raw) as RawEvent);
+  return {
+    id: row.id,
+    name: row.name,
+    ledger: row.ledger,
+    attempts: row.attempts,
+    firstSeen: row.firstSeen,
+    lastSeen: row.lastSeen,
+    error: row.error,
+    decoded,
+  };
+}
+
 export type RetryResult = { retried: number; recovered: number; remaining: number };
 
 /**
@@ -70,9 +94,9 @@ export type RetryResult = { retried: number; recovered: number; remaining: numbe
  * pruned by operational data retention); rows that still fail keep their place
  * with a bumped attempt count and the latest error.
  */
-export async function retryFailed(apply: (e: DecodedEvent) => Promise<void>): Promise<RetryResult> {
+export async function retryFailed(apply: (e: DecodedEvent) => Promise<void>, id?: string): Promise<RetryResult> {
   const rows = await prisma.failedEvent.findMany({
-    where: { resolvedAt: null },
+    where: { resolvedAt: null, ...(id ? { id } : {}) },
     orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
   });
   let recovered = 0;
