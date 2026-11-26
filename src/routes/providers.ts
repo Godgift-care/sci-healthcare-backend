@@ -25,6 +25,7 @@ import {
   providerMetadataOf,
   storedMetadataStatus,
 } from '../lib/provider-metadata.js';
+import { MAX_RADIUS_KM, parseNear, rankByDistance } from '../lib/geo.js';
 import { serialiseProviderDetail, openVoucherCounts } from '../lib/providers.js';
 import { formatServicePrice, type ScheduledPriceRow } from '../lib/services.js';
 
@@ -47,6 +48,10 @@ const listQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   fields: z.string().max(512).optional(),
   count: countParam,
+  // Distance search (#158): both are required together, and `sort`/`order`/
+  // `cursor` do not apply to the distance order.
+  near: z.string().max(64).optional(),
+  radiusKm: z.coerce.number().positive().max(MAX_RADIUS_KM).optional(),
 });
 
 /** Top-level keys the provider list items emit: the allow-list for `?fields=` (#166). */
@@ -352,8 +357,20 @@ export function providerRoutes(app: FastifyInstance): void {
       if (!parsed.success) {
         throw new ApiError(400, 'invalid_query', 'Invalid query parameters', parsed.error.issues);
       }
-      const { status, country, q, serviceCode, sort, cursor, limit, offset, fields, count } =
-        parsed.data;
+      const {
+        status,
+        country,
+        q,
+        serviceCode,
+        sort,
+        cursor,
+        limit,
+        offset,
+        fields,
+        count,
+        near,
+        radiusKm,
+      } = parsed.data;
       const order = directionOf(sort, parsed.data.order);
       const filter = {
         ...(status ? { status } : {}),
@@ -379,6 +396,49 @@ export function providerRoutes(app: FastifyInstance): void {
         const now = new Date();
         return page.map((p) => formatProvider(p, openBy.get(p.address) ?? 0, now));
       };
+
+      if (near !== undefined || radiusKm !== undefined) {
+        if (near === undefined || radiusKm === undefined) {
+          throw new ApiError(400, 'invalid_query', '`near` and `radiusKm` must be given together');
+        }
+        const origin = parseNear(near);
+        if (!origin) {
+          throw new ApiError(
+            400,
+            'invalid_query',
+            '`near` must be `lat,lng` with latitude in [-90, 90] and longitude in [-180, 180]',
+          );
+        }
+        if (cursor) {
+          throw new ApiError(400, 'invalid_cursor', 'A cursor cannot be combined with near');
+        }
+        // Coordinates are kept in the cached metadata document, not a column,
+        // so the radius is applied here over the rows the filters select. The
+        // whole match set is read for that; it is paged by offset because a
+        // distance order has no keyset cursor.
+        const candidates = (await prisma.provider.findMany({
+          where: filter,
+          select: { ...providerSelect(fieldSet), metadata: true },
+        })) as unknown as DirectoryRow[];
+        const ranked = rankByDistance(
+          candidates,
+          origin,
+          radiusKm,
+          (p) => providerMetadataOf(p)?.location,
+          (p) => p.address,
+        );
+        const pageRows = ranked.slice(offset, offset + limit);
+        const providers = project(await formatPage(pageRows.map((r) => r.item)));
+        return {
+          ...(count ? { total: ranked.length } : {}),
+          limit,
+          offset,
+          providers: providers.map((p, i) => ({
+            ...p,
+            distanceKm: Math.round(pageRows[i]!.distanceKm * 1000) / 1000,
+          })),
+        };
+      }
 
       if (cursor) {
         // A cursor issued for another ordering cannot be resumed here: its key
