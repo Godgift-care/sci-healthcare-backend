@@ -6,10 +6,14 @@ import { env, WEBHOOK_URLS } from '../env.js';
 import { registry } from '../lib/metrics.js';
 import {
   backoffMs,
+  endpointWantsEvent,
   enqueueWebhook,
   signWebhook,
   webhookBacklog,
+  webhookSignatureHeader,
+  WEBHOOK_ATTEMPT_HEADER,
   WEBHOOK_BASE_BACKOFF_MS,
+  WEBHOOK_DELIVERY_ID_HEADER,
   WEBHOOK_DELIVERY_INTERVAL_MS,
   WEBHOOK_MAX_BACKOFF_MS,
   WEBHOOK_SIGNATURE_HEADER,
@@ -25,6 +29,7 @@ const CLINIC = 'GDOOCNK2HL6TB2Y7FDYNNMG4GTM2PNPY4XCTWG2INFPYYVA66FCPZKBK';
 const FUNDER = 'GDUPJTF3PNSYJ73WWLNTYLG6UXN7HHBKCGFEEMDFMWKWGR3UMQT3JG45';
 const REF = '72676a6f4fff92b09ab1c6368672b05112062f683014d07c9518d4141d094745';
 const SECRET = 'unit-test-webhook-secret';
+const OLD_SECRET = 'unit-test-webhook-secret-old';
 
 function fakeLog() {
   return {
@@ -359,6 +364,234 @@ describe('webhook outbox and the indexer transaction', () => {
       where: { event: 'voucher_refunded' },
     });
     expect(row.status).toBe('Refunded');
+  });
+});
+
+describe('delivery id and attempt headers (#261)', () => {
+  it('keeps the same x-sci-delivery across retries and increments x-sci-attempt', async () => {
+    const sent: Array<Record<string, string>> = [];
+    let first = true;
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      sent.push(init.headers as Record<string, string>);
+      if (first) {
+        first = false;
+        return new Response('down', { status: 500 });
+      }
+      return new Response('ok', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await queue({ event: 'voucher_settled', voucherId: '42', status: 'Settled', ledger: 99 });
+    const dispatcher = dispatcherWith(fetchImpl, {
+      secret: SECRET,
+      baseBackoffMs: 0,
+      maxBackoffMs: 0,
+    });
+
+    expect(await dispatcher.deliverPending()).toBe(0);
+    expect(await dispatcher.deliverPending()).toBe(1);
+
+    const row = await prisma.webhookDelivery.findFirstOrThrow();
+    expect(sent).toHaveLength(2);
+    expect(sent[0]![WEBHOOK_DELIVERY_ID_HEADER]).toBe(row.id);
+    expect(sent[1]![WEBHOOK_DELIVERY_ID_HEADER]).toBe(row.id);
+    expect(sent[0]![WEBHOOK_ATTEMPT_HEADER]).toBe('1');
+    expect(sent[1]![WEBHOOK_ATTEMPT_HEADER]).toBe('2');
+  });
+
+  it('sends one signature per key, so a receiver with either key verifies', () => {
+    const body = '{"event":"voucher_settled"}';
+    const header = webhookSignatureHeader(body, [SECRET, OLD_SECRET]);
+    expect(header.split(', ')).toEqual([signWebhook(body, SECRET), signWebhook(body, OLD_SECRET)]);
+    // The single-key form is byte-for-byte the old header value.
+    expect(webhookSignatureHeader(body, [SECRET])).toBe(signWebhook(body, SECRET));
+
+    const signatures = header.split(', ');
+    expect(signatures).toContain(signWebhook(body, OLD_SECRET));
+  });
+
+  it('signs a delivery with both configured secrets', async () => {
+    const headers: Record<string, string>[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      headers.push(init.headers as Record<string, string>);
+      return new Response('ok', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await queue({ event: 'voucher_created', voucherId: '1', status: 'Funded', ledger: 1 });
+    await dispatcherWith(fetchImpl, { secrets: [SECRET, OLD_SECRET] }).deliverPending();
+
+    const body = JSON.stringify({
+      event: 'voucher_created',
+      voucherId: '1',
+      status: 'Funded',
+      ledger: 1,
+    });
+    expect(headers[0]![WEBHOOK_SIGNATURE_HEADER]!.split(', ')).toEqual([
+      signWebhook(body, SECRET),
+      signWebhook(body, OLD_SECRET),
+    ]);
+  });
+});
+
+describe('per-endpoint secrets and filters (#263)', () => {
+  const endpoint = (url: string, extra: object = {}) => ({
+    url,
+    secrets: [SECRET],
+    events: null,
+    provider: null,
+    ...extra,
+  });
+
+  it('writes a row only for the endpoints that asked for the event and clinic', async () => {
+    const endpoints = [
+      endpoint('https://clinic-a.example/hooks', {
+        events: ['voucher_settled'],
+        provider: CLINIC,
+      }),
+      endpoint('https://everyone.example/hooks'),
+    ];
+
+    const queueFor = (event: VoucherWebhookEvent): Promise<void> =>
+      prisma.$transaction(async (tx) => enqueueWebhook(tx, event, endpoints));
+
+    await queueFor({
+      event: 'voucher_created',
+      voucherId: '1',
+      status: 'Funded',
+      ledger: 1,
+      provider: CLINIC,
+    });
+    expect(await prisma.webhookDelivery.findMany({ select: { url: true } })).toEqual([
+      { url: 'https://everyone.example/hooks' },
+    ]);
+
+    await queueFor({
+      event: 'voucher_settled',
+      voucherId: '1',
+      status: 'Settled',
+      ledger: 2,
+      provider: CLINIC,
+    });
+    await queueFor({
+      event: 'voucher_settled',
+      voucherId: '2',
+      status: 'Settled',
+      ledger: 3,
+      provider: FUNDER,
+    });
+
+    const settled = await prisma.webhookDelivery.findMany({
+      where: { event: 'voucher_settled' },
+      orderBy: [{ ledger: 'asc' }, { url: 'asc' }],
+      select: { ledger: true, url: true },
+    });
+    expect(settled).toEqual([
+      { ledger: 2, url: 'https://clinic-a.example/hooks' },
+      { ledger: 2, url: 'https://everyone.example/hooks' },
+      // Another clinic's settlement reaches only the unfiltered endpoint.
+      { ledger: 3, url: 'https://everyone.example/hooks' },
+    ]);
+  });
+
+  it('matches filters in the helper exactly', () => {
+    expect(
+      endpointWantsEvent({ events: null, provider: null }, { event: 'x', provider: null }),
+    ).toBe(true);
+    expect(endpointWantsEvent({ events: ['a'], provider: null }, { event: 'b' })).toBe(false);
+    expect(
+      endpointWantsEvent({ events: null, provider: CLINIC }, { event: 'a', provider: CLINIC }),
+    ).toBe(true);
+    expect(
+      endpointWantsEvent({ events: null, provider: CLINIC }, { event: 'a', provider: FUNDER }),
+    ).toBe(false);
+    expect(endpointWantsEvent({ events: null, provider: CLINIC }, { event: 'a' })).toBe(false);
+  });
+
+  it('signs each endpoint with its own secret', async () => {
+    const headers: Record<string, string>[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      headers.push(init.headers as Record<string, string>);
+      return new Response('ok', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const endpoints = [
+      { ...endpoint('https://one.example/hooks'), secrets: [SECRET] },
+      { ...endpoint('https://two.example/hooks'), secrets: [OLD_SECRET] },
+    ];
+    await prisma.$transaction(async (tx) =>
+      enqueueWebhook(
+        tx,
+        { event: 'voucher_created', voucherId: '1', status: 'Funded', ledger: 1 },
+        endpoints,
+      ),
+    );
+
+    await dispatcherWith(fetchImpl, { endpoints, secrets: [SECRET] }).deliverPending();
+
+    const body = JSON.stringify({
+      event: 'voucher_created',
+      voucherId: '1',
+      status: 'Funded',
+      ledger: 1,
+    });
+    expect(headers.map((h) => h[WEBHOOK_SIGNATURE_HEADER])).toEqual([
+      signWebhook(body, SECRET),
+      signWebhook(body, OLD_SECRET),
+    ]);
+  });
+});
+
+describe('private destinations (#264)', () => {
+  const privateHost = async () => [{ address: '169.254.169.254', family: 4 }];
+  const publicHost = async () => [{ address: '93.184.216.34', family: 4 }];
+
+  it('refuses and abandons a delivery to a private address without dialling it', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    await queue({ event: 'voucher_settled', voucherId: '1', status: 'Settled', ledger: 1 });
+
+    const delivered = await dispatcherWith(fetchImpl, {
+      secret: SECRET,
+      allowPrivate: false,
+      resolveHost: privateHost,
+    }).deliverPending();
+
+    expect(delivered).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const row = await prisma.webhookDelivery.findFirstOrThrow();
+    expect(row.abandonedAt).not.toBeNull();
+    expect(row.lastError).toContain('169.254.169.254 is a private');
+  });
+
+  it('delivers to a public address when the guard is on', async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response('ok', { status: 200 }),
+    ) as unknown as typeof fetch;
+    await queue({ event: 'voucher_settled', voucherId: '1', status: 'Settled', ledger: 1 });
+
+    const delivered = await dispatcherWith(fetchImpl, {
+      secret: SECRET,
+      allowPrivate: false,
+      resolveHost: publicHost,
+    }).deliverPending();
+
+    expect(delivered).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a resolver failure as retryable, not as a private address', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    await queue({ event: 'voucher_settled', voucherId: '1', status: 'Settled', ledger: 1 });
+
+    await dispatcherWith(fetchImpl, {
+      secret: SECRET,
+      allowPrivate: false,
+      resolveHost: async () => {
+        throw new Error('ENOTFOUND');
+      },
+    }).deliverPending();
+
+    const row = await prisma.webhookDelivery.findFirstOrThrow();
+    expect(row.abandonedAt).toBeNull();
+    expect(row.lastError).toContain('could not resolve');
   });
 });
 

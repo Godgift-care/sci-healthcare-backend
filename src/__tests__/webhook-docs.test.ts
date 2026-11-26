@@ -2,15 +2,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
-  PROVIDER_REGISTERED_EVENT,
-  PROVIDER_STATUS_CHANGED_EVENT,
-  SERVICE_PRICE_CHANGED_EVENT,
+  WEBHOOK_ATTEMPT_HEADER,
   WEBHOOK_BASE_BACKOFF_MS,
-  WEBHOOK_BREAKER_COOLDOWN_MS,
-  WEBHOOK_BREAKER_FAILURE_THRESHOLD,
+  WEBHOOK_DELIVERY_ID_HEADER,
   WEBHOOK_DELIVERY_INTERVAL_MS,
   WEBHOOK_MAX_ATTEMPTS,
   WEBHOOK_MAX_BACKOFF_MS,
+  WEBHOOK_SIGNATURE_HEADER,
   backoffMs,
 } from '../lib/webhooks.js';
 
@@ -81,42 +79,42 @@ describe('README webhook delivery docs', () => {
     expect(section).toContain('Independent endpoints');
   });
 
-  it('documents the endpoint circuit breaker with the code constants (#265)', () => {
-    expect(section).toContain(
-      `WEBHOOK_BREAKER_FAILURE_THRESHOLD = ${WEBHOOK_BREAKER_FAILURE_THRESHOLD}`,
-    );
-    expect(section).toContain(`WEBHOOK_BREAKER_COOLDOWN_MS = ${WEBHOOK_BREAKER_COOLDOWN_MS}`);
-    expect(section).toContain('checks.webhooks.breakers');
-    expect(section).toContain('webhook_circuit_state');
-    // The two behaviours receivers and operators depend on.
-    expect(section).toContain('original order');
-    expect(section).toContain('Other configured endpoints keep delivering');
-  });
-
-  it('documents the clinic and service payloads and their event names (#266)', () => {
-    for (const event of [
-      PROVIDER_REGISTERED_EVENT,
-      PROVIDER_STATUS_CHANGED_EVENT,
-      SERVICE_PRICE_CHANGED_EVENT,
+  it('documents the header names the dispatcher actually sends (#261)', () => {
+    for (const header of [
+      WEBHOOK_SIGNATURE_HEADER,
+      WEBHOOK_DELIVERY_ID_HEADER,
+      WEBHOOK_ATTEMPT_HEADER,
     ]) {
-      expect(section).toContain(`"event": "${event}"`);
+      expect(section.toLowerCase()).toContain(header);
     }
-    expect(section).toContain('"provider": "G..."');
-    expect(section).toContain('"serviceCode": 101');
-    expect(section).toContain('exact base-unit amount as a decimal string');
-    expect(section).toContain('are unchanged by this');
   });
 
-  it('documents the ping command and its exit behaviour (#267)', () => {
-    expect(section).toContain('npm run webhooks:ping -- --url');
-    expect(section).toContain('exits non-zero');
-    expect(section).toContain('x-sci-signature');
+  it('documents deduplication on the stable delivery id, not the body (#261)', () => {
+    expect(section).toContain('Deduplicate on the `X-SCI-Delivery` header');
+    expect(section).toContain('same value on\nevery attempt');
+    expect(section).toContain('X-SCI-Attempt` counts up');
+    expect(section).toContain('seen.has(deliveryId)');
   });
 
-  it('documents delivery tracing and its privacy rule (#268)', () => {
-    expect(section).toContain('webhook.deliver');
-    expect(section).toContain('traceparent');
-    expect(section).toContain('query string removed');
-    expect(section).toContain('payload is never copied into a span attribute');
+  it('documents secret rotation with one signature per key (#262)', () => {
+    expect(section).toContain('`WEBHOOK_SECRETS`');
+    expect(section).toContain('newest first');
+    expect(section).toContain('one digest per key');
+    expect(section).toContain('`WEBHOOK_SECRET` on its own still works');
+  });
+
+  it('documents the per-endpoint filters and the replacement rule (#263)', () => {
+    expect(section).toContain('`WEBHOOK_ENDPOINTS`');
+    expect(section).toContain('replaces `WEBHOOK_URLS`');
+    expect(section).toContain('`events`');
+    expect(section).toContain('`provider`');
+    expect(section).toContain('fails at startup');
+  });
+
+  it('documents the private-destination guard and its opt-in (#264)', () => {
+    expect(section).toContain('169.254.169.254');
+    expect(section).toContain('`fc00::/7`');
+    expect(section).toContain('every\nredirect hop');
+    expect(section).toContain('`WEBHOOK_ALLOW_PRIVATE=true`');
   });
 });

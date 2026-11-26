@@ -28,7 +28,8 @@ import { z } from 'zod';
 import type { FastifyBaseLogger } from 'fastify';
 
 import { prisma } from '../db.js';
-import { env } from '../env.js';
+import { WEBHOOK_ALLOW_PRIVATE } from '../env.js';
+import { assertSafeDestination, UnsafeDestinationError, type ResolveHost } from './url-safety.js';
 
 /** Hard ceiling on a metadata fetch: socket, DNS and body read together. */
 export const METADATA_FETCH_TIMEOUT_MS = 5_000;
@@ -50,65 +51,8 @@ export const METADATA_URI_MAX_LENGTH = 512;
 /** Largest number of stale documents refreshed in one pass. */
 export const METADATA_BATCH_SIZE = 50;
 
-/** The three states served beside a clinic's cached document (#271). */
-export const METADATA_STATUSES = ['pending', 'ok', 'failed'] as const;
-export type MetadataStatus = (typeof METADATA_STATUSES)[number];
-
-/**
- * Short, stable codes for why a fetch was rejected (#271, #272).
- *
- * These are what the API exposes; the remote body, a status line or a raw
- * `Error.message` never is. A clinic reads the code to fix its link, and an
- * operator alerts on it without parsing prose.
- */
-export const METADATA_ERROR_CODES = [
-  'invalid_url',
-  'unsupported_scheme',
-  'invalid_gateway',
-  'timeout',
-  'fetch_failed',
-  'http_error',
-  'too_large',
-  'invalid_json',
-  'invalid_document',
-  'unknown',
-] as const;
-export type MetadataErrorCode = (typeof METADATA_ERROR_CODES)[number];
-
-/**
- * A failure a retry cannot fix: a malformed URI or a scheme this service
- * does not fetch. Re-fetching it on every refresh pass would be load for
- * nothing, so these rows are left alone until an event announces a new URI
- * (#269). Every other failure is retried after the TTL.
- */
-export const PERMANENT_METADATA_ERRORS: readonly MetadataErrorCode[] = [
-  'invalid_url',
-  'unsupported_scheme',
-  'invalid_gateway',
-];
-
-/** True when `code` names a failure that a later refresh cannot repair. */
-export function isPermanentMetadataError(code: string | null | undefined): boolean {
-  return (
-    code !== null &&
-    code !== undefined &&
-    PERMANENT_METADATA_ERRORS.includes(code as MetadataErrorCode)
-  );
-}
-
-/**
- * A rejected metadata fetch, carrying the short code stored on the provider
- * row. The message stays for logs; callers serve `code`, never `message`.
- */
-export class MetadataFetchError extends Error {
-  readonly code: MetadataErrorCode;
-
-  constructor(code: MetadataErrorCode, message: string) {
-    super(message);
-    this.name = 'MetadataFetchError';
-    this.code = code;
-  }
-}
+/** Redirects followed for one document; each hop is checked again. */
+export const METADATA_MAX_REDIRECTS = 5;
 
 /** Latitude/longitude as JSON numbers, bounded to the valid ranges. */
 const geoSchema = z.object({
@@ -284,10 +228,10 @@ export type FetchOptions = {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   maxBytes?: number;
-  /** Replayed as `If-None-Match`; a matching document answers 304 (#270). */
-  ifNoneMatch?: string;
-  /** Overrides `IPFS_GATEWAY_URL` for one fetch (tests, scripts). */
-  ipfsGatewayUrl?: string;
+  /** Allow loopback/private destinations; defaults to WEBHOOK_ALLOW_PRIVATE. */
+  allowPrivate?: boolean;
+  /** Resolver seam for tests. */
+  resolveHost?: ResolveHost;
 };
 
 /**
@@ -378,28 +322,67 @@ export async function fetchProviderMetadata(
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? METADATA_FETCH_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? METADATA_MAX_BYTES;
-  const target = metadataFetchUrl(uri, opts.ipfsGatewayUrl ?? env.IPFS_GATEWAY_URL);
+  const allowPrivate = opts.allowPrivate ?? WEBHOOK_ALLOW_PRIVATE;
+
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    throw new Error('metadata URI is not a valid URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`metadata URI scheme ${url.protocol} is not http(s)`);
+  }
 
   let res: Response;
-  try {
-    res = await fetchImpl(target, {
-      method: 'GET',
-      headers: {
-        accept: 'application/json',
-        ...(opts.ifNoneMatch !== undefined ? { 'if-none-match': opts.ifNoneMatch } : {}),
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (err) {
-    if (err instanceof MetadataFetchError) throw err;
-    const cause = err as Error & { name?: string };
-    throw new MetadataFetchError(
-      cause.name === 'TimeoutError' || cause.name === 'AbortError' ? 'timeout' : 'fetch_failed',
-      cause.name === 'TimeoutError' || cause.name === 'AbortError'
-        ? `metadata fetch timed out after ${timeoutMs}ms`
-        : `metadata fetch failed: ${cause.message}`,
-    );
+  let current = url;
+  for (let redirects = 0; ; redirects += 1) {
+    // Redirects are followed by hand (`redirect: 'manual'`) so the next host
+    // is checked too: an https URL that redirects to 169.254.169.254 must
+    // not be fetched just because its first hop looked public (#264).
+    try {
+      await assertSafeDestination(current, {
+        allowPrivate,
+        ...(opts.resolveHost ? { resolve: opts.resolveHost } : {}),
+      });
+    } catch (err) {
+      if (err instanceof UnsafeDestinationError) {
+        throw new Error(`metadata fetch refused: ${err.message}`);
+      }
+      throw err;
+    }
+
+    try {
+      res = await fetchImpl(current.toString(), {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      const cause = err as Error & { name?: string };
+      throw new Error(
+        cause.name === 'TimeoutError' || cause.name === 'AbortError'
+          ? `metadata fetch timed out after ${timeoutMs}ms`
+          : `metadata fetch failed: ${cause.message}`,
+      );
+    }
+
+    if (!isRedirect(res.status)) break;
+
+    const location = res.headers.get('location');
+    if (!location)
+      throw new Error(`metadata redirect returned HTTP ${res.status} without a Location`);
+    if (redirects >= METADATA_MAX_REDIRECTS) {
+      throw new Error(`metadata fetch followed more than ${METADATA_MAX_REDIRECTS} redirects`);
+    }
+    let next: URL;
+    try {
+      next = new URL(location, current);
+    } catch {
+      throw new Error('metadata redirect Location is not a valid URL');
+    }
+    current = next;
   }
 
   const etag = res.headers.get('etag');
@@ -448,14 +431,18 @@ export async function fetchProviderMetadata(
   }
 }
 
+/** 3xx statuses that carry a `Location` we are willing to follow. */
+function isRedirect(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
 /**
  * Reads the body one chunk at a time and refuses to buffer past `maxBytes`.
  *
  * `res.text()` would happily buffer a gigabyte before anybody counted it;
  * the counted read is what makes the cap real against a hostile or broken
  * server that never sends `content-length`.
- */
-async function readCappedBody(res: Response, maxBytes: number): Promise<string> {
+ */ async function readCappedBody(res: Response, maxBytes: number): Promise<string> {
   if (!res.body) return '';
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -494,7 +481,10 @@ export type RefreshOptions = {
   maxBytes?: number;
   /** How old a document may get before it is re-requested (#270). */
   refreshMs?: number;
-  ipfsGatewayUrl?: string;
+  /** Allow loopback/private destinations; defaults to WEBHOOK_ALLOW_PRIVATE. */
+  allowPrivate?: boolean;
+  /** Resolver seam for tests. */
+  resolveHost?: ResolveHost;
 };
 
 export type RefreshResult = {
@@ -570,6 +560,8 @@ export async function refreshDueProviderMetadata(opts: RefreshOptions): Promise<
         ...(opts.ipfsGatewayUrl !== undefined ? { ipfsGatewayUrl: opts.ipfsGatewayUrl } : {}),
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
         ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+        ...(opts.allowPrivate !== undefined ? { allowPrivate: opts.allowPrivate } : {}),
+        ...(opts.resolveHost ? { resolveHost: opts.resolveHost } : {}),
       });
 
       if (fetched.notModified) {

@@ -140,9 +140,18 @@ const envShape = z.object({
   // Comma-separated endpoints notified of voucher events. Blank disables
   // webhooks entirely, which is the default.
   WEBHOOK_URLS: z.string().default(''),
+  // JSON array of per-endpoint objects: {url, secret?, events?, provider?}.
+  // Takes precedence over WEBHOOK_URLS when set (#263).
+  WEBHOOK_ENDPOINTS: z.string().default(''),
   // HMAC key used to sign every delivery. Required once an endpoint is set,
   // so a deployment cannot accidentally send unsigned events.
   WEBHOOK_SECRET: z.string().default(''),
+  // Comma-separated HMAC keys, newest first. Every key signs each delivery,
+  // so a receiver can verify with the old key until it has rotated (#262).
+  WEBHOOK_SECRETS: z.string().default(''),
+  // Opt in to loopback/private destinations for local development. Off in
+  // production, so a webhook or metadata URI cannot reach an internal host.
+  WEBHOOK_ALLOW_PRIVATE: z.enum(['true', 'false']).default('false'),
 
   /**
    * Idle interval between heartbeat frames on `GET /stream`. A comment line
@@ -174,7 +183,7 @@ const envShape = z.object({
  * so `env-docs.test.ts`, which reads the shape as text, stops at its closing
  * brace.
  */
-export const schema = envShape.refine((cfg) => corsViolation(cfg) === null, {
+const corsSchema = envShape.refine((cfg) => corsViolation(cfg) === null, {
   error: (issue) => ({
     message:
       corsViolation(issue.input as CorsConfig) ?? 'CORS_ORIGIN must contain valid http(s) URLs',
@@ -192,11 +201,13 @@ const EXPECTED_PASSPHRASES: Record<string, string> = {
   futurenet: 'Test SDF Future Network ; October 2022',
 };
 
-export type Env = Omit<z.infer<typeof schema>, 'SOROBAN_RPC_URL'> & {
+export type Env = Omit<z.infer<typeof schema>, 'SOROBAN_RPC_URL' | 'WEBHOOK_ALLOW_PRIVATE'> & {
   /** The first configured endpoint; kept for callers that want just one. */
   SOROBAN_RPC_URL: string;
   /** Every configured endpoint, in failover order. Never empty. */
   RPC_URLS: readonly string[];
+  /** Boolean form of WEBHOOK_ALLOW_PRIVATE. */
+  WEBHOOK_ALLOW_PRIVATE: boolean;
 };
 
 /**
@@ -225,21 +236,174 @@ export function redactRpcUrl(url: string): string {
   return url.replace(/:\/\/[^/]+@/, '://***@');
 }
 
-/** Minimum length of WEBHOOK_SECRET; shorter keys are refused at boot. */
+/** Minimum length of a webhook signing secret; shorter keys are refused at boot. */
 export const MIN_WEBHOOK_SECRET_LENGTH = 16;
 
-const validated = schema.superRefine((value, ctx) => {
-  if (value.WEBHOOK_URLS.trim() && value.WEBHOOK_SECRET.length < MIN_WEBHOOK_SECRET_LENGTH) {
+/**
+ * One delivery target: its URL, the keys that sign its requests, and the
+ * optional filters that decide which events it is told about (#263).
+ *
+ * A `null` filter means "everything": `events: null` receives every voucher
+ * event and `provider: null` is not restricted to one clinic.
+ */
+export type WebhookEndpoint = {
+  url: string;
+  /** Newest first; every key signs the request so either can verify it. */
+  secrets: readonly string[];
+  /** Event names this endpoint wants, or null for all of them. */
+  events: readonly string[] | null;
+  /** Clinic address this endpoint wants, or null for every clinic. */
+  provider: string | null;
+};
+
+const webhookEndpointSchema = z
+  .object({
+    url: z.string().min(1),
+    secret: z.string().optional(),
+    events: z.array(z.string().min(1)).min(1).optional(),
+    provider: z.string().optional(),
+  })
+  // Strict: a misspelt `event` would otherwise silently mean "all events".
+  .strict();
+
+/**
+ * Parses comma-separated signing keys, newest first, dropping blanks and
+ * duplicates. `WEBHOOK_SECRET` stays supported on its own (#262).
+ */
+export function parseWebhookSecrets(...sources: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const secrets: string[] = [];
+  for (const raw of sources.join(',').split(',')) {
+    const secret = raw.trim();
+    if (secret === '' || seen.has(secret)) continue;
+    seen.add(secret);
+    secrets.push(secret);
+  }
+  return secrets;
+}
+
+/** Throws with a message an operator can act on; returns the trimmed key. */
+function validSecret(secret: string, where: string): string {
+  const trimmed = secret.trim();
+  if (trimmed.length < MIN_WEBHOOK_SECRET_LENGTH) {
+    throw new Error(
+      `${where} must be at least ${MIN_WEBHOOK_SECRET_LENGTH} characters (got ${trimmed.length})`,
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * Parses `WEBHOOK_ENDPOINTS`, the JSON form that gives each partner its own
+ * secret and event/clinic filters (#263).
+ *
+ * Invalid JSON is a startup error rather than a silently disabled feature:
+ * a clinic that believes it is receiving notifications must not discover at
+ * settlement time that its endpoint was never registered.
+ */
+export function parseWebhookEndpoints(
+  json: string,
+  fallbackSecrets: readonly string[],
+): WebhookEndpoint[] {
+  const raw = json.trim();
+  if (raw === '') return [];
+
+  let document: unknown;
+  try {
+    document = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Invalid WEBHOOK_ENDPOINTS JSON: ${(err as Error).message}\n` +
+        'Expected an array like [{"url":"https://clinic.example/hooks","secret":"...","events":["voucher_settled"],"provider":"G..."}]',
+    );
+  }
+
+  const parsed = z.array(webhookEndpointSchema).safeParse(document);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((i) => `  ${i.path.join('.') || 'endpoints'}: ${i.message}`)
+      .join('\n');
+    throw new Error(
+      `Invalid WEBHOOK_ENDPOINTS JSON:\n${issues}\n` +
+        'Expected an array of {url, secret?, events?, provider?} objects.',
+    );
+  }
+
+  const seen = new Set<string>();
+  return parsed.data.map((entry, i) => {
+    let url: URL;
+    try {
+      url = new URL(entry.url);
+    } catch {
+      throw new Error(`WEBHOOK_ENDPOINTS entry ${i}: url is not a valid URL`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error(`WEBHOOK_ENDPOINTS entry ${i}: url scheme ${url.protocol} is not http(s)`);
+    }
+    if (seen.has(entry.url)) {
+      throw new Error(`WEBHOOK_ENDPOINTS entry ${i}: duplicate url ${entry.url}`);
+    }
+    seen.add(entry.url);
+    if (entry.provider !== undefined && entry.provider.length !== 56) {
+      throw new Error(`WEBHOOK_ENDPOINTS entry ${i}: provider must be a 56-character address`);
+    }
+    const secrets =
+      entry.secret !== undefined
+        ? [validSecret(entry.secret, `WEBHOOK_ENDPOINTS entry ${i} secret`)]
+        : fallbackSecrets;
+    if (secrets.length === 0) {
+      throw new Error(
+        `WEBHOOK_ENDPOINTS entry ${i} has no secret and neither WEBHOOK_SECRETS nor WEBHOOK_SECRET is set`,
+      );
+    }
+    return {
+      url: entry.url,
+      secrets,
+      events: entry.events ?? null,
+      provider: entry.provider ?? null,
+    };
+  });
+}
+
+/** Splits and validates the legacy comma-separated URL list. */
+function parseWebhookUrls(raw: string): string[] {
+  const urls = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+  for (const url of urls) {
+    if (!isValidHttpUrl(url))
+      throw new Error(`WEBHOOK_URLS contains an invalid http(s) URL: ${url}`);
+  }
+  return urls;
+}
+
+/**
+ * The complete environment rule: shape, CORS, and webhook configuration.
+ * Exported so tests can drive it directly without touching `process.env`.
+ */
+export const schema = corsSchema.superRefine((value, ctx) => {
+  // Parse once here so a malformed list fails as an ordinary environment
+  // error with the variable named, before any endpoint is used.
+  try {
+    const secrets = parseWebhookSecrets(value.WEBHOOK_SECRETS, value.WEBHOOK_SECRET);
+    const endpoints = parseWebhookEndpoints(value.WEBHOOK_ENDPOINTS, secrets);
+    const urls = parseWebhookUrls(value.WEBHOOK_URLS);
+    if (endpoints.length === 0 && urls.length > 0 && secrets.length === 0) {
+      throw new Error('WEBHOOK_SECRETS (or WEBHOOK_SECRET) must be set when WEBHOOK_URLS is set');
+    }
+    for (const secret of secrets) validSecret(secret, 'WEBHOOK_SECRETS');
+  } catch (err) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ['WEBHOOK_SECRET'],
-      message: `must be at least ${MIN_WEBHOOK_SECRET_LENGTH} characters when WEBHOOK_URLS is set`,
+      path: ['WEBHOOK_ENDPOINTS'],
+      message: (err as Error).message,
     });
   }
 });
 
 function load(): Env {
-  const parsed = validated.safeParse(process.env);
+  const parsed = schema.safeParse(process.env);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(
@@ -270,7 +434,12 @@ function load(): Env {
     );
   }
 
-  return { ...config, SOROBAN_RPC_URL: rpcUrls[0]!, RPC_URLS: rpcUrls };
+  return {
+    ...config,
+    SOROBAN_RPC_URL: rpcUrls[0]!,
+    RPC_URLS: rpcUrls,
+    WEBHOOK_ALLOW_PRIVATE: config.WEBHOOK_ALLOW_PRIVATE === 'true',
+  };
 }
 
 /**
@@ -380,16 +549,45 @@ export const CONTRACTS = [
   { contract: 'receipt', contractId: env.RECEIPT_CONTRACT_ID },
 ] as const;
 
+/** Signing keys, newest first; every key signs every delivery. */
+export const WEBHOOK_SECRETS: readonly string[] = parseWebhookSecrets(
+  env.WEBHOOK_SECRETS,
+  env.WEBHOOK_SECRET,
+);
+
 /**
- * Endpoints that receive signed voucher events, parsed from the comma
- * separated `WEBHOOK_URLS`. Empty means webhooks are off.
+ * Every delivery target, from `WEBHOOK_ENDPOINTS` or the flat
+ * `WEBHOOK_URLS` list. Empty means webhooks are off.
+ *
+ * Parsed here rather than attached to `env`: the general environment object
+ * is passed around and logged, and the per-endpoint secrets belong only to
+ * the code that signs requests.
  */
-export const WEBHOOK_URLS = env.WEBHOOK_URLS.split(',')
-  .map((s) => s.trim())
-  .filter((s) => s.length > 0);
+export const WEBHOOK_ENDPOINTS: readonly WebhookEndpoint[] = (() => {
+  const configured = parseWebhookEndpoints(env.WEBHOOK_ENDPOINTS, WEBHOOK_SECRETS);
+  if (configured.length > 0) return configured;
+  // WEBHOOK_ENDPOINTS is the richer form; the flat list stays the simple
+  // case and is ignored (not merged, which would double-deliver) when the
+  // JSON list is present. Both are documented in docs/environment.md.
+  return parseWebhookUrls(env.WEBHOOK_URLS).map((url) => ({
+    url,
+    secrets: WEBHOOK_SECRETS.map((secret) => validSecret(secret, 'WEBHOOK_SECRETS')),
+    events: null,
+    provider: null,
+  }));
+})();
+
+/** Just the URLs, for callers that only need to know where deliveries go. */
+export const WEBHOOK_URLS: readonly string[] = WEBHOOK_ENDPOINTS.map((e) => e.url);
 
 /** True when at least one endpoint is configured. */
-export const WEBHOOKS_ENABLED = WEBHOOK_URLS.length > 0;
+export const WEBHOOKS_ENABLED = WEBHOOK_ENDPOINTS.length > 0;
+
+/**
+ * Whether destinations in loopback, private, link-local or unique-local
+ * ranges are allowed. Local development opts in; production does not.
+ */
+export const WEBHOOK_ALLOW_PRIVATE: boolean = env.WEBHOOK_ALLOW_PRIVATE;
 
 /**
  * Map from contract ID to its type (registry/voucher/receipt).
