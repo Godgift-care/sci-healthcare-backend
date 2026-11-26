@@ -180,6 +180,19 @@ describe('ops/grafana-dashboard.json', () => {
     expect(appliedExpr).toContain('events_applied_total');
     expect(appliedExpr).toContain('by (name)');
 
+    const failedTotal = panelByTitle('Dead-lettered events (total)');
+    const failedRate = panelByTitle('Dead-lettered events (rate)');
+    const reconcileCurrent = panelByTitle('Reconcile mismatches (current)');
+    const reconcileHistory = panelByTitle('Reconcile mismatches (history)');
+    expect(failedTotal?.type).toBe('stat');
+    expect(failedRate?.type).toBe('timeseries');
+    expect(reconcileCurrent?.type).toBe('stat');
+    expect(reconcileHistory?.type).toBe('timeseries');
+    expect(exprsOf(failedTotal as DashboardPanel)).toContain('sum(events_skipped_total)');
+    expect(exprsOf(failedRate as DashboardPanel)[0]).toContain('events_skipped_total');
+    expect(exprsOf(reconcileCurrent as DashboardPanel)).toContain('reconcile_mismatches');
+    expect(exprsOf(reconcileHistory as DashboardPanel)).toContain('reconcile_mismatches');
+
     const skipped = panelByTitle('Events skipped (failed projections)');
     expect(skipped, 'events skipped panel').toBeDefined();
     expect(exprsOf(skipped as DashboardPanel).join('\n')).toContain('events_skipped_total');
