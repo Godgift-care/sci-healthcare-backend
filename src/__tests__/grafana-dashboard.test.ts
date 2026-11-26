@@ -53,6 +53,7 @@ const promqlKeywords = new Set([
   'by',
   'le',
   'name',
+  'contract',
   'route',
   'method',
   'status_code',
@@ -178,7 +179,11 @@ describe('ops/grafana-dashboard.json', () => {
     expect(applied, 'events applied panel').toBeDefined();
     const appliedExpr = exprsOf(applied as DashboardPanel).join('\n');
     expect(appliedExpr).toContain('events_applied_total');
-    expect(appliedExpr).toContain('by (name)');
+    expect(appliedExpr).toContain('by (contract, name)');
+    const stacked = applied as DashboardPanel & {
+      fieldConfig?: { defaults?: { custom?: { stacking?: { mode?: string } } } };
+    };
+    expect(stacked.fieldConfig?.defaults?.custom?.stacking?.mode).toBe('normal');
 
     const failedTotal = panelByTitle('Dead-lettered events (total)');
     const failedRate = panelByTitle('Dead-lettered events (rate)');
@@ -196,5 +201,6 @@ describe('ops/grafana-dashboard.json', () => {
     const skipped = panelByTitle('Events skipped (failed projections)');
     expect(skipped, 'events skipped panel').toBeDefined();
     expect(exprsOf(skipped as DashboardPanel).join('\n')).toContain('events_skipped_total');
+    expect(exprsOf(skipped as DashboardPanel).join('\n')).toContain('by (contract, name)');
   });
 });

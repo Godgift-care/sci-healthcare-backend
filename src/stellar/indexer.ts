@@ -5,6 +5,7 @@ import { contractName, env, getAllDeployments, INDEXED_CONTRACTS } from '../env.
 import { refreshDueProviderMetadata } from '../lib/provider-metadata.js';
 import { hasStreamListeners, publishVoucherSignals, type VoucherSignal } from '../lib/event-bus.js';
 import {
+  eventMetricLabels,
   eventsApplied,
   eventsSkipped,
   indexerLagLedgers,
@@ -689,7 +690,16 @@ export class Indexer {
               applied += 1;
               recordEventLatency(decoded.ledgerClosedAt);
               if (signal) pending.push(signal);
-              appliedByName.set(decoded.name, (appliedByName.get(decoded.name) ?? 0) + 1);
+              const labels = eventMetricLabels(
+                decoded.contractId === env.FAUCET_CONTRACT_ID
+                  ? 'faucet'
+                  : decoded.contractId === process.env.SPONSOR_CONTRACT_ID
+                    ? 'sponsor'
+                    : contractName(decoded.contractId),
+                decoded.name,
+              );
+              const key = `${labels.contract}:${labels.name}`;
+              appliedByName.set(key, (appliedByName.get(key) ?? 0) + 1);
             } catch (err) {
               await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT event');
               await tx.$executeRawUnsafe('RELEASE SAVEPOINT event');
@@ -697,7 +707,16 @@ export class Indexer {
               // kept in FailedEvent so the gap in the read model is durable,
               // and the tx hash and ledger make it reproducible.
               await recordFailure(tx, raw as never, decoded, err);
-              skippedByName.set(decoded.name, (skippedByName.get(decoded.name) ?? 0) + 1);
+              const labels = eventMetricLabels(
+                decoded.contractId === env.FAUCET_CONTRACT_ID
+                  ? 'faucet'
+                  : decoded.contractId === process.env.SPONSOR_CONTRACT_ID
+                    ? 'sponsor'
+                    : contractName(decoded.contractId),
+                decoded.name,
+              );
+              const key = `${labels.contract}:${labels.name}`;
+              skippedByName.set(key, (skippedByName.get(key) ?? 0) + 1);
               this.log.warn(
                 {
                   err,
@@ -728,8 +747,14 @@ export class Indexer {
 
     // Counted after the commit so a rolled-back cycle is not double counted
     // when it replays.
-    for (const [name, n] of appliedByName) eventsApplied.inc({ name }, n);
-    for (const [name, n] of skippedByName) eventsSkipped.inc({ name }, n);
+    for (const [key, n] of appliedByName) {
+      const [contract, name] = key.split(':') as [string, string];
+      eventsApplied.inc({ contract, name }, n);
+    }
+    for (const [key, n] of skippedByName) {
+      const [contract, name] = key.split(':') as [string, string];
+      eventsSkipped.inc({ contract, name }, n);
+    }
     indexerLagLedgers.set(Math.max(0, health.latestLedger - advanceTo));
     markIndexerSuccess();
 
