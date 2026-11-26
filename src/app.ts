@@ -34,9 +34,7 @@ import { errorMessage, negotiateLanguage } from './lib/i18n.js';
 import { allowedMethods, routePatterns, type RoutePattern } from './lib/method-allowed.js';
 import { apiKeyIdForHeader, parseApiKeyHashes } from './lib/api-keys.js';
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
-import { httpDuration, httpRequests, registry } from './lib/metrics.js';
-import { openapiDocsTransform } from './lib/openapi.js';
-import { providerMetadataJsonSchema } from './lib/provider-metadata.js';
+import { apiKeyRequests, httpDuration, httpRequests, registry } from './lib/metrics.js';
 import { APP_VERSION } from './lib/version.js';
 import { attesterRoutes } from './routes/attesters.js';
 import { feedRoutes } from './routes/feed.js';
@@ -420,6 +418,7 @@ export async function buildApp(
       route: req.routeOptions.url ?? 'unmatched',
       status_code: String(reply.statusCode),
     };
+    apiKeyRequests.inc({ api_key_id: req.apiKeyId?.slice(0, 8) ?? 'anonymous' });
     httpRequests.inc(labels);
     httpDuration.observe(labels, reply.elapsedTime / 1000);
   });

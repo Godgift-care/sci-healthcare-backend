@@ -23,7 +23,7 @@ The SCI Healthcare backend is a **public, read-only indexer** for the SCI Health
 | **`GET /health`** | Public | Service health status (`ok`), current UTC timestamp | In-memory server state | None | Operational telemetry only; no protocol or user data. |
 | **`GET /ready`** | Public | Database readiness, indexer latest/target ledger, sync lag, degraded flags | In-memory state & database cursor | None | System availability check for orchestration and load balancers. |
 | **`GET /version`** | Public | Package version, git commit, network name, configured contract IDs | Environment configuration | None | Public contract IDs and build info; already public repository metadata. |
-| **`GET /metrics`** | Public | Prometheus request counters, latency histograms, indexer lag gauges | In-memory metrics collectors | Aggregations | Anonymous operational telemetry; exempt from rate limiting. |
+| **`GET /metrics`** | Public | Prometheus request counters, latency histograms, indexer lag gauges, API-key request counts with short hash IDs | In-memory metrics collectors | Aggregations | Operational telemetry; API secrets are never labels, and the endpoint is exempt from rate limiting. |
 | **`GET /v1/providers`** | Public | List of registered clinic names, Stellar addresses, countries, operational status, active services | Registry contract `ProviderRegistered`, `ServiceAdded`, `ServiceRemoved` events | Pagination, name search (`q`), country and status filters | Clinics are public legal entities and licensed healthcare providers operating transparently on-chain. |
 | **`GET /v1/providers/:address`** | Public | Single provider record: address, name, country, status, catalog of offered services and base prices | Registry contract state | Pre-computed decimal formatting (`priceDisplay`) | Standard public directory information for patient discovery. |
 | **`GET /v1/services`** | Public | Catalog of active medical services across all clinics (service codes, labels, prices, clinic counts) | Registry contract service entries | Grouped catalog with min/max/median price calculation | Aggregated market pricing and standardized medical service codes (e.g., Code 101: Outpatient Consult). |
@@ -53,7 +53,7 @@ The SCI Healthcare backend is a **public, read-only indexer** for the SCI Health
    Vouchers encode general service codes (e.g., Code 101 for General Consultation) rather than detailed ICD-10 medical diagnoses, prescription records, or lab results. Medical records remain strictly within clinic local systems and are never stored in this backend or on-chain.
 
 3. **Protection Against Bulk Scraping:**
-   - Anonymous rate limiting is enforced (`30 req/min` for list routes, `120 req/min` for other routes). Recognized optional API keys receive the configured `RATE_LIMIT_KEYED_MAX` limit.
+   - Anonymous rate limiting is enforced (`30 req/min` for list routes, `120 req/min` for other routes). Recognized optional API keys receive the configured `RATE_LIMIT_KEYED_MAX` limit; only the first eight characters of each key hash are used as a metric label.
    - Real-time streams, CSV exports and the Atom activity feed scrub sensitive commitment fields.
    - Paging uses bounded cursors (`limit <= 100`) preventing memory denial-of-service.
 

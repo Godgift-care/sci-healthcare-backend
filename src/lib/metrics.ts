@@ -173,6 +173,13 @@ export const httpRequests = new Counter({
   registers: [registry],
 });
 
+export const apiKeyRequests = new Counter({
+  name: 'api_key_requests_total',
+  help: 'HTTP requests handled by API key identity',
+  labelNames: ['api_key_id'],
+  registers: [registry],
+});
+
 export const httpDuration = new Histogram({
   name: 'http_request_duration_seconds',
   help: 'HTTP request duration in seconds',
