@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../app.js';
 import { redactBeneficiaryRef } from '../lib/log-redaction.js';
+import { observeDatabaseQuery } from '../lib/database-query-metrics.js';
 
 /**
  * #55: `beneficiaryRef` is a stable patient pseudonym. Fastify logs the
@@ -140,5 +141,25 @@ describe('redactBeneficiaryRef', () => {
     // `beneficiaryRef=` with no value carries nothing to hide, and the
     // route's validator rejects it; the URL is left as-is.
     expect(redactBeneficiaryRef('/vouchers?beneficiaryRef=')).toBe('/vouchers?beneficiaryRef=');
+  });
+});
+
+
+describe('slow database query log redaction (#218)', () => {
+  it('never includes beneficiary references in slow-query warning fields', async () => {
+    const sensitive = 'beneficiaryRef=' + BENEFICIARY_REF;
+    const warnings: unknown[] = [];
+    const ticks = [0, 1000];
+    const result = await observeDatabaseQuery(
+      'Voucher',
+      'findMany',
+      async () => [{ beneficiaryRef: sensitive }],
+      500,
+      (details) => warnings.push(details),
+      () => ticks.shift() ?? 1000,
+    );
+    expect(result[0]?.beneficiaryRef).toBe(sensitive);
+    expect(warnings).toEqual([{ model: 'Voucher', operation: 'findMany', durationMs: 1000 }]);
+    expect(JSON.stringify(warnings)).not.toContain(BENEFICIARY_REF);
   });
 });

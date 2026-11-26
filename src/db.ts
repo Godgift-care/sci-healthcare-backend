@@ -2,6 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 
 import { env } from './env.js';
 import { amountKey } from './lib/amounts.js';
+import { observeDatabaseQuery } from './lib/database-query-metrics.js';
 
 type VoucherData = { amount?: unknown; amountKey?: unknown };
 
@@ -112,10 +113,17 @@ const client = new PrismaClient({
 export const prisma = client.$extends({
   query: {
     $allModels: {
-      $allOperations: async ({ query, args }) => {
+      $allOperations: async ({ model, operation, query, args }) => {
         if (testInstrumentation) queryStats.queries += 1;
-        const result = await query(args);
-        return decimalColumns ? decimalsToStrings(result) : result;
+        return observeDatabaseQuery(
+          model,
+          operation,
+          async () => {
+            const result = await query(args);
+            return decimalColumns ? decimalsToStrings(result) : result;
+          },
+          env.DATABASE_SLOW_QUERY_MS,
+        );
       },
     },
     voucher: {
