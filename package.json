@@ -88,7 +88,7 @@
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "22.10.5",
-    "@vitest/coverage-v8": "5.1.2",
+    "@vitest/coverage-v8": "5.1.1",
     "ajv": "^8.20.0",
     "autocannon": "9.0.0",
     "eslint": "9.39.5",
@@ -101,7 +101,7 @@
     "tsx": "4.23.15",
     "typescript": "5.7.3",
     "typescript-eslint": "8.71.1",
-    "vitest": "5.1.2"
+    "vitest": "5.1.1"
   },
   "lint-staged": {
     "**/*.{ts,js,mjs,cjs}": [
