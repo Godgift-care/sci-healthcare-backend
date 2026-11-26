@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { testDatabaseUrl } from './database-url.js';
 
 /**
@@ -22,8 +24,6 @@ Object.assign(process.env, {
   // The URL is never dialled: tests inject their own fetch.
   WEBHOOK_URLS: 'https://clinic.example.test/webhooks',
   WEBHOOK_SECRET: 'test-webhook-secret-0123456789',
-  // The metadata fixture server and the fake webhook host are local, so the
-  // destination guard is exercised explicitly where a test wants it rather
-  // than turning every existing fixture into a refused address.
-  WEBHOOK_ALLOW_PRIVATE: 'true',
+  API_KEY_HASHES: `test:${createHash('sha256').update('test-api-key-for-rate-limit-tests').digest('hex')}`,
+  RATE_LIMIT_KEYED_MAX: '150',
 });

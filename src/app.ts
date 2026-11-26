@@ -32,6 +32,7 @@ import {
 import { errorEnvelope, MAINTENANCE_RETRY_AFTER_SECONDS } from './lib/errors.js';
 import { errorMessage, negotiateLanguage } from './lib/i18n.js';
 import { allowedMethods, routePatterns, type RoutePattern } from './lib/method-allowed.js';
+import { apiKeyIdForHeader, parseApiKeyHashes } from './lib/api-keys.js';
 import { redactBeneficiaryRef } from './lib/log-redaction.js';
 import { httpDuration, httpRequests, registry } from './lib/metrics.js';
 import { openapiDocsTransform } from './lib/openapi.js';
@@ -131,6 +132,12 @@ export type BuildAppOptions = {
   logger?: FastifyServerOptions['logger'];
   maintenanceMode?: boolean;
 };
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    apiKeyId: string | null;
+  }
+}
 
 /**
  * The request half of a log line (`incoming request`, `request completed`)
@@ -240,6 +247,13 @@ export async function buildApp(
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
+  const configuredApiKeys = parseApiKeyHashes(env.API_KEY_HASHES);
+  app.decorateRequest('apiKeyId', null);
+  app.addHook('onRequest', (req, _reply, done) => {
+    req.apiKeyId = apiKeyIdForHeader(req.headers['x-api-key'], configuredApiKeys);
+    done();
+  });
+
   await app.register(swagger, {
     openapi: {
       openapi: '3.1.0',
@@ -279,7 +293,10 @@ export async function buildApp(
 
   await app.register(compress);
   await app.register(helmet, { contentSecurityPolicy: false });
-  await app.register(rateLimit, { ...DEFAULT_RATE_LIMIT, enableDraftSpec: true });
+  await app.register(rateLimit, {
+    ...DEFAULT_RATE_LIMIT,
+    keyGenerator: (req) => (req.apiKeyId ? `api-key:${req.apiKeyId}` : req.ip),
+  });
 
   // Every response, including errors and 404s, carries the id that appears
   // in the matching log line, plus the configured Stellar network name.

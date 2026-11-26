@@ -56,6 +56,8 @@ services:
       LOG_LEVEL: info
       CORS_ORIGIN: http://localhost:3000
       READY_MAX_LAG_LEDGERS: "120"
+      API_KEY_HASHES: ${API_KEY_HASHES:-}
+      RATE_LIMIT_KEYED_MAX: ${RATE_LIMIT_KEYED_MAX:-1200}
       STELLAR_NETWORK: testnet
       SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
       NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"

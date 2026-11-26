@@ -77,6 +77,10 @@ services:
       # Set to the Vercel URL after the frontend is deployed.
       - key: CORS_ORIGIN
         sync: false
+      - key: API_KEY_HASHES
+        sync: false
+      - key: RATE_LIMIT_KEYED_MAX
+        value: "1200"
 
 # ---------------------------------------------------------------------------
 # Optional: run the API and the indexer as separate services.
