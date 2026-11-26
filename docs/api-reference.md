@@ -75,6 +75,7 @@ to switch on — never `message`. English is unchanged from earlier releases.
 | `GET /vouchers` | Vouchers by `funder`, `provider`, `beneficiaryRef` or `status`; `?include=receipt,provider` embeds related records |
 | `GET /vouchers/:id` | One voucher, with its care receipt if settled, attester and dispute outcome; `?include=receipt,provider` embeds the canonical forms |
 | `GET /vouchers/:id/events` | Every contract event for a voucher, oldest first, with transaction hashes |
+| `GET /transactions/:hash/events` | Contract events for a 64-hex transaction hash, in ledger order; unknown hashes return an empty list, invalid hashes return 400 |
 | `GET /receipts?beneficiaryRef=` | A patient's settled care history |
 | `GET /countries` | Countries with at least one active clinic and their clinic counts |
 | `GET /services` | Active services grouped by code: labels, clinic count, min/max/median price; text search, price range, and price/label/code sorting |

@@ -2661,6 +2661,54 @@ describe('?include=receipt,provider (#167)', () => {
   });
 });
 
+describe('GET /transactions/:hash/events', () => {
+  it('returns one event for a transaction hash', async () => {
+    const { status, body } = await get(`/v1/transactions/${'e'.repeat(64)}/events`);
+    expect(status).toBe(200);
+    expect(body.txHash).toBe('e'.repeat(64));
+    expect(body.total).toBe(1);
+    expect(body.events[0]).toMatchObject({
+      ledger: 20,
+      txHash: 'e'.repeat(64),
+      name: 'voucher_created',
+      data: { amount: '30000000' },
+    });
+  });
+
+  it('returns multiple events in ledger order with deterministic ties', async () => {
+    const hash = 'a'.repeat(64);
+    await prisma.contractEvent.createMany({
+      data: [
+        { id: 'tx-event-c', contractId: 'contract', contract: 'voucher', name: 'third', ledger: 33, txHash: hash, closedAt: new Date(), data: '{}' },
+        { id: 'tx-event-b', contractId: 'contract', contract: 'voucher', name: 'second', ledger: 31, txHash: hash, closedAt: new Date(), data: '{}' },
+        { id: 'tx-event-a', contractId: 'contract', contract: 'voucher', name: 'first', ledger: 31, txHash: hash, closedAt: new Date(), data: '{}' },
+      ],
+    });
+    const { status, body } = await get(`/transactions/${hash}/events`);
+    expect(status).toBe(200);
+    expect(body.total).toBe(3);
+    expect(body.events.map((event: { id: string }) => event.id)).toEqual([
+      'tx-event-a',
+      'tx-event-b',
+      'tx-event-c',
+    ]);
+  });
+
+  it('returns an empty list for an unknown transaction', async () => {
+    const hash = '0'.repeat(64);
+    const { status, body } = await get(`/transactions/${hash}/events`);
+    expect(status).toBe(200);
+    expect(body).toEqual({ txHash: hash, total: 0, events: [] });
+  });
+
+  it('rejects malformed transaction hashes', async () => {
+    for (const hash of ['bad-hash', 'g'.repeat(64), 'a'.repeat(63)]) {
+      const { status } = await get(`/transactions/${hash}/events`);
+      expect(status).toBe(400);
+    }
+  });
+});
+
 describe('GET /vouchers/:id/events', () => {
   it('returns the event log in ledger order with transaction hashes', async () => {
     const { status, body } = await get('/vouchers/1/events');
